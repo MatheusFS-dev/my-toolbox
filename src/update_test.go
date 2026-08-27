@@ -174,7 +174,7 @@ func TestValidatePayloadRequiresEveryDeclaredNonBuiltinEntrypoint(t *testing.T) 
 		}
 	}
 	err := validatePayload(root, "linux-amd64", "0.1.2")
-	if err == nil || !strings.Contains(err.Error(), "packages/p/script.sh") {
+	if err == nil || !strings.Contains(err.Error(), filepath.Join("packages", "p", "script.sh")) {
 		t.Fatalf("validatePayload() error = %v, want missing script", err)
 	}
 }
@@ -336,6 +336,7 @@ func TestValidatePayloadRequiresEveryWindowsInteractiveInstaller(t *testing.T) {
 func TestUpdateInstallsAndAtomicallySwitchesValidatedVersion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	archive := validToolboxTar(t)
 	digest := sha256.Sum256(archive)
 	builtins := updateBuiltins(t, "0.1.1", archive, fmt.Sprintf("%x  toolbox-linux-amd64.tar.gz\n", digest))
@@ -378,6 +379,7 @@ func TestUpdateSkipsSameVersionWithoutDownloadingArchive(t *testing.T) {
 func TestUpdateRejectsInvalidChecksumBeforeCreatingVersion(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	archive := validToolboxTar(t)
 	builtins := updateBuiltins(t, "0.1.1", archive, strings.Repeat("0", 64)+"  toolbox-linux-amd64.tar.gz\n")
 
@@ -391,7 +393,9 @@ func TestUpdateRejectsInvalidChecksumBeforeCreatingVersion(t *testing.T) {
 }
 
 func TestUpdateRejectsMalformedArchiveAfterChecksum(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	archive := []byte("not an archive")
 	digest := sha256.Sum256(archive)
 	builtins := updateBuiltins(t, "0.1.1", archive, fmt.Sprintf("%x  toolbox-linux-amd64.tar.gz\n", digest))

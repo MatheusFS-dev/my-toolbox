@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,9 @@ func TestPluginPreflightAllowsPrecedingFreshAgentInstallation(t *testing.T) {
 }
 
 func TestPluginPreflightRejectsInstalledAgentWithoutPluginManagement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Codex executable is a POSIX shell script")
+	}
 	bin := t.TempDir()
 	path := filepath.Join(bin, "codex")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
@@ -35,6 +39,9 @@ func TestPluginPreflightRejectsInstalledAgentWithoutPluginManagement(t *testing.
 }
 
 func TestPluginRunFindsFreshAgentOutsideCurrentPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Codex executable is a POSIX shell script")
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", t.TempDir())

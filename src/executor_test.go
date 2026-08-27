@@ -99,7 +99,8 @@ func TestInteractiveCommandForwardsDefaultArgumentsOnlyWhenConfirmed(t *testing.
 			if err := executor.Run(command, answers, nil); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(stdout.String(), test.want) {
+			output := strings.ReplaceAll(stdout.String(), "\r\n", "\n")
+			if !strings.Contains(output, test.want) {
 				t.Fatalf("stdout = %q, want containing %q", stdout.String(), test.want)
 			}
 		})
@@ -122,13 +123,15 @@ func TestInteractiveCommandUsesAttachedStandardStreams(t *testing.T) {
 	if err := executor.Run(testInteractiveCommand(nil), map[string]any{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "stdin=terminal input") {
+	standardOutput := strings.ReplaceAll(stdout.String(), "\r\n", "\n")
+	standardError := strings.ReplaceAll(stderr.String(), "\r\n", "\n")
+	if !strings.Contains(standardOutput, "stdin=terminal input") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "arguments=\n") {
+	if !strings.Contains(standardOutput, "arguments=\n") {
 		t.Fatalf("stdout contains unexpected script arguments: %q", stdout.String())
 	}
-	if stderr.String() != "script stderr\n" {
+	if standardError != "script stderr\n" {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -238,6 +241,9 @@ func TestDetectEnvironmentDistinguishesNativeLinuxWSLAndWindows(t *testing.T) {
 }
 
 func TestInteractiveCommandSelectsPlatformInterpreterAndFallbackScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python launchers are POSIX shell scripts")
+	}
 	root := t.TempDir()
 	bin := t.TempDir()
 	interpreter := []byte("#!/bin/sh\nprintf 'arguments=%s\\n' \"$*\"\n")
