@@ -1,0 +1,3 @@
+[submodule "packages/agent-workspace-template/source"]
+	path = packages/agent-workspace-template/source
+	url = https://github.com/MatheusFS-dev/agent-workspace-template.git
