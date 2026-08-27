@@ -30,11 +30,12 @@ type configuredCommand struct {
 
 // App coordinates command parsing, preflight configuration, and execution.
 type App struct {
-	Catalog  Catalog
-	UI       UI
-	Executor Executor
-	Output   io.Writer
-	Version  string
+	Catalog     Catalog
+	Environment string
+	UI          UI
+	Executor    Executor
+	Output      io.Writer
+	Version     string
 }
 
 // Execute handles one public tb invocation.
@@ -59,6 +60,9 @@ func (app App) Execute(arguments []string) error {
 			return err
 		}
 		for _, command := range app.Catalog.Commands {
+			if !command.SupportsEnvironment(app.Environment) {
+				continue
+			}
 			if _, err := fmt.Fprintf(output, "%s  [%s]\n    %s\n\n", command.Name, command.Package, command.Description); err != nil {
 				return err
 			}
@@ -73,7 +77,7 @@ func (app App) Execute(arguments []string) error {
 		}
 		listedCommands := make([]Command, 0, len(app.Catalog.Commands))
 		for _, command := range app.Catalog.Commands {
-			if command.Visibility == "list" {
+			if command.Visibility == "list" && command.SupportsEnvironment(app.Environment) {
 				listedCommands = append(listedCommands, command)
 			}
 		}
@@ -132,6 +136,9 @@ func (app App) Execute(arguments []string) error {
 		command, exists := app.Catalog.Find(arguments[0])
 		if !exists {
 			return fmt.Errorf("unknown command %q; run 'tb help' for usage", arguments[0])
+		}
+		if !command.SupportsEnvironment(app.Environment) {
+			return fmt.Errorf("command %q is not supported in %s", command.Name, app.Environment)
 		}
 		return app.executeBatch([]Command{command}, arguments[1:], output)
 	}

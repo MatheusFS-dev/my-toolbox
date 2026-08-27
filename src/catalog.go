@@ -28,6 +28,8 @@ type Command struct {
 	Package          string              `json:"package"`
 	Visibility       string              `json:"visibility"`
 	Protocol         string              `json:"protocol"`
+	Environments     []string            `json:"environments"`
+	Elevation        string              `json:"elevation,omitempty"`
 	DefaultArguments []string            `json:"default_arguments,omitempty"`
 	Entrypoints      map[string][]string `json:"entrypoints"`
 }
@@ -76,25 +78,76 @@ func LoadCatalog(reader io.Reader) (Catalog, error) {
 		if command.Visibility != "list" && command.Visibility != "direct" {
 			return Catalog{}, fmt.Errorf("command %q has unsupported visibility %q", command.Name, command.Visibility)
 		}
-		if command.Protocol != "builtin" && command.Protocol != "questionnaire" && command.Protocol != "interactive-python" {
+		if command.Protocol != "builtin" && command.Protocol != "questionnaire" && command.Protocol != "interactive-python" && command.Protocol != "interactive-script" {
 			return Catalog{}, fmt.Errorf("command %q has unsupported protocol %q", command.Name, command.Protocol)
 		}
-		entrypointType := map[string]string{
-			"builtin":            "builtin",
-			"questionnaire":      "python-adapter",
-			"interactive-python": "python-script",
-		}[command.Protocol]
+		if len(command.Environments) == 0 {
+			return Catalog{}, fmt.Errorf("command %q must declare at least one environment", command.Name)
+		}
+		environments := map[string]bool{}
+		for _, environment := range command.Environments {
+			if environment != "linux-native" && environment != "linux-wsl" && environment != "windows" {
+				return Catalog{}, fmt.Errorf("command %q has unsupported environment %q", command.Name, environment)
+			}
+			if environments[environment] {
+				return Catalog{}, fmt.Errorf("command %q repeats environment %q", command.Name, environment)
+			}
+			environments[environment] = true
+		}
+		if command.Elevation != "" && command.Elevation != "sudo" {
+			return Catalog{}, fmt.Errorf("command %q has unsupported elevation %q", command.Name, command.Elevation)
+		}
+		if command.Elevation == "sudo" && (command.Protocol != "interactive-script" || environments["windows"]) {
+			return Catalog{}, fmt.Errorf("command %q has invalid sudo elevation", command.Name)
+		}
 		for _, platform := range supportedPlatforms {
-			entrypoint := command.Entrypoints[platform]
+			required := environments["windows"]
+			if strings.HasPrefix(platform, "linux-") {
+				required = environments["linux-native"] || environments["linux-wsl"]
+			}
+			entrypoint, exists := command.Entrypoints[platform]
+			if !required {
+				if exists {
+					return Catalog{}, fmt.Errorf("command %q has unexpected %s entrypoint", command.Name, platform)
+				}
+				continue
+			}
+			entrypointType := map[string]string{
+				"builtin":            "builtin",
+				"questionnaire":      "python-adapter",
+				"interactive-python": "python-script",
+			}[command.Protocol]
+			if command.Protocol == "interactive-script" {
+				entrypointType = "bash-script"
+				if platform == "windows-amd64" {
+					entrypointType = "powershell-script"
+				}
+			}
 			if len(entrypoint) < 2 || entrypoint[0] != entrypointType || entrypoint[1] == "" {
 				return Catalog{}, fmt.Errorf("command %q has invalid %s entrypoint", command.Name, platform)
 			}
-			if command.Protocol == "interactive-python" && strings.HasPrefix(platform, "linux-") && (len(entrypoint) < 3 || entrypoint[2] == "") {
+			if command.Protocol == "interactive-python" && len(entrypoint) > 2 && entrypoint[2] == "" {
 				return Catalog{}, fmt.Errorf("command %q has invalid %s Python 2.7 fallback entrypoint", command.Name, platform)
 			}
 		}
 	}
 	return catalog, nil
+}
+
+// SupportsEnvironment reports whether a command is available in one detected environment.
+//
+// Args:
+//   - environment: One validated environment name: linux-native, linux-wsl, or windows.
+//
+// Returns:
+//   - bool: True when the command explicitly declares the environment.
+func (command Command) SupportsEnvironment(environment string) bool {
+	for _, supported := range command.Environments {
+		if supported == environment {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadCatalogFile opens and validates a catalog from disk.

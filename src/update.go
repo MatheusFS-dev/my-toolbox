@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -137,10 +138,14 @@ func validatePayload(root, platform, expectedVersion string) error {
 		required = append(required, filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python2", "requirements.txt"))
 	}
 	for _, command := range catalog.Commands {
-		if command.Protocol != "interactive-python" {
+		if command.Protocol == "builtin" {
 			continue
 		}
-		for _, script := range command.Entrypoints[platform][1:] {
+		entrypoint, exists := command.Entrypoints[platform]
+		if !exists {
+			continue
+		}
+		for _, script := range entrypoint[1:] {
 			required = append(required, filepath.Join(root, filepath.FromSlash(script)))
 		}
 	}
@@ -220,11 +225,15 @@ func extractTarArchive(content []byte, destination string) error {
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				return fmt.Errorf("create archive directory: %w", err)
+			if err := createArchiveDirectory(destination, path); err != nil {
+				return err
 			}
 		case tar.TypeReg:
-			if err := writeArchiveFile(path, io.LimitReader(reader, header.Size), os.FileMode(header.Mode)); err != nil {
+			if err := writeArchiveFile(destination, path, io.LimitReader(reader, header.Size), os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if err := writeArchiveSymlink(destination, path, header.Name, header.Linkname); err != nil {
 				return err
 			}
 		default:
@@ -244,8 +253,8 @@ func extractZipArchive(content []byte, destination string) error {
 			return err
 		}
 		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				return fmt.Errorf("create archive directory: %w", err)
+			if err := createArchiveDirectory(destination, path); err != nil {
+				return err
 			}
 			continue
 		}
@@ -253,7 +262,20 @@ func extractZipArchive(content []byte, destination string) error {
 		if err != nil {
 			return fmt.Errorf("open archive file %s: %w", file.Name, err)
 		}
-		err = writeArchiveFile(path, source, file.Mode())
+		if file.Mode()&os.ModeSymlink != 0 {
+			linkTarget, readErr := io.ReadAll(io.LimitReader(source, 4097))
+			if readErr != nil {
+				source.Close()
+				return fmt.Errorf("read archive symlink %s: %w", file.Name, readErr)
+			}
+			if len(linkTarget) > 4096 {
+				source.Close()
+				return fmt.Errorf("archive symlink target is too long: %s", file.Name)
+			}
+			err = writeArchiveSymlink(destination, path, file.Name, string(linkTarget))
+		} else {
+			err = writeArchiveFile(destination, path, source, file.Mode())
+		}
 		source.Close()
 		if err != nil {
 			return err
@@ -270,9 +292,9 @@ func archiveDestination(root, name string) (string, error) {
 	return filepath.Join(root, clean), nil
 }
 
-func writeArchiveFile(path string, source io.Reader, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create archive parent: %w", err)
+func writeArchiveFile(root, path string, source io.Reader, mode os.FileMode) error {
+	if err := ensureArchiveParent(root, path); err != nil {
+		return err
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode.Perm())
 	if err != nil {
@@ -284,6 +306,78 @@ func writeArchiveFile(path string, source io.Reader, mode os.FileMode) error {
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close archive file %s: %w", path, err)
+	}
+	return nil
+}
+
+func createArchiveDirectory(root, directory string) error {
+	if err := ensureArchiveParent(root, directory); err != nil {
+		return err
+	}
+	info, err := os.Lstat(directory)
+	if err == nil {
+		if info.IsDir() {
+			return nil
+		}
+		return fmt.Errorf("archive directory conflicts with existing path: %s", directory)
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect archive directory %s: %w", directory, err)
+	}
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		return fmt.Errorf("create archive directory %s: %w", directory, err)
+	}
+	return nil
+}
+
+func ensureArchiveParent(root, destination string) error {
+	relative, err := filepath.Rel(root, filepath.Dir(destination))
+	if err != nil {
+		return fmt.Errorf("resolve archive parent: %w", err)
+	}
+	current := root
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(current, 0o755); err != nil {
+				return fmt.Errorf("create archive parent %s: %w", current, err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect archive parent %s: %w", current, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("archive entry traverses non-directory parent %s", current)
+		}
+	}
+	return nil
+}
+
+func writeArchiveSymlink(root, destination, entryName, target string) error {
+	if target == "" || strings.ContainsRune(target, '\x00') || strings.Contains(target, "\\") {
+		return fmt.Errorf("archive contains unsafe symlink target %q", target)
+	}
+	cleanTarget := path.Clean(target)
+	resolved := path.Clean(path.Join(path.Dir(entryName), cleanTarget))
+	localTarget := filepath.FromSlash(cleanTarget)
+	if path.IsAbs(cleanTarget) || filepath.IsAbs(localTarget) || filepath.VolumeName(localTarget) != "" || resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return fmt.Errorf("archive symlink %s escapes extraction root", entryName)
+	}
+	if err := ensureArchiveParent(root, destination); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return fmt.Errorf("archive symlink conflicts with existing path: %s", destination)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect archive symlink %s: %w", destination, err)
+	}
+	if err := os.Symlink(localTarget, destination); err != nil {
+		return fmt.Errorf("create archive symlink %s: %w", destination, err)
 	}
 	return nil
 }

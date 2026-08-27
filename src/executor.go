@@ -75,6 +75,9 @@ func (executor ProcessExecutor) Questions(command Command, answers map[string]an
 		}
 		return ProtocolResponse{Status: "ready"}, nil
 	}
+	if command.Protocol == "interactive-script" {
+		return ProtocolResponse{Status: "ready"}, nil
+	}
 	return executor.invokeAdapter(command, "questions", answers, arguments)
 }
 
@@ -111,12 +114,60 @@ func (executor ProcessExecutor) Run(command Command, answers map[string]any, arg
 		}
 		return executor.runInteractivePython(command, scriptArguments)
 	}
+	if command.Protocol == "interactive-script" {
+		return executor.runInteractiveScript(command, arguments)
+	}
 	response, err := executor.invokeAdapter(command, "run", answers, arguments)
 	if err != nil {
 		return err
 	}
 	if response.Status != "ready" {
 		return fmt.Errorf("adapter returned unexpected %q state during run", response.Status)
+	}
+	return nil
+}
+
+// runInteractiveScript runs a Bash or PowerShell script with terminal streams attached.
+//
+// Args:
+//   - command: Interactive script command with a current-platform entrypoint. Bash
+//     commands may request sudo elevation; PowerShell commands may not.
+//   - arguments: Direct arguments forwarded unchanged after the script path.
+//
+// Returns:
+//   - error: Entrypoint, stream, executable lookup, or process failure.
+func (executor ProcessExecutor) runInteractiveScript(command Command, arguments []string) error {
+	entrypoint, exists := command.Entrypoints[executor.Platform]
+	if !exists || len(entrypoint) < 2 {
+		return fmt.Errorf("command %s has no interactive script for %s", command.Name, executor.Platform)
+	}
+	if executor.Input == nil || executor.Output == nil || executor.Error == nil {
+		return fmt.Errorf("interactive command %s requires input, output, and error streams", command.Name)
+	}
+	script := filepath.Join(executor.Root, filepath.FromSlash(entrypoint[1]))
+	var process *exec.Cmd
+	switch entrypoint[0] {
+	case "bash-script":
+		processArguments := []string{script}
+		processArguments = append(processArguments, arguments...)
+		if command.Elevation == "sudo" {
+			processArguments = append([]string{"--", "bash"}, processArguments...)
+			process = exec.Command("sudo", processArguments...)
+		} else {
+			process = exec.Command("bash", processArguments...)
+		}
+	case "powershell-script":
+		processArguments := []string{"-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script}
+		processArguments = append(processArguments, arguments...)
+		process = exec.Command("powershell.exe", processArguments...)
+	default:
+		return fmt.Errorf("command %s has unsupported script entrypoint type %q", command.Name, entrypoint[0])
+	}
+	process.Stdin = executor.Input
+	process.Stdout = executor.Output
+	process.Stderr = executor.Error
+	if err := process.Run(); err != nil {
+		return fmt.Errorf("interactive script failed: %w", err)
 	}
 	return nil
 }
@@ -244,6 +295,44 @@ func CurrentPlatform() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("unsupported platform %s", key)
+}
+
+// CurrentEnvironment detects the supported operating environment.
+//
+// Args: None.
+//
+// Returns:
+//   - string: linux-native, linux-wsl, or windows.
+//   - error: Unsupported operating system or unreadable Linux kernel metadata.
+func CurrentEnvironment() (string, error) {
+	return detectEnvironment(runtime.GOOS, "/proc/sys/kernel/osrelease")
+}
+
+// detectEnvironment detects WSL from Linux kernel release metadata.
+//
+// Args:
+//   - goos: Go operating-system identifier. Accepted values are linux and windows.
+//   - osreleasePath: Linux kernel osrelease file. It is read only when goos is linux.
+//
+// Returns:
+//   - string: linux-native, linux-wsl, or windows.
+//   - error: Unsupported operating system or an osrelease read failure.
+func detectEnvironment(goos, osreleasePath string) (string, error) {
+	switch goos {
+	case "windows":
+		return "windows", nil
+	case "linux":
+		content, err := os.ReadFile(osreleasePath)
+		if err != nil {
+			return "", fmt.Errorf("detect Linux environment from %s: %w", osreleasePath, err)
+		}
+		if strings.Contains(strings.ToLower(string(content)), "microsoft") {
+			return "linux-wsl", nil
+		}
+		return "linux-native", nil
+	default:
+		return "", fmt.Errorf("unsupported operating system %s", goos)
+	}
 }
 
 func executableRoot() (string, error) {

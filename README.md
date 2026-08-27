@@ -13,9 +13,18 @@ tb version
 tb help
 ```
 
-`tb list` opens the Arrow/Space checkbox selector. It collects every required answer before running any selected tool, executes tools in catalog order, and stops at the first failure. Running `tb` without arguments is invalid and directs the user to `tb list`.
+`tb list` opens the Arrow/Space checkbox selector. It collects every required answer before running any selected tool, executes tools in catalog order, and stops at the first failure. `tb list` and `tb help` show only tools supported by the current environment: native Linux, WSL, or Windows. Direct use of an unsupported tool returns an explicit error. Running `tb` without arguments is invalid and directs the user to `tb list`.
 
-The command catalog is defined in `commands.json`. Initial tools include Codex, Claude, Antigravity, uv, gh, the corresponding Superpowers plugins, and global or project-scoped agent workspace setup.
+The command catalog is defined in `commands.json`. It includes Codex, Claude, Antigravity, uv, gh, the corresponding Superpowers plugins, global or project-scoped agent workspace setup, and these independent packages:
+
+| Package | Commands |
+|---|---|
+| `scripts` | `setup-alacritty`, `setup-kitty`, `setup-windows`, `setup-wsl`, `set-vscode-wsl-cwd`, `set-default-cwd`, `change-grub-order`, `setup-venv`, `toggle-nopasswd-sudo` |
+| `others` | `create-env-alias`, `bootstrap-python-from-venv`, `create-project-template` |
+
+The copied Bash and PowerShell tools receive direct arguments unchanged. The three `others` tools are interactive and reject command-line arguments. `create-env-alias` targets Bash and Zsh virtual environments on Linux or WSL. `bootstrap-python-from-venv` infers unpinned dependencies from project imports and a selected Linux/WSL venv. `create-project-template` recursively merges the packaged `packages/others/template/` tree into an explicit existing destination.
+
+The vendored Alacritty, Kitty, and WSL setup scripts target apt-based Debian/Ubuntu environments; their optional desktop integrations also require the upstream GNOME/Nautilus tools. The toolbox preserves those scripts and their exit behavior byte-for-byte.
 
 ## Installation
 
@@ -46,6 +55,8 @@ The repository requires Go and Python 3. Run:
 ```sh
 go test ./...
 python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
+python3 -m unittest discover -s packages/others/tests -v
+sh scripts/install_test.sh
 ```
 
 Create release archives with:

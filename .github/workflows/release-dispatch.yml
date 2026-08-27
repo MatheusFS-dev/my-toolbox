@@ -1,8 +1,9 @@
 name: Dispatch release
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   actions: write
@@ -10,9 +11,16 @@ permissions:
 
 jobs:
   dispatch:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
-          TOOLBOX_SHA: ${{ github.sha }}
-        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f toolbox_sha="$TOOLBOX_SHA"
+          TOOLBOX_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$TOOLBOX_SHA" != "$MAIN_SHA" ]; then
+            printf 'Skipping superseded commit %s; main is %s.\n' "$TOOLBOX_SHA" "$MAIN_SHA"
+            exit 0
+          fi
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f toolbox_sha="$TOOLBOX_SHA"

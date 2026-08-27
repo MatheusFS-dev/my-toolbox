@@ -17,8 +17,11 @@ for component in "$major" "$minor" "$patch"; do
     case "$component" in ''|*[!0-9]*|0[0-9]*) printf 'Version must be a canonical three-part version.\n' >&2; exit 1 ;; esac
 done
 
+# The empty assignment prevents inherited CDPATH output from contaminating pwd.
+# shellcheck disable=SC1007
 repository_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 mkdir -p "$output_directory"
+# shellcheck disable=SC1007
 output_directory=$(CDPATH= cd -- "$output_directory" && pwd)
 temporary_root=$(mktemp -d)
 cleanup() {
@@ -41,7 +44,9 @@ build_payload() {
     )
     cp "$repository_root/commands.json" "$payload/commands.json"
     cp -R "$repository_root/packages" "$payload/packages"
-    find "$payload/packages" -name .git -delete
+    find "$payload/packages" -name .git -exec rm -rf {} +
+    find "$payload/packages" -type d -name __pycache__ -prune -exec rm -rf {} +
+    find "$payload/packages" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
     printf '%s\n' "$version" > "$payload/version.txt"
 }
 
@@ -62,8 +67,9 @@ done
 archive=toolbox-windows-amd64.zip
 (
     cd "$temporary_root/windows-amd64"
-    zip -qr "$output_directory/$archive" .
+    zip -qry "$temporary_root/$archive" .
 )
+mv "$temporary_root/$archive" "$output_directory/$archive"
 (
     cd "$output_directory"
     sha256sum "$archive" > "$archive.sha256"

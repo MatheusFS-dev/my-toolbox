@@ -33,13 +33,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	environment, err := CurrentEnvironment()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	builtins := NewToolboxBuiltins(root, platform, version, os.Stdout)
 	app := App{
-		Catalog:  catalog,
-		UI:       HuhUI{},
-		Executor: ProcessExecutor{Root: root, Platform: platform, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
-		Output:   os.Stdout,
-		Version:  version,
+		Catalog:     catalog,
+		Environment: environment,
+		UI:          HuhUI{},
+		Executor:    ProcessExecutor{Root: root, Platform: platform, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
+		Output:      os.Stdout,
+		Version:     version,
 	}
 	if err := app.Execute(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)

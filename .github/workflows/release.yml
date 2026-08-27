@@ -42,7 +42,23 @@ jobs:
         run: |
           go test ./...
           python -m unittest discover -s packages/agent-workspace-template/source/tests -v
+          python -m unittest discover -s packages/others/tests -v
+          sh scripts/install_test.sh
           sh scripts/build-release_test.sh
+      - name: Reject an already released commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOOLBOX_SHA: ${{ inputs.toolbox_sha }}
+        run: |
+          MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$TOOLBOX_SHA" != "$MAIN_SHA" ]; then
+            printf 'Commit %s was superseded by main commit %s.\n' "$TOOLBOX_SHA" "$MAIN_SHA" >&2
+            exit 1
+          fi
+          if gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].target_commitish' | grep -Fx "$TOOLBOX_SHA"; then
+            printf 'Commit %s already has a release.\n' "$TOOLBOX_SHA" >&2
+            exit 1
+          fi
       - name: Resolve next version
         id: version
         env:
@@ -61,4 +77,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ steps.version.outputs.version }}
           TOOLBOX_SHA: ${{ inputs.toolbox_sha }}
-        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$TOOLBOX_SHA" --title "$TAG" --generate-notes
+        run: |
+          MAIN_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          test "$TOOLBOX_SHA" = "$MAIN_SHA"
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$TOOLBOX_SHA" --title "$TAG" --generate-notes

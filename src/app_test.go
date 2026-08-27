@@ -56,9 +56,47 @@ func (executor *fakeExecutor) Run(command Command, _ map[string]any, arguments [
 func testCatalog(names ...string) Catalog {
 	commands := make([]Command, 0, len(names))
 	for _, name := range names {
-		commands = append(commands, Command{Name: name, Description: name, Package: "test", Visibility: "list", Protocol: "builtin"})
+		commands = append(commands, Command{Name: name, Description: name, Package: "test", Visibility: "list", Protocol: "builtin", Environments: []string{"linux-native"}})
 	}
 	return Catalog{Commands: commands}
+}
+
+func TestListAndHelpExcludeCommandsFromOtherEnvironments(t *testing.T) {
+	catalog := testCatalog("native", "wsl", "windows")
+	catalog.Commands[1].Environments = []string{"linux-wsl"}
+	catalog.Commands[2].Environments = []string{"windows"}
+	ui := &fakeUI{selected: []string{"native"}}
+	output := &bytes.Buffer{}
+	app := App{Catalog: catalog, Environment: "linux-native", UI: ui, Executor: &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}}, Output: output}
+
+	if err := app.Execute([]string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.commands) != 1 || ui.commands[0].Name != "native" {
+		t.Fatalf("selector commands = %#v", ui.commands)
+	}
+	output.Reset()
+	if err := app.Execute([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "native  [test]") || strings.Contains(output.String(), "wsl  [test]") || strings.Contains(output.String(), "windows  [test]") {
+		t.Fatalf("help = %q", output.String())
+	}
+}
+
+func TestDirectCommandRejectsUnsupportedEnvironment(t *testing.T) {
+	catalog := testCatalog("wsl-only")
+	catalog.Commands[0].Environments = []string{"linux-wsl"}
+	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}}
+	app := App{Catalog: catalog, Environment: "linux-native", UI: &fakeUI{}, Executor: executor}
+
+	err := app.Execute([]string{"wsl-only"})
+	if err == nil || !strings.Contains(err.Error(), `command "wsl-only" is not supported in linux-native`) {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(executor.runs) != 0 {
+		t.Fatalf("unsupported command ran: %v", executor.runs)
+	}
 }
 
 func TestListExcludesDirectToolsWithoutBlockingDirectExecution(t *testing.T) {
@@ -66,7 +104,7 @@ func TestListExcludesDirectToolsWithoutBlockingDirectExecution(t *testing.T) {
 	catalog.Commands[1].Visibility = "direct"
 	ui := &fakeUI{selected: []string{"listed"}}
 	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}}
-	app := App{Catalog: catalog, UI: ui, Executor: executor}
+	app := App{Catalog: catalog, Environment: "linux-native", UI: ui, Executor: executor}
 
 	if err := app.Execute([]string{"list"}); err != nil {
 		t.Fatal(err)
@@ -90,7 +128,7 @@ func TestHelpPrintsEveryCatalogToolOnceInCatalogOrder(t *testing.T) {
 	catalog.Commands[1].Visibility = "direct"
 	catalog.Commands[2].Description = "Last description"
 	output := &bytes.Buffer{}
-	app := App{Catalog: catalog, UI: &fakeUI{}, Executor: &fakeExecutor{}, Output: output}
+	app := App{Catalog: catalog, Environment: "linux-native", UI: &fakeUI{}, Executor: &fakeExecutor{}, Output: output}
 
 	if err := app.Execute([]string{"help"}); err != nil {
 		t.Fatal(err)
@@ -118,7 +156,7 @@ func TestRepositoryHelpIncludesDirectProjectTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := &bytes.Buffer{}
-	app := App{Catalog: catalog, Output: output}
+	app := App{Catalog: catalog, Environment: "linux-native", Output: output}
 	if err := app.Execute([]string{"help"}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +168,7 @@ func TestRepositoryHelpIncludesDirectProjectTool(t *testing.T) {
 
 func TestBareInvocationIsInvalidAndDoesNotExecute(t *testing.T) {
 	executor := &fakeExecutor{arguments: map[string][]string{}}
-	app := App{Catalog: testCatalog("one"), UI: &fakeUI{}, Executor: executor}
+	app := App{Catalog: testCatalog("one"), Environment: "linux-native", UI: &fakeUI{}, Executor: executor}
 	err := app.Execute(nil)
 	if err == nil || !strings.Contains(err.Error(), "tb list") {
 		t.Fatalf("Execute(nil) error = %v, want tb list guidance", err)
@@ -147,7 +185,7 @@ func TestListConfiguresEveryToolBeforeCatalogOrderedExecution(t *testing.T) {
 		arguments: map[string][]string{},
 	}
 	ui := &fakeUI{selected: []string{"second", "first"}, answers: map[string]any{"confirm": true}}
-	app := App{Catalog: testCatalog("first", "second", "third"), UI: ui, Executor: executor}
+	app := App{Catalog: testCatalog("first", "second", "third"), Environment: "linux-native", UI: ui, Executor: executor}
 
 	if err := app.Execute([]string{"list"}); err != nil {
 		t.Fatal(err)
@@ -163,9 +201,10 @@ func TestCancellationDuringConfigurationRunsNothing(t *testing.T) {
 		arguments: map[string][]string{},
 	}
 	app := App{
-		Catalog:  testCatalog("first"),
-		UI:       &fakeUI{selected: []string{"first"}, err: ErrCancelled},
-		Executor: executor,
+		Catalog:     testCatalog("first"),
+		Environment: "linux-native",
+		UI:          &fakeUI{selected: []string{"first"}, err: ErrCancelled},
+		Executor:    executor,
 	}
 	if err := app.Execute([]string{"list"}); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("Execute() error = %v, want cancellation", err)
@@ -179,10 +218,11 @@ func TestFailureStopsBatchAndPrintsSummary(t *testing.T) {
 	output := &bytes.Buffer{}
 	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}, fail: "second"}
 	app := App{
-		Catalog:  testCatalog("first", "second", "third"),
-		UI:       &fakeUI{selected: []string{"first", "second", "third"}},
-		Executor: executor,
-		Output:   output,
+		Catalog:     testCatalog("first", "second", "third"),
+		Environment: "linux-native",
+		UI:          &fakeUI{selected: []string{"first", "second", "third"}},
+		Executor:    executor,
+		Output:      output,
 	}
 	err := app.Execute([]string{"list"})
 	if err == nil || !strings.Contains(err.Error(), "second") {
@@ -213,10 +253,11 @@ func TestFailureSummaryKeepsPreconfiguredSkipsSeparate(t *testing.T) {
 		fail:      "first",
 	}
 	app := App{
-		Catalog:  testCatalog("first", "second", "third"),
-		UI:       &fakeUI{selected: []string{"first", "second", "third"}},
-		Executor: executor,
-		Output:   output,
+		Catalog:     testCatalog("first", "second", "third"),
+		Environment: "linux-native",
+		UI:          &fakeUI{selected: []string{"first", "second", "third"}},
+		Executor:    executor,
+		Output:      output,
 	}
 	if err := app.Execute([]string{"list"}); err == nil {
 		t.Fatal("Execute() succeeded, want first failure")
@@ -237,7 +278,7 @@ func TestSkippedToolDoesNotPreventLaterExecution(t *testing.T) {
 		arguments: map[string][]string{},
 	}
 	output := &bytes.Buffer{}
-	app := App{Catalog: testCatalog("first", "second"), UI: &fakeUI{selected: []string{"first", "second"}}, Executor: executor, Output: output}
+	app := App{Catalog: testCatalog("first", "second"), Environment: "linux-native", UI: &fakeUI{selected: []string{"first", "second"}}, Executor: executor, Output: output}
 	if err := app.Execute([]string{"list"}); err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +292,7 @@ func TestSkippedToolDoesNotPreventLaterExecution(t *testing.T) {
 
 func TestDirectCommandForwardsArguments(t *testing.T) {
 	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}}
-	app := App{Catalog: testCatalog("tool"), UI: &fakeUI{}, Executor: executor}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", UI: &fakeUI{}, Executor: executor}
 	if err := app.Execute([]string{"tool", "one", "two"}); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +304,7 @@ func TestDirectCommandForwardsArguments(t *testing.T) {
 func TestRepeatedQuestionIDFailsExplicitly(t *testing.T) {
 	response := ProtocolResponse{Status: "question", Question: &Question{ID: "same", Type: "text", Title: "Value"}}
 	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{"tool": {response, response}}, arguments: map[string][]string{}}
-	app := App{Catalog: testCatalog("tool"), UI: &fakeUI{answers: map[string]any{"same": "answer"}}, Executor: executor}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", UI: &fakeUI{answers: map[string]any{"same": "answer"}}, Executor: executor}
 	err := app.Execute([]string{"tool"})
 	if err == nil || !strings.Contains(err.Error(), "repeated question ID") {
 		t.Fatalf("Execute() error = %v", err)
@@ -273,9 +314,10 @@ func TestRepeatedQuestionIDFailsExplicitly(t *testing.T) {
 func TestUninstallRequiresConfirmationBeforeExecution(t *testing.T) {
 	executor := &fakeExecutor{arguments: map[string][]string{}}
 	app := App{
-		Catalog:  testCatalog("tool"),
-		UI:       &fakeUI{answers: map[string]any{"confirm-uninstall": true}},
-		Executor: executor,
+		Catalog:     testCatalog("tool"),
+		Environment: "linux-native",
+		UI:          &fakeUI{answers: map[string]any{"confirm-uninstall": true}},
+		Executor:    executor,
 	}
 	if err := app.Execute([]string{"uninstall"}); err != nil {
 		t.Fatal(err)
@@ -289,10 +331,11 @@ func TestUninstallDeclinedLeavesInstallationUntouched(t *testing.T) {
 	output := &bytes.Buffer{}
 	executor := &fakeExecutor{arguments: map[string][]string{}}
 	app := App{
-		Catalog:  testCatalog("tool"),
-		UI:       &fakeUI{answers: map[string]any{"confirm-uninstall": false}},
-		Executor: executor,
-		Output:   output,
+		Catalog:     testCatalog("tool"),
+		Environment: "linux-native",
+		UI:          &fakeUI{answers: map[string]any{"confirm-uninstall": false}},
+		Executor:    executor,
+		Output:      output,
 	}
 	if err := app.Execute([]string{"uninstall"}); err != nil {
 		t.Fatal(err)
@@ -307,7 +350,7 @@ func TestUninstallDeclinedLeavesInstallationUntouched(t *testing.T) {
 
 func TestUninstallRejectsArguments(t *testing.T) {
 	executor := &fakeExecutor{arguments: map[string][]string{}}
-	app := App{Catalog: testCatalog("tool"), UI: &fakeUI{}, Executor: executor}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", UI: &fakeUI{}, Executor: executor}
 	err := app.Execute([]string{"uninstall", "now"})
 	if err == nil || !strings.Contains(err.Error(), "does not accept arguments") {
 		t.Fatalf("Execute() error = %v", err)
@@ -319,7 +362,7 @@ func TestUninstallRejectsArguments(t *testing.T) {
 
 func TestUninstallCancellationRunsNothing(t *testing.T) {
 	executor := &fakeExecutor{arguments: map[string][]string{}}
-	app := App{Catalog: testCatalog("tool"), UI: &fakeUI{err: ErrCancelled}, Executor: executor}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", UI: &fakeUI{err: ErrCancelled}, Executor: executor}
 	if err := app.Execute([]string{"uninstall"}); !errors.Is(err, ErrCancelled) {
 		t.Fatalf("Execute() error = %v, want cancellation", err)
 	}

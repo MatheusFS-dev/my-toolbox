@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -129,6 +130,110 @@ func TestInteractiveCommandUsesAttachedStandardStreams(t *testing.T) {
 	}
 	if stderr.String() != "script stderr\n" {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestInteractiveBashScriptForwardsArgumentsAndAttachedStreams(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the test requires a POSIX Bash executable")
+	}
+	root := t.TempDir()
+	script := filepath.Join(root, "script.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nread value\nprintf 'stdin=%s\\n' \"$value\"\nprintf 'arguments=%s\\n' \"$*\"\nprintf 'script stderr\\n' >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := Command{Name: "script", Protocol: "interactive-script", Entrypoints: map[string][]string{"linux-amd64": {"bash-script", "script.sh"}}}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	executor := ProcessExecutor{Root: root, Platform: "linux-amd64", Builtins: unusedBuiltins{}, Input: strings.NewReader("terminal input\n"), Output: stdout, Error: stderr}
+
+	if err := executor.Run(command, map[string]any{}, []string{"one", "two words"}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "stdin=terminal input\narguments=one two words\n" || stderr.String() != "script stderr\n" {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestInteractiveSudoScriptUsesSudoBashSeparator(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake sudo executable is a POSIX shell script")
+	}
+	root := t.TempDir()
+	bin := t.TempDir()
+	recorder := filepath.Join(root, "arguments.txt")
+	if err := os.WriteFile(filepath.Join(bin, "sudo"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RECORDER\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("RECORDER", recorder)
+	command := Command{Name: "script", Protocol: "interactive-script", Elevation: "sudo", Entrypoints: map[string][]string{"linux-amd64": {"bash-script", "script.sh"}}}
+	executor := ProcessExecutor{Root: root, Platform: "linux-amd64", Builtins: unusedBuiltins{}, Input: strings.NewReader(""), Output: io.Discard, Error: io.Discard}
+
+	if err := executor.Run(command, map[string]any{}, []string{"argument"}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "--\nbash\n" + filepath.Join(root, "script.sh") + "\nargument\n"
+	if string(content) != want {
+		t.Fatalf("sudo arguments = %q, want %q", content, want)
+	}
+}
+
+func TestInteractivePowerShellScriptUsesPortableInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake PowerShell executable is a POSIX shell script")
+	}
+	root := t.TempDir()
+	bin := t.TempDir()
+	recorder := filepath.Join(root, "arguments.txt")
+	if err := os.WriteFile(filepath.Join(bin, "powershell.exe"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$RECORDER\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("RECORDER", recorder)
+	command := Command{Name: "script", Protocol: "interactive-script", Entrypoints: map[string][]string{"windows-amd64": {"powershell-script", "script.ps1"}}}
+	executor := ProcessExecutor{Root: root, Platform: "windows-amd64", Builtins: unusedBuiltins{}, Input: strings.NewReader(""), Output: io.Discard, Error: io.Discard}
+
+	if err := executor.Run(command, map[string]any{}, []string{"argument"}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-NoLogo\n-NoProfile\n-ExecutionPolicy\nBypass\n-File\n" + filepath.Join(root, "script.ps1") + "\nargument\n"
+	if string(content) != want {
+		t.Fatalf("PowerShell arguments = %q, want %q", content, want)
+	}
+}
+
+func TestDetectEnvironmentDistinguishesNativeLinuxWSLAndWindows(t *testing.T) {
+	root := t.TempDir()
+	osrelease := filepath.Join(root, "osrelease")
+	if err := os.WriteFile(osrelease, []byte("6.8.0-generic\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := detectEnvironment("linux", osrelease)
+	if err != nil || environment != "linux-native" {
+		t.Fatalf("detectEnvironment(native) = %q, %v", environment, err)
+	}
+	if err := os.WriteFile(osrelease, []byte("5.15.153.1-microsoft-standard-WSL2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	environment, err = detectEnvironment("linux", osrelease)
+	if err != nil || environment != "linux-wsl" {
+		t.Fatalf("detectEnvironment(WSL) = %q, %v", environment, err)
+	}
+	environment, err = detectEnvironment("windows", osrelease)
+	if err != nil || environment != "windows" {
+		t.Fatalf("detectEnvironment(Windows) = %q, %v", environment, err)
+	}
+	if _, err := detectEnvironment("linux", filepath.Join(root, "missing")); err == nil || !strings.Contains(err.Error(), "detect Linux environment") {
+		t.Fatalf("detectEnvironment(missing) error = %v", err)
 	}
 }
 

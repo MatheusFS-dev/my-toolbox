@@ -30,7 +30,23 @@ jobs:
           python-version: '3.12'
       - run: go test ./...
       - run: python -m unittest discover -s packages/agent-workspace-template/source/tests -v
+      - if: runner.os == 'Linux'
+        run: python -m unittest discover -s packages/others/tests -v
+      - run: python -m compileall -q packages/others
       - run: go build -o "${{ runner.temp }}/tb" ./src
+      - if: runner.os == 'Linux'
+        run: find packages/scripts -type f -name '*.sh' -exec bash -n {} +
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem packages/scripts -Recurse -Filter *.ps1 | ForEach-Object {
+            $Errors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$Errors)
+            if ($Errors.Count -gt 0) {
+              throw "PowerShell syntax error in $($_.FullName): $Errors"
+            }
+          }
+          & ./scripts/install_test.ps1
 
   python2-syntax:
     runs-on: ubuntu-latest
@@ -50,4 +66,5 @@ jobs:
           submodules: recursive
       - run: sh scripts/next-release-version_test.sh
       - run: sh scripts/build-release_test.sh
-      - run: shellcheck install.sh scripts/build-release.sh scripts/build-release_test.sh scripts/testdata/go
+      - run: sh scripts/install_test.sh
+      - run: shellcheck install.sh scripts/build-release.sh scripts/build-release_test.sh scripts/install_test.sh scripts/testdata/go

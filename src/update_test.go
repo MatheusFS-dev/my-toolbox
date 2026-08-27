@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,75 @@ func TestArchiveExtractorsRejectPathTraversal(t *testing.T) {
 	}
 }
 
+func TestArchiveExtractorsPreserveSafeSymlinksAndRejectEscapes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symbolic links requires optional Windows privileges")
+	}
+	tests := []struct {
+		name    string
+		extract func([]byte, string) error
+		build   func(string) []byte
+	}{
+		{
+			name:    "tar",
+			extract: extractTarArchive,
+			build: func(target string) []byte {
+				buffer := &bytes.Buffer{}
+				gzipWriter := gzip.NewWriter(buffer)
+				tarWriter := tar.NewWriter(gzipWriter)
+				if err := tarWriter.WriteHeader(&tar.Header{Name: "template/link", Linkname: target, Typeflag: tar.TypeSymlink, Mode: 0o777}); err != nil {
+					t.Fatal(err)
+				}
+				if err := tarWriter.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if err := gzipWriter.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return buffer.Bytes()
+			},
+		},
+		{
+			name:    "zip",
+			extract: extractZipArchive,
+			build: func(target string) []byte {
+				buffer := &bytes.Buffer{}
+				zipWriter := zip.NewWriter(buffer)
+				header := &zip.FileHeader{Name: "template/link", Method: zip.Store}
+				header.SetMode(os.ModeSymlink | 0o777)
+				writer, err := zipWriter.CreateHeader(header)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := io.WriteString(writer, target); err != nil {
+					t.Fatal(err)
+				}
+				if err := zipWriter.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return buffer.Bytes()
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name+" safe", func(t *testing.T) {
+			root := t.TempDir()
+			if err := test.extract(test.build("target.txt"), root); err != nil {
+				t.Fatal(err)
+			}
+			target, err := os.Readlink(filepath.Join(root, "template", "link"))
+			if err != nil || target != "target.txt" {
+				t.Fatalf("Readlink() = %q, %v", target, err)
+			}
+		})
+		t.Run(test.name+" escape", func(t *testing.T) {
+			if err := test.extract(test.build("../../outside"), t.TempDir()); err == nil {
+				t.Fatal("extractor accepted escaping symbolic link")
+			}
+		})
+	}
+}
+
 func TestValidatePayloadRejectsMalformedArchive(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "commands.json"), []byte(`{"commands":[]}`), 0o644); err != nil {
@@ -82,6 +152,30 @@ func TestValidatePayloadRejectsMalformedArchive(t *testing.T) {
 	}
 	if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
 		t.Fatal("validatePayload() accepted malformed payload")
+	}
+}
+
+func TestValidatePayloadRequiresEveryDeclaredNonBuiltinEntrypoint(t *testing.T) {
+	root := t.TempDir()
+	catalog := `{"commands":[{"name":"builtin-tool","description":"Builtin","package":"p","visibility":"list","protocol":"builtin","environments":["linux-native"],"entrypoints":{"linux-amd64":["builtin","builtin-tool"],"linux-arm64":["builtin","builtin-tool"]}},{"name":"script-tool","description":"Script","package":"p","visibility":"list","protocol":"interactive-script","environments":["linux-native"],"entrypoints":{"linux-amd64":["bash-script","packages/p/script.sh"],"linux-arm64":["bash-script","packages/p/script.sh"]}}]}`
+	files := map[string][]byte{
+		"tb":            []byte("binary"),
+		"commands.json": []byte(catalog),
+		"version.txt":   []byte("0.1.2\n"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt": []byte("toml==0.10.2\n"),
+	}
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := validatePayload(root, "linux-amd64", "0.1.2")
+	if err == nil || !strings.Contains(err.Error(), "packages/p/script.sh") {
+		t.Fatalf("validatePayload() error = %v, want missing script", err)
 	}
 }
 
@@ -120,6 +214,16 @@ func TestValidatePayloadRequiresEveryLinuxInteractiveInstallerAndMatchingVersion
 		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py": []byte("script"),
 		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py":     []byte("script"),
 		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":       []byte("toml==0.10.2\n"),
+		"packages/scripts/terminal/alacritty/setup_alacritty.sh":                                []byte("script"),
+		"packages/scripts/terminal/kitty/setup_kitty.sh":                                        []byte("script"),
+		"packages/scripts/terminal/wsl/setup_wsl.sh":                                            []byte("script"),
+		"packages/scripts/terminal/wsl/set_default_cwd.sh":                                      []byte("script"),
+		"packages/scripts/utils/change_grub_order.sh":                                           []byte("script"),
+		"packages/scripts/utils/setup_venv.sh":                                                  []byte("script"),
+		"packages/scripts/utils/toggle_nopasswd_sudo.sh":                                        []byte("script"),
+		"packages/others/create_env_alias.py":                                                   []byte("script"),
+		"packages/others/bootstrap_python_from_venv.py":                                         []byte("script"),
+		"packages/others/create_project_template.py":                                            []byte("script"),
 	}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -143,6 +247,16 @@ func TestValidatePayloadRequiresEveryLinuxInteractiveInstallerAndMatchingVersion
 		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py",
 		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py",
 		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt",
+		"packages/scripts/terminal/alacritty/setup_alacritty.sh",
+		"packages/scripts/terminal/kitty/setup_kitty.sh",
+		"packages/scripts/terminal/wsl/setup_wsl.sh",
+		"packages/scripts/terminal/wsl/set_default_cwd.sh",
+		"packages/scripts/utils/change_grub_order.sh",
+		"packages/scripts/utils/setup_venv.sh",
+		"packages/scripts/utils/toggle_nopasswd_sudo.sh",
+		"packages/others/create_env_alias.py",
+		"packages/others/bootstrap_python_from_venv.py",
+		"packages/others/create_project_template.py",
 	} {
 		missingPath := filepath.Join(root, filepath.FromSlash(relativePath))
 		content, err := os.ReadFile(missingPath)
@@ -181,6 +295,9 @@ func TestValidatePayloadRequiresEveryWindowsInteractiveInstaller(t *testing.T) {
 		"packages/agent-workspace-template/source/scripts/windows/install_claude.py":      []byte("script"),
 		"packages/agent-workspace-template/source/scripts/windows/install_antigravity.py": []byte("script"),
 		"packages/agent-workspace-template/source/scripts/windows/install_project.py":     []byte("script"),
+		"packages/scripts/terminal/windows/setup_windows.ps1":                             []byte("script"),
+		"packages/scripts/terminal/windows/set_vscode_wsl_cwd.ps1":                        []byte("script"),
+		"packages/others/create_project_template.py":                                      []byte("script"),
 	}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -199,6 +316,9 @@ func TestValidatePayloadRequiresEveryWindowsInteractiveInstaller(t *testing.T) {
 		"packages/agent-workspace-template/source/scripts/windows/install_claude.py",
 		"packages/agent-workspace-template/source/scripts/windows/install_antigravity.py",
 		"packages/agent-workspace-template/source/scripts/windows/install_project.py",
+		"packages/scripts/terminal/windows/setup_windows.ps1",
+		"packages/scripts/terminal/windows/set_vscode_wsl_cwd.ps1",
+		"packages/others/create_project_template.py",
 	} {
 		missingPath := filepath.Join(root, filepath.FromSlash(relativePath))
 		if err := os.Remove(missingPath); err != nil {
@@ -330,6 +450,16 @@ func validToolboxTar(t *testing.T) []byte {
 		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py": []byte("script"),
 		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py":     []byte("script"),
 		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":       []byte("toml==0.10.2\n"),
+		"packages/scripts/terminal/alacritty/setup_alacritty.sh":                                []byte("script"),
+		"packages/scripts/terminal/kitty/setup_kitty.sh":                                        []byte("script"),
+		"packages/scripts/terminal/wsl/setup_wsl.sh":                                            []byte("script"),
+		"packages/scripts/terminal/wsl/set_default_cwd.sh":                                      []byte("script"),
+		"packages/scripts/utils/change_grub_order.sh":                                           []byte("script"),
+		"packages/scripts/utils/setup_venv.sh":                                                  []byte("script"),
+		"packages/scripts/utils/toggle_nopasswd_sudo.sh":                                        []byte("script"),
+		"packages/others/create_env_alias.py":                                                   []byte("script"),
+		"packages/others/bootstrap_python_from_venv.py":                                         []byte("script"),
+		"packages/others/create_project_template.py":                                            []byte("script"),
 	}
 	archive := &bytes.Buffer{}
 	gzipWriter := gzip.NewWriter(archive)
