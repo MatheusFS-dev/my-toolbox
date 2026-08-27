@@ -11,10 +11,11 @@ import (
 var commandNamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
 
 var reservedCommands = map[string]bool{
-	"help":    true,
-	"list":    true,
-	"update":  true,
-	"version": true,
+	"help":      true,
+	"list":      true,
+	"uninstall": true,
+	"update":    true,
+	"version":   true,
 }
 
 var supportedPlatforms = []string{"linux-amd64", "linux-arm64", "windows-amd64"}

@@ -197,3 +197,61 @@ func TestRepeatedQuestionIDFailsExplicitly(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 }
+
+func TestUninstallRequiresConfirmationBeforeExecution(t *testing.T) {
+	executor := &fakeExecutor{arguments: map[string][]string{}}
+	app := App{
+		Catalog:  testCatalog("tool"),
+		UI:       &fakeUI{answers: map[string]any{"confirm-uninstall": true}},
+		Executor: executor,
+	}
+	if err := app.Execute([]string{"uninstall"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(executor.runs, []string{"uninstall"}) {
+		t.Fatalf("runs = %v, want uninstall", executor.runs)
+	}
+}
+
+func TestUninstallDeclinedLeavesInstallationUntouched(t *testing.T) {
+	output := &bytes.Buffer{}
+	executor := &fakeExecutor{arguments: map[string][]string{}}
+	app := App{
+		Catalog:  testCatalog("tool"),
+		UI:       &fakeUI{answers: map[string]any{"confirm-uninstall": false}},
+		Executor: executor,
+		Output:   output,
+	}
+	if err := app.Execute([]string{"uninstall"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.runs) != 0 {
+		t.Fatalf("declined uninstall ran commands: %v", executor.runs)
+	}
+	if !strings.Contains(output.String(), "cancelled") {
+		t.Fatalf("output = %q, want cancellation", output.String())
+	}
+}
+
+func TestUninstallRejectsArguments(t *testing.T) {
+	executor := &fakeExecutor{arguments: map[string][]string{}}
+	app := App{Catalog: testCatalog("tool"), UI: &fakeUI{}, Executor: executor}
+	err := app.Execute([]string{"uninstall", "now"})
+	if err == nil || !strings.Contains(err.Error(), "does not accept arguments") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(executor.runs) != 0 {
+		t.Fatalf("invalid uninstall ran commands: %v", executor.runs)
+	}
+}
+
+func TestUninstallCancellationRunsNothing(t *testing.T) {
+	executor := &fakeExecutor{arguments: map[string][]string{}}
+	app := App{Catalog: testCatalog("tool"), UI: &fakeUI{err: ErrCancelled}, Executor: executor}
+	if err := app.Execute([]string{"uninstall"}); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("Execute() error = %v, want cancellation", err)
+	}
+	if len(executor.runs) != 0 {
+		t.Fatalf("cancelled uninstall ran commands: %v", executor.runs)
+	}
+}

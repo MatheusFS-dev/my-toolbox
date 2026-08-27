@@ -55,7 +55,7 @@ func (app App) Execute(arguments []string) error {
 	}
 	switch arguments[0] {
 	case "help":
-		_, err := fmt.Fprintln(output, "Usage: tb list | tb <tool> [arguments...] | tb update | tb version | tb help")
+		_, err := fmt.Fprintln(output, "Usage: tb list | tb <tool> [arguments...] | tb update | tb uninstall | tb version | tb help")
 		return err
 	case "version":
 		_, err := fmt.Fprintln(output, app.Version)
@@ -91,6 +91,28 @@ func (app App) Execute(arguments []string) error {
 			return fmt.Errorf("tb update does not accept arguments")
 		}
 		command := Command{Name: "update", Description: "Update toolbox", Package: "toolbox", Protocol: "builtin"}
+		return app.Executor.Run(command, map[string]any{}, nil)
+	case "uninstall":
+		if len(arguments) != 1 {
+			return fmt.Errorf("tb uninstall does not accept arguments")
+		}
+		answer, err := app.UI.Ask(Question{
+			ID:    "confirm-uninstall",
+			Type:  "confirm",
+			Title: "Uninstall my-toolbox and remove all installed versions?",
+		})
+		if err != nil {
+			return err
+		}
+		confirmed, valid := answer.(bool)
+		if !valid {
+			return fmt.Errorf("uninstall confirmation returned an invalid answer")
+		}
+		if !confirmed {
+			_, err := fmt.Fprintln(output, "Uninstall cancelled.")
+			return err
+		}
+		command := Command{Name: "uninstall", Description: "Uninstall toolbox", Package: "toolbox", Protocol: "builtin"}
 		return app.Executor.Run(command, map[string]any{}, nil)
 	default:
 		command, exists := app.Catalog.Find(arguments[0])

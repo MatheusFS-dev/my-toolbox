@@ -10,6 +10,14 @@ var version = "development"
 
 // main loads the installed payload and executes one tb command.
 func main() {
+	cleanupHandled, cleanupErr := runPlatformCleanup()
+	if cleanupHandled {
+		if cleanupErr != nil {
+			fmt.Fprintln(os.Stderr, cleanupErr)
+			os.Exit(1)
+		}
+		return
+	}
 	root, err := executableRoot()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

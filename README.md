@@ -8,6 +8,7 @@
 tb list
 tb <tool> [arguments...]
 tb update
+tb uninstall
 tb version
 tb help
 ```
@@ -33,6 +34,10 @@ irm https://matheusfs-dev.github.io/my-toolbox/install.ps1 | iex
 Bootstrap installation does not replace an existing toolbox. Use `tb update` to download and verify a newer release, validate its payload, install it into a versioned user directory, and atomically switch the stable wrapper.
 
 The published URLs become available only after GitHub Pages is enabled for the repository and the included Pages workflow has deployed successfully.
+
+## Uninstallation
+
+Run `tb uninstall` and confirm removal. The command removes the toolbox wrapper and every installed toolbox version. It does not remove tools, plugins, agent configurations, or generated workspaces.
 
 ## Development
 

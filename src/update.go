@@ -118,6 +118,9 @@ func toolboxDataRoot(platform string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve user home: %w", err)
 	}
+	if root := os.Getenv("XDG_DATA_HOME"); root != "" {
+		return filepath.Join(root, "my-toolbox"), nil
+	}
 	return filepath.Join(home, ".local", "share", "my-toolbox"), nil
 }
 

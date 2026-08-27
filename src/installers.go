@@ -126,6 +126,8 @@ func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
 		return runAgentPlugin("agy", []string{"plugin", "install", "https://github.com/obra/superpowers"}, builtins.platform, builtins.output)
 	case "update":
 		return builtins.update()
+	case "uninstall":
+		return builtins.uninstall()
 	default:
 		return fmt.Errorf("unsupported builtin command %q", name)
 	}
