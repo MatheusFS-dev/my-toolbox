@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+output=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o)
+            output=$2
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# build-release.sh always supplies -o; failing here keeps the fixture specific
+# enough to expose an accidental change to that build contract.
+test -n "$output"
+printf 'test executable\n' > "$output"

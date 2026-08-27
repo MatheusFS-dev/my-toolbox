@@ -42,6 +42,7 @@ jobs:
         run: |
           go test ./...
           python -m unittest discover -s packages/agent-workspace-template/source/tests -v
+          sh scripts/build-release_test.sh
       - name: Resolve next version
         id: version
         env:

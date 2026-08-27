@@ -51,7 +51,8 @@ build_payload windows-amd64 windows amd64 tb.exe
 
 for platform in linux-amd64 linux-arm64; do
     archive="toolbox-$platform.tar.gz"
-    tar -C "$temporary_root/$platform" -czf "$output_directory/$archive" .
+    tar -C "$temporary_root/$platform" -czf "$output_directory/$archive" \
+        tb commands.json packages version.txt
     (
         cd "$output_directory"
         sha256sum "$archive" > "$archive.sha256"

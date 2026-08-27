@@ -46,5 +46,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - run: sh scripts/next-release-version_test.sh
-      - run: shellcheck install.sh scripts/build-release.sh
+      - run: sh scripts/build-release_test.sh
+      - run: shellcheck install.sh scripts/build-release.sh scripts/build-release_test.sh scripts/testdata/go
