@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -38,15 +42,22 @@ jobs:
         run: |
           go test ./...
           python -m unittest discover -s packages/agent-workspace-template/source/tests -v
+      - name: Resolve next version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | sh scripts/next-release-version.sh)
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
       - name: Build release archives
         env:
-          VERSION: 0.1.${{ github.run_id }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           chmod +x scripts/build-release.sh
           scripts/build-release.sh "$VERSION" dist
       - name: Publish exact commit
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: v0.1.${{ github.run_id }}
+          TAG: v${{ steps.version.outputs.version }}
           TOOLBOX_SHA: ${{ inputs.toolbox_sha }}
         run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$TOOLBOX_SHA" --title "$TAG" --generate-notes
