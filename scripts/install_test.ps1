@@ -36,7 +36,7 @@ try {
     Compress-Archive -Path (Join-Path $Payload '*') -DestinationPath $Archive
     $Digest = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
     Set-Content -LiteralPath "$Archive.sha256" -Value "$Digest  toolbox-windows-amd64.zip" -Encoding ascii
-    $script:FixtureArchive = $Archive
+    $global:ToolboxInstallerFixtureArchive = $Archive
 
     function Invoke-RestMethod {
         param(
@@ -50,9 +50,9 @@ try {
             [string]$OutFile
         )
         if ($Uri.EndsWith('.sha256')) {
-            Copy-Item -LiteralPath "$script:FixtureArchive.sha256" -Destination $OutFile
+            Copy-Item -LiteralPath "$global:ToolboxInstallerFixtureArchive.sha256" -Destination $OutFile
         } else {
-            Copy-Item -LiteralPath $script:FixtureArchive -Destination $OutFile
+            Copy-Item -LiteralPath $global:ToolboxInstallerFixtureArchive -Destination $OutFile
         }
     }
 
@@ -92,7 +92,7 @@ try {
     }
 
     Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox') -Recurse -Force
-    Set-Content -LiteralPath "$script:FixtureArchive.sha256" -Value "$('0' * 64)  toolbox-windows-amd64.zip" -Encoding ascii
+    Set-Content -LiteralPath "$global:ToolboxInstallerFixtureArchive.sha256" -Value "$('0' * 64)  toolbox-windows-amd64.zip" -Encoding ascii
     $Failure = ''
     try {
         & $Installer
@@ -116,6 +116,7 @@ try {
         throw "Failed installer left temporary directories behind: $LeakedTemporaryPaths"
     }
 } finally {
+    Remove-Variable -Name ToolboxInstallerFixtureArchive -Scope Global -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $OriginalLocalAppData
     $env:PATH = $OriginalPath
     if (Test-Path -LiteralPath $TestRoot) {
