@@ -37,7 +37,7 @@ func main() {
 	app := App{
 		Catalog:  catalog,
 		UI:       HuhUI{},
-		Executor: ProcessExecutor{Root: root, Platform: platform, Builtins: builtins, Output: os.Stdout},
+		Executor: ProcessExecutor{Root: root, Platform: platform, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
 		Output:   os.Stdout,
 		Version:  version,
 	}

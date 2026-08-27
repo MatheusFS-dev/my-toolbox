@@ -125,19 +125,23 @@ func toolboxDataRoot(platform string) (string, error) {
 }
 
 func validatePayload(root, platform, expectedVersion string) error {
-	if _, err := LoadCatalogFile(filepath.Join(root, "commands.json")); err != nil {
+	catalog, err := LoadCatalogFile(filepath.Join(root, "commands.json"))
+	if err != nil {
 		return fmt.Errorf("invalid toolbox payload catalog: %w", err)
 	}
 	binary := "tb"
-	required := []string{
-		filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python3", "toolbox_adapter.py"),
-		filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python2", "toolbox_adapter.py"),
-		filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python2", "requirements.txt"),
-	}
+	required := []string{}
 	if platform == "windows-amd64" {
 		binary = "tb.exe"
-		required = []string{
-			filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "windows", "toolbox_adapter.py"),
+	} else {
+		required = append(required, filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python2", "requirements.txt"))
+	}
+	for _, command := range catalog.Commands {
+		if command.Protocol != "interactive-python" {
+			continue
+		}
+		for _, script := range command.Entrypoints[platform][1:] {
+			required = append(required, filepath.Join(root, filepath.FromSlash(script)))
 		}
 	}
 	required = append(required, filepath.Join(root, binary), filepath.Join(root, "version.txt"))

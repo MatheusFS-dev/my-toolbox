@@ -66,7 +66,16 @@ curl -fsSL "$base_url/$archive.sha256" -o "$temporary_root/$archive.sha256"
 mkdir -p "$temporary_root/payload"
 tar -xzf "$temporary_root/$archive" -C "$temporary_root/payload"
 
-for required in tb commands.json version.txt packages/agent-workspace-template/source/scripts/linux/python3/toolbox_adapter.py packages/agent-workspace-template/source/scripts/linux/python2/toolbox_adapter.py packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt; do
+for required in tb commands.json version.txt \
+    packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py \
+    packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py \
+    packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py \
+    packages/agent-workspace-template/source/scripts/linux/python3/install_project.py \
+    packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py \
+    packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py \
+    packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py \
+    packages/agent-workspace-template/source/scripts/linux/python2/install_project.py \
+    packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt; do
     [ -f "$temporary_root/payload/$required" ] || {
         printf 'Downloaded payload is missing %s.\n' "$required" >&2
         exit 1

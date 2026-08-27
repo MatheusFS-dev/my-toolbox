@@ -101,7 +101,7 @@ func TestCompareVersionsRejectsUnsafeAndOlderReleases(t *testing.T) {
 	}
 }
 
-func TestValidatePayloadRequiresEveryLinuxFallbackAndMatchingVersion(t *testing.T) {
+func TestValidatePayloadRequiresEveryLinuxInteractiveInstallerAndMatchingVersion(t *testing.T) {
 	root := t.TempDir()
 	catalog, err := os.ReadFile("../commands.json")
 	if err != nil {
@@ -111,9 +111,15 @@ func TestValidatePayloadRequiresEveryLinuxFallbackAndMatchingVersion(t *testing.
 		"tb":            []byte("binary"),
 		"commands.json": catalog,
 		"version.txt":   []byte("0.1.2\n"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/toolbox_adapter.py": []byte("adapter"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/toolbox_adapter.py": []byte("adapter"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":   []byte("toml==0.10.2\n"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py":       []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py":      []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py": []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_project.py":     []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py":       []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py":      []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py": []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py":     []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":       []byte("toml==0.10.2\n"),
 	}
 	for name, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -127,20 +133,83 @@ func TestValidatePayloadRequiresEveryLinuxFallbackAndMatchingVersion(t *testing.
 	if err := validatePayload(root, "linux-amd64", "0.1.2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python2", "toolbox_adapter.py")); err != nil {
-		t.Fatal(err)
-	}
-	if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
-		t.Fatal("validatePayload() accepted a payload without Python 2 fallback")
-	}
-	if err := os.WriteFile(filepath.Join(root, "packages", "agent-workspace-template", "source", "scripts", "linux", "python2", "toolbox_adapter.py"), []byte("adapter"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, relativePath := range []string{
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py",
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py",
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py",
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_project.py",
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py",
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py",
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py",
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py",
+		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt",
+	} {
+		missingPath := filepath.Join(root, filepath.FromSlash(relativePath))
+		content, err := os.ReadFile(missingPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(missingPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
+			t.Fatalf("validatePayload() accepted a payload without %s", relativePath)
+		}
+		if err := os.WriteFile(missingPath, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "version.txt"), []byte("0.1.3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
 		t.Fatal("validatePayload() accepted mismatched version.txt")
+	}
+}
+
+func TestValidatePayloadRequiresEveryWindowsInteractiveInstaller(t *testing.T) {
+	root := t.TempDir()
+	catalog, err := os.ReadFile("../commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{
+		"tb.exe":        []byte("binary"),
+		"commands.json": catalog,
+		"version.txt":   []byte("0.1.2\n"),
+		"packages/agent-workspace-template/source/scripts/windows/install_codex.py":       []byte("script"),
+		"packages/agent-workspace-template/source/scripts/windows/install_claude.py":      []byte("script"),
+		"packages/agent-workspace-template/source/scripts/windows/install_antigravity.py": []byte("script"),
+		"packages/agent-workspace-template/source/scripts/windows/install_project.py":     []byte("script"),
+	}
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validatePayload(root, "windows-amd64", "0.1.2"); err != nil {
+		t.Fatal(err)
+	}
+	for _, relativePath := range []string{
+		"packages/agent-workspace-template/source/scripts/windows/install_codex.py",
+		"packages/agent-workspace-template/source/scripts/windows/install_claude.py",
+		"packages/agent-workspace-template/source/scripts/windows/install_antigravity.py",
+		"packages/agent-workspace-template/source/scripts/windows/install_project.py",
+	} {
+		missingPath := filepath.Join(root, filepath.FromSlash(relativePath))
+		if err := os.Remove(missingPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := validatePayload(root, "windows-amd64", "0.1.2"); err == nil {
+			t.Fatalf("validatePayload() accepted a payload without %s", relativePath)
+		}
+		if err := os.WriteFile(missingPath, []byte("script"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -252,9 +321,15 @@ func validToolboxTar(t *testing.T) []byte {
 		"tb":            []byte("binary"),
 		"commands.json": catalog,
 		"version.txt":   []byte("0.1.2\n"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/toolbox_adapter.py": []byte("adapter"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/toolbox_adapter.py": []byte("adapter"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":   []byte("toml==0.10.2\n"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py":       []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py":      []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py": []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python3/install_project.py":     []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py":       []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py":      []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py": []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py":     []byte("script"),
+		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":       []byte("toml==0.10.2\n"),
 	}
 	archive := &bytes.Buffer{}
 	gzipWriter := gzip.NewWriter(archive)

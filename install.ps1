@@ -56,7 +56,10 @@ try {
         'tb.exe',
         'commands.json',
         'version.txt',
-        'packages\agent-workspace-template\source\scripts\windows\toolbox_adapter.py'
+        'packages\agent-workspace-template\source\scripts\windows\install_codex.py',
+        'packages\agent-workspace-template\source\scripts\windows\install_claude.py',
+        'packages\agent-workspace-template\source\scripts\windows\install_antigravity.py',
+        'packages\agent-workspace-template\source\scripts\windows\install_project.py'
     )
     foreach ($RelativePath in $Required) {
         if (-not (Test-Path -LiteralPath (Join-Path $Payload $RelativePath) -PathType Leaf)) {

@@ -12,9 +12,11 @@ type fakeUI struct {
 	selected []string
 	answers  map[string]any
 	err      error
+	commands []Command
 }
 
-func (ui *fakeUI) Select(_ []Command) ([]string, error) {
+func (ui *fakeUI) Select(commands []Command) ([]string, error) {
+	ui.commands = append([]Command(nil), commands...)
 	return ui.selected, ui.err
 }
 
@@ -54,9 +56,76 @@ func (executor *fakeExecutor) Run(command Command, _ map[string]any, arguments [
 func testCatalog(names ...string) Catalog {
 	commands := make([]Command, 0, len(names))
 	for _, name := range names {
-		commands = append(commands, Command{Name: name, Description: name, Package: "test", Protocol: "builtin"})
+		commands = append(commands, Command{Name: name, Description: name, Package: "test", Visibility: "list", Protocol: "builtin"})
 	}
 	return Catalog{Commands: commands}
+}
+
+func TestListExcludesDirectToolsWithoutBlockingDirectExecution(t *testing.T) {
+	catalog := testCatalog("listed", "direct")
+	catalog.Commands[1].Visibility = "direct"
+	ui := &fakeUI{selected: []string{"listed"}}
+	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}}
+	app := App{Catalog: catalog, UI: ui, Executor: executor}
+
+	if err := app.Execute([]string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.commands) != 1 || ui.commands[0].Name != "listed" {
+		t.Fatalf("selector commands = %#v, want listed only", ui.commands)
+	}
+	if err := app.Execute([]string{"direct"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(executor.runs, []string{"listed", "direct"}) {
+		t.Fatalf("runs = %v", executor.runs)
+	}
+}
+
+func TestHelpPrintsEveryCatalogToolOnceInCatalogOrder(t *testing.T) {
+	catalog := testCatalog("first", "direct", "last")
+	catalog.Commands[0].Description = "First description"
+	catalog.Commands[1].Description = "Direct description"
+	catalog.Commands[1].Package = "direct-package"
+	catalog.Commands[1].Visibility = "direct"
+	catalog.Commands[2].Description = "Last description"
+	output := &bytes.Buffer{}
+	app := App{Catalog: catalog, UI: &fakeUI{}, Executor: &fakeExecutor{}, Output: output}
+
+	if err := app.Execute([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	help := output.String()
+	if !strings.HasPrefix(help, "Usage: tb list | tb <tool> [arguments...] | tb update | tb uninstall | tb version | tb help\n") {
+		t.Fatalf("help = %q", help)
+	}
+	previous := -1
+	for _, text := range []string{"first  [test]\n    First description", "direct  [direct-package]\n    Direct description", "last  [test]\n    Last description"} {
+		if strings.Count(help, text) != 1 {
+			t.Fatalf("help occurrence for %q = %d; help = %q", text, strings.Count(help, text), help)
+		}
+		index := strings.Index(help, text)
+		if index <= previous {
+			t.Fatalf("help is not in catalog order: %q", help)
+		}
+		previous = index
+	}
+}
+
+func TestRepositoryHelpIncludesDirectProjectTool(t *testing.T) {
+	catalog, err := LoadCatalogFile("../commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := &bytes.Buffer{}
+	app := App{Catalog: catalog, Output: output}
+	if err := app.Execute([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	entry := "setup-agents-project  [agent-workspace-template]\n    Install selected agent instruction files into a project."
+	if strings.Count(output.String(), entry) != 1 {
+		t.Fatalf("project help entry count = %d; help = %q", strings.Count(output.String(), entry), output.String())
+	}
 }
 
 func TestBareInvocationIsInvalidAndDoesNotExecute(t *testing.T) {
@@ -126,6 +195,9 @@ func TestFailureStopsBatchAndPrintsSummary(t *testing.T) {
 		if !strings.Contains(output.String(), text) {
 			t.Fatalf("summary %q missing %q", output.String(), text)
 		}
+	}
+	if strings.Contains(strings.ToLower(output.String()), "rollback") {
+		t.Fatalf("summary makes an unsupported rollback claim: %q", output.String())
 	}
 }
 

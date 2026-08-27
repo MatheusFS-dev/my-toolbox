@@ -22,8 +22,7 @@ func (HuhUI) Select(commands []Command) ([]string, error) {
 	selected := []string{}
 	options := make([]huh.Option[string], 0, len(commands))
 	for _, command := range commands {
-		label := fmt.Sprintf("%s  [%s]\n%s", command.Name, command.Package, command.Description)
-		options = append(options, huh.NewOption(label, command.Name))
+		options = append(options, huh.NewOption(selectorLabel(command), command.Name))
 	}
 	field := huh.NewMultiSelect[string]().
 		Title("Select tools (Arrow keys move, Space toggles, Enter continues)").
@@ -38,7 +37,7 @@ func (HuhUI) Select(commands []Command) ([]string, error) {
 	return selected, nil
 }
 
-// Ask renders exactly one typed adapter question.
+// Ask renders exactly one typed configuration question in a visible form.
 //
 // Args:
 //   - question: Validated text, confirmation, single, or multiple question.
@@ -69,7 +68,7 @@ func (HuhUI) Ask(question Question) (any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported question type %q", question.Type)
 	}
-	if err := field.Run(); err != nil {
+	if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return nil, ErrCancelled
 		}
@@ -85,6 +84,21 @@ func (HuhUI) Ask(question Question) (any, error) {
 	default:
 		return nil, fmt.Errorf("question %q produced an invalid answer", question.ID)
 	}
+}
+
+// selectorLabel formats one catalog tool for the interactive selector.
+//
+// Args:
+//   - command: Tool metadata whose name, package, and description are shown.
+//
+// Returns:
+//   - string: Two-line label with an indented ANSI gray description and a
+//     trailing blank line separating it from the next tool.
+//
+// Raises:
+//   - None.
+func selectorLabel(command Command) string {
+	return fmt.Sprintf("%s  [%s]\n    \x1b[38;5;8m%s\x1b[0m\n\n", command.Name, command.Package, command.Description)
 }
 
 func huhOptions(options []Option) []huh.Option[string] {

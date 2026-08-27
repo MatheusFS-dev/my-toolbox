@@ -55,8 +55,15 @@ func (app App) Execute(arguments []string) error {
 	}
 	switch arguments[0] {
 	case "help":
-		_, err := fmt.Fprintln(output, "Usage: tb list | tb <tool> [arguments...] | tb update | tb uninstall | tb version | tb help")
-		return err
+		if _, err := fmt.Fprintln(output, "Usage: tb list | tb <tool> [arguments...] | tb update | tb uninstall | tb version | tb help"); err != nil {
+			return err
+		}
+		for _, command := range app.Catalog.Commands {
+			if _, err := fmt.Fprintf(output, "%s  [%s]\n    %s\n\n", command.Name, command.Package, command.Description); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "version":
 		_, err := fmt.Fprintln(output, app.Version)
 		return err
@@ -64,7 +71,13 @@ func (app App) Execute(arguments []string) error {
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb list does not accept arguments")
 		}
-		selected, err := app.UI.Select(app.Catalog.Commands)
+		listedCommands := make([]Command, 0, len(app.Catalog.Commands))
+		for _, command := range app.Catalog.Commands {
+			if command.Visibility == "list" {
+				listedCommands = append(listedCommands, command)
+			}
+		}
+		selected, err := app.UI.Select(listedCommands)
 		if err != nil {
 			return err
 		}
@@ -74,7 +87,8 @@ func (app App) Execute(arguments []string) error {
 		}
 		selectedSet := map[string]bool{}
 		for _, name := range selected {
-			if _, exists := app.Catalog.Find(name); !exists {
+			command, exists := app.Catalog.Find(name)
+			if !exists || command.Visibility != "list" {
 				return fmt.Errorf("selector returned unknown tool %q", name)
 			}
 			selectedSet[name] = true

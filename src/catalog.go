@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 )
 
 var commandNamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
@@ -22,11 +23,13 @@ var supportedPlatforms = []string{"linux-amd64", "linux-arm64", "windows-amd64"}
 
 // Command describes one editable catalog tool and its platform entrypoints.
 type Command struct {
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	Package     string              `json:"package"`
-	Protocol    string              `json:"protocol"`
-	Entrypoints map[string][]string `json:"entrypoints"`
+	Name             string              `json:"name"`
+	Description      string              `json:"description"`
+	Package          string              `json:"package"`
+	Visibility       string              `json:"visibility"`
+	Protocol         string              `json:"protocol"`
+	DefaultArguments []string            `json:"default_arguments,omitempty"`
+	Entrypoints      map[string][]string `json:"entrypoints"`
 }
 
 // Catalog preserves the user-visible command order from commands.json.
@@ -70,13 +73,24 @@ func LoadCatalog(reader io.Reader) (Catalog, error) {
 		if command.Package == "" {
 			return Catalog{}, fmt.Errorf("command %q has an empty package", command.Name)
 		}
-		if command.Protocol != "builtin" && command.Protocol != "questionnaire" {
+		if command.Visibility != "list" && command.Visibility != "direct" {
+			return Catalog{}, fmt.Errorf("command %q has unsupported visibility %q", command.Name, command.Visibility)
+		}
+		if command.Protocol != "builtin" && command.Protocol != "questionnaire" && command.Protocol != "interactive-python" {
 			return Catalog{}, fmt.Errorf("command %q has unsupported protocol %q", command.Name, command.Protocol)
 		}
+		entrypointType := map[string]string{
+			"builtin":            "builtin",
+			"questionnaire":      "python-adapter",
+			"interactive-python": "python-script",
+		}[command.Protocol]
 		for _, platform := range supportedPlatforms {
 			entrypoint := command.Entrypoints[platform]
-			if len(entrypoint) < 2 || entrypoint[0] == "" || entrypoint[1] == "" {
+			if len(entrypoint) < 2 || entrypoint[0] != entrypointType || entrypoint[1] == "" {
 				return Catalog{}, fmt.Errorf("command %q has invalid %s entrypoint", command.Name, platform)
+			}
+			if command.Protocol == "interactive-python" && strings.HasPrefix(platform, "linux-") && (len(entrypoint) < 3 || entrypoint[2] == "") {
+				return Catalog{}, fmt.Errorf("command %q has invalid %s Python 2.7 fallback entrypoint", command.Name, platform)
 			}
 		}
 	}
