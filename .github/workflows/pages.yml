@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - index.html
       - install.sh
       - install.ps1
 
@@ -26,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           mkdir public
-          cp install.sh install.ps1 public/
+          cp index.html install.sh install.ps1 public/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
