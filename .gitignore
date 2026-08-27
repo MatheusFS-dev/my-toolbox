@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Agent workspace template
+docs/superpowers/specs/
+docs/superpowers/plans/

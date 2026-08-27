@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          - runner: ubuntu-24.04-arm
+          - runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: go test ./...
+      - run: python -m unittest discover -s packages/agent-workspace-template/source/tests -v
+      - run: go build -o "${{ runner.temp }}/tb" ./src
+
+  python2-syntax:
+    runs-on: ubuntu-latest
+    container: python:2.7-buster
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: pip install -r packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt
+      - run: python packages/agent-workspace-template/source/tests/python2_toolbox_adapter_test.py
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck install.sh scripts/build-release.sh

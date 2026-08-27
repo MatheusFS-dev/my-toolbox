@@ -1,0 +1,44 @@
+name: Update agent workspace template
+
+on:
+  repository_dispatch:
+    types: [agent-workspace-template-updated]
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          submodules: recursive
+          fetch-depth: 0
+      - name: Validate and update exact submodule commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TEMPLATE_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          case "$TEMPLATE_SHA" in
+            *[!0-9a-f]*|'') printf 'Invalid template SHA.\n' >&2; exit 1 ;;
+          esac
+          test "${#TEMPLATE_SHA}" -eq 40
+          git -C packages/agent-workspace-template/source fetch origin main "$TEMPLATE_SHA"
+          git -C packages/agent-workspace-template/source cat-file -e "$TEMPLATE_SHA^{commit}"
+          git -C packages/agent-workspace-template/source merge-base --is-ancestor "$TEMPLATE_SHA" origin/main
+          current=$(git -C packages/agent-workspace-template/source rev-parse HEAD)
+          if [ "$current" = "$TEMPLATE_SHA" ]; then
+            printf 'Template is already pinned to %s; no update required.\n' "$TEMPLATE_SHA"
+            exit 0
+          fi
+          git -C packages/agent-workspace-template/source checkout --detach "$TEMPLATE_SHA"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/agent-workspace-template/source
+          git commit -m "chore: update agent workspace template to $TEMPLATE_SHA"
+          git push origin HEAD:main
+          toolbox_sha=$(git rev-parse HEAD)
+          GH_TOKEN="$GITHUB_TOKEN" gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f toolbox_sha="$toolbox_sha"

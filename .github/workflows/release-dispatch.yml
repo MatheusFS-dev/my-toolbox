@@ -1,0 +1,18 @@
+name: Dispatch release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TOOLBOX_SHA: ${{ github.sha }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f toolbox_sha="$TOOLBOX_SHA"

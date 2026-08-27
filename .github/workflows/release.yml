@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolbox_sha:
+        description: Exact toolbox commit to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.toolbox_sha }}
+          submodules: recursive
+      - name: Validate requested commit
+        env:
+          TOOLBOX_SHA: ${{ inputs.toolbox_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$TOOLBOX_SHA"
+          case "$TOOLBOX_SHA" in
+            *[!0-9a-f]*|'') exit 1 ;;
+          esac
+          test "${#TOOLBOX_SHA}" -eq 40
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify release commit
+        run: |
+          go test ./...
+          python -m unittest discover -s packages/agent-workspace-template/source/tests -v
+      - name: Build release archives
+        env:
+          VERSION: 0.1.${{ github.run_id }}
+        run: |
+          chmod +x scripts/build-release.sh
+          scripts/build-release.sh "$VERSION" dist
+      - name: Publish exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v0.1.${{ github.run_id }}
+          TOOLBOX_SHA: ${{ inputs.toolbox_sha }}
+        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$TOOLBOX_SHA" --title "$TAG" --generate-notes
