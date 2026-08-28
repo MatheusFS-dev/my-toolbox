@@ -82,6 +82,7 @@ func groupCommands(commands []Command) []commandGroup {
 // Args:
 //   - commands: Environment-filtered catalog commands, including direct-only
 //     commands when they are supported.
+//   - version: Current toolbox version displayed beside the title.
 //   - terminalWidth: Live TTY width, or 80 for redirected output. Content is
 //     capped at 72 columns and narrower positive widths are honored.
 //   - styled: When true, add foreground and bold ANSI styling. When false,
@@ -95,8 +96,8 @@ func groupCommands(commands []Command) []commandGroup {
 //
 // Example:
 //
-//	help := renderHelp(commands, 80, false)
-func renderHelp(commands []Command, terminalWidth int, styled bool) string {
+//	help := renderHelp(commands, "1.2.3", 80, false)
+func renderHelp(commands []Command, version string, terminalWidth int, styled bool) string {
 	width := min(terminalWidth, maxPresentationWidth)
 	if width < 1 {
 		width = 1
@@ -114,7 +115,7 @@ func renderHelp(commands []Command, terminalWidth int, styled bool) string {
 		}
 	}
 
-	writeHeading("TOOLBOX")
+	writeHeading("TOOLBOX " + version)
 	writeWrapped("Portable terminal tools for supported Linux, WSL, and Windows environments.", 2, ansiWhite)
 	output.WriteByte('\n')
 	writeHeading("USAGE")
@@ -124,7 +125,7 @@ func renderHelp(commands []Command, terminalWidth int, styled bool) string {
 	}{
 		{"tb list", "Select supported tools interactively and run them in catalog order."},
 		{"tb <tool> [arguments...]", "Run one supported catalog tool directly, forwarding its arguments."},
-		{"tb update", "Download, verify, and activate the newest toolbox release."},
+		{"tb update", "Reinstall the toolbox when a newer release is available."},
 		{"tb uninstall", "Confirm and remove the toolbox wrapper and installed versions."},
 		{"tb version", "Print the installed toolbox version."},
 		{"tb help", "Show this usage and the tools supported in the current environment."},

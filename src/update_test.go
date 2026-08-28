@@ -1,17 +1,16 @@
+//go:build !windows
+
 package main
 
 import (
-	"archive/tar"
-	"archive/zip"
 	"bytes"
-	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -44,141 +43,6 @@ func TestChecksumLookupRequiresNamedSHA256(t *testing.T) {
 	}
 }
 
-func TestArchiveExtractorsRejectPathTraversal(t *testing.T) {
-	tarBuffer := &bytes.Buffer{}
-	gzipWriter := gzip.NewWriter(tarBuffer)
-	tarWriter := tar.NewWriter(gzipWriter)
-	content := []byte("outside")
-	if err := tarWriter.WriteHeader(&tar.Header{Name: "../outside", Mode: 0o644, Size: int64(len(content))}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tarWriter.Write(content); err != nil {
-		t.Fatal(err)
-	}
-	tarWriter.Close()
-	gzipWriter.Close()
-	if err := extractTarArchive(tarBuffer.Bytes(), t.TempDir()); err == nil {
-		t.Fatal("extractTarArchive() accepted path traversal")
-	}
-
-	zipBuffer := &bytes.Buffer{}
-	zipWriter := zip.NewWriter(zipBuffer)
-	file, err := zipWriter.Create("../outside")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Write(content); err != nil {
-		t.Fatal(err)
-	}
-	zipWriter.Close()
-	if err := extractZipArchive(zipBuffer.Bytes(), t.TempDir()); err == nil {
-		t.Fatal("extractZipArchive() accepted path traversal")
-	}
-}
-
-func TestArchiveExtractorsPreserveSafeSymlinksAndRejectEscapes(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating symbolic links requires optional Windows privileges")
-	}
-	tests := []struct {
-		name    string
-		extract func([]byte, string) error
-		build   func(string) []byte
-	}{
-		{
-			name:    "tar",
-			extract: extractTarArchive,
-			build: func(target string) []byte {
-				buffer := &bytes.Buffer{}
-				gzipWriter := gzip.NewWriter(buffer)
-				tarWriter := tar.NewWriter(gzipWriter)
-				if err := tarWriter.WriteHeader(&tar.Header{Name: "template/link", Linkname: target, Typeflag: tar.TypeSymlink, Mode: 0o777}); err != nil {
-					t.Fatal(err)
-				}
-				if err := tarWriter.Close(); err != nil {
-					t.Fatal(err)
-				}
-				if err := gzipWriter.Close(); err != nil {
-					t.Fatal(err)
-				}
-				return buffer.Bytes()
-			},
-		},
-		{
-			name:    "zip",
-			extract: extractZipArchive,
-			build: func(target string) []byte {
-				buffer := &bytes.Buffer{}
-				zipWriter := zip.NewWriter(buffer)
-				header := &zip.FileHeader{Name: "template/link", Method: zip.Store}
-				header.SetMode(os.ModeSymlink | 0o777)
-				writer, err := zipWriter.CreateHeader(header)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := io.WriteString(writer, target); err != nil {
-					t.Fatal(err)
-				}
-				if err := zipWriter.Close(); err != nil {
-					t.Fatal(err)
-				}
-				return buffer.Bytes()
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name+" safe", func(t *testing.T) {
-			root := t.TempDir()
-			if err := test.extract(test.build("target.txt"), root); err != nil {
-				t.Fatal(err)
-			}
-			target, err := os.Readlink(filepath.Join(root, "template", "link"))
-			if err != nil || target != "target.txt" {
-				t.Fatalf("Readlink() = %q, %v", target, err)
-			}
-		})
-		t.Run(test.name+" escape", func(t *testing.T) {
-			if err := test.extract(test.build("../../outside"), t.TempDir()); err == nil {
-				t.Fatal("extractor accepted escaping symbolic link")
-			}
-		})
-	}
-}
-
-func TestValidatePayloadRejectsMalformedArchive(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "commands.json"), []byte(`{"commands":[]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
-		t.Fatal("validatePayload() accepted malformed payload")
-	}
-}
-
-func TestValidatePayloadRequiresEveryDeclaredNonBuiltinEntrypoint(t *testing.T) {
-	root := t.TempDir()
-	catalog := `{"commands":[{"name":"builtin-tool","category":"Test","description":"Builtin","package":"p","visibility":"list","protocol":"builtin","environments":["linux-native"],"entrypoints":{"linux-amd64":["builtin","builtin-tool"],"linux-arm64":["builtin","builtin-tool"]}},{"name":"script-tool","category":"Test","description":"Script","package":"p","visibility":"list","protocol":"interactive-script","environments":["linux-native"],"entrypoints":{"linux-amd64":["bash-script","packages/p/script.sh"],"linux-arm64":["bash-script","packages/p/script.sh"]}}]}`
-	files := map[string][]byte{
-		"tb":            []byte("binary"),
-		"commands.json": []byte(catalog),
-		"version.txt":   []byte("0.1.2\n"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt": []byte("toml==0.10.2\n"),
-	}
-	for name, content := range files {
-		path := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	err := validatePayload(root, "linux-amd64", "0.1.2")
-	if err == nil || !strings.Contains(err.Error(), filepath.Join("packages", "p", "script.sh")) {
-		t.Fatalf("validatePayload() error = %v, want missing script", err)
-	}
-}
-
 func TestCompareVersionsRejectsUnsafeAndOlderReleases(t *testing.T) {
 	for _, version := range []string{"../1", "1.2", "1.02.3", "1.2.x", "/1.2.3"} {
 		if _, err := compareVersions(version, "1.2.3"); err == nil {
@@ -195,169 +59,121 @@ func TestCompareVersionsRejectsUnsafeAndOlderReleases(t *testing.T) {
 	}
 }
 
-func TestValidatePayloadRequiresEveryLinuxInteractiveInstallerAndMatchingVersion(t *testing.T) {
-	root := t.TempDir()
-	catalog, err := os.ReadFile("../commands.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := map[string][]byte{
-		"tb":            []byte("binary"),
-		"commands.json": catalog,
-		"version.txt":   []byte("0.1.2\n"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py":       []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py":      []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py": []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_project.py":     []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py":       []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py":      []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py": []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py":     []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":       []byte("toml==0.10.2\n"),
-		"packages/scripts/terminal/alacritty/setup_alacritty.sh":                                []byte("script"),
-		"packages/scripts/terminal/kitty/setup_kitty.sh":                                        []byte("script"),
-		"packages/scripts/terminal/wsl/setup_wsl.sh":                                            []byte("script"),
-		"packages/scripts/terminal/wsl/set_default_cwd.sh":                                      []byte("script"),
-		"packages/scripts/utils/change_grub_order.sh":                                           []byte("script"),
-		"packages/scripts/utils/setup_venv.sh":                                                  []byte("script"),
-		"packages/scripts/utils/toggle_nopasswd_sudo.sh":                                        []byte("script"),
-		"packages/others/create_env_alias.py":                                                   []byte("script"),
-		"packages/others/bootstrap_python_from_venv.py":                                         []byte("script"),
-		"packages/others/create_project_template.py":                                            []byte("script"),
-	}
-	for name, content := range files {
-		path := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := validatePayload(root, "linux-amd64", "0.1.2"); err != nil {
-		t.Fatal(err)
-	}
-	for _, relativePath := range []string{
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py",
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py",
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py",
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_project.py",
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py",
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py",
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py",
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py",
-		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt",
-		"packages/scripts/terminal/alacritty/setup_alacritty.sh",
-		"packages/scripts/terminal/kitty/setup_kitty.sh",
-		"packages/scripts/terminal/wsl/setup_wsl.sh",
-		"packages/scripts/terminal/wsl/set_default_cwd.sh",
-		"packages/scripts/utils/change_grub_order.sh",
-		"packages/scripts/utils/setup_venv.sh",
-		"packages/scripts/utils/toggle_nopasswd_sudo.sh",
-		"packages/others/create_env_alias.py",
-		"packages/others/bootstrap_python_from_venv.py",
-		"packages/others/create_project_template.py",
-	} {
-		missingPath := filepath.Join(root, filepath.FromSlash(relativePath))
-		content, err := os.ReadFile(missingPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(missingPath); err != nil {
-			t.Fatal(err)
-		}
-		if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
-			t.Fatalf("validatePayload() accepted a payload without %s", relativePath)
-		}
-		if err := os.WriteFile(missingPath, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(root, "version.txt"), []byte("0.1.3\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validatePayload(root, "linux-amd64", "0.1.2"); err == nil {
-		t.Fatal("validatePayload() accepted mismatched version.txt")
-	}
-}
-
-func TestValidatePayloadRequiresEveryWindowsInteractiveInstaller(t *testing.T) {
-	root := t.TempDir()
-	catalog, err := os.ReadFile("../commands.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := map[string][]byte{
-		"tb.exe":        []byte("binary"),
-		"commands.json": catalog,
-		"version.txt":   []byte("0.1.2\n"),
-		"packages/agent-workspace-template/source/scripts/windows/install_codex.py":       []byte("script"),
-		"packages/agent-workspace-template/source/scripts/windows/install_claude.py":      []byte("script"),
-		"packages/agent-workspace-template/source/scripts/windows/install_antigravity.py": []byte("script"),
-		"packages/agent-workspace-template/source/scripts/windows/install_project.py":     []byte("script"),
-		"packages/scripts/terminal/windows/setup_windows.ps1":                             []byte("script"),
-		"packages/scripts/terminal/windows/set_vscode_wsl_cwd.ps1":                        []byte("script"),
-		"packages/others/create_project_template.py":                                      []byte("script"),
-	}
-	for name, content := range files {
-		path := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := validatePayload(root, "windows-amd64", "0.1.2"); err != nil {
-		t.Fatal(err)
-	}
-	for _, relativePath := range []string{
-		"packages/agent-workspace-template/source/scripts/windows/install_codex.py",
-		"packages/agent-workspace-template/source/scripts/windows/install_claude.py",
-		"packages/agent-workspace-template/source/scripts/windows/install_antigravity.py",
-		"packages/agent-workspace-template/source/scripts/windows/install_project.py",
-		"packages/scripts/terminal/windows/setup_windows.ps1",
-		"packages/scripts/terminal/windows/set_vscode_wsl_cwd.ps1",
-		"packages/others/create_project_template.py",
-	} {
-		missingPath := filepath.Join(root, filepath.FromSlash(relativePath))
-		if err := os.Remove(missingPath); err != nil {
-			t.Fatal(err)
-		}
-		if err := validatePayload(root, "windows-amd64", "0.1.2"); err == nil {
-			t.Fatalf("validatePayload() accepted a payload without %s", relativePath)
-		}
-		if err := os.WriteFile(missingPath, []byte("script"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestUpdateInstallsAndAtomicallySwitchesValidatedVersion(t *testing.T) {
+func TestUpdateDownloadsInstallerBeforeRemovingCurrentInstallationAndReinstalls(t *testing.T) {
 	home := t.TempDir()
+	dataBase := filepath.Join(home, "data")
+	dataRoot := filepath.Join(dataBase, "my-toolbox")
+	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
+	wrapper := filepath.Join(home, ".local", "bin", "tb")
+	marker := filepath.Join(home, "installed")
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	archive := validToolboxTar(t)
-	digest := sha256.Sum256(archive)
-	builtins := updateBuiltins(t, "0.1.1", archive, fmt.Sprintf("%x  toolbox-linux-amd64.tar.gz\n", digest))
+	t.Setenv("XDG_DATA_HOME", dataBase)
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte(linuxToolboxWrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installer := fmt.Sprintf("#!/bin/sh\nset -eu\n[ ! -e %q ]\nprintf installed > %q\n", dataRoot, marker)
+	requests := []string{}
+	builtins := NewToolboxBuiltins(versionRoot, "linux-amd64", "0.1.1", io.Discard)
+	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request.URL.String())
+		switch request.URL.String() {
+		case "https://api.github.com/repos/MatheusFS-dev/my-toolbox/releases/latest":
+			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil
+		case toolboxLinuxInstallerURL:
+			return responseWithBody(installer), nil
+		default:
+			t.Fatalf("unexpected update URL: %s", request.URL)
+			return nil, nil
+		}
+	})}
 
 	if err := builtins.update(); err != nil {
 		t.Fatal(err)
 	}
-	dataRoot := filepath.Join(home, ".local", "share", "my-toolbox")
-	current, err := os.ReadFile(filepath.Join(dataRoot, "current.txt"))
-	if err != nil {
-		t.Fatal(err)
+	if !reflect.DeepEqual(requests, []string{
+		"https://api.github.com/repos/MatheusFS-dev/my-toolbox/releases/latest",
+		toolboxLinuxInstallerURL,
+	}) {
+		t.Fatalf("update requests = %v", requests)
 	}
-	if string(current) != "0.1.2\n" {
-		t.Fatalf("current.txt = %q", current)
+	content, err := os.ReadFile(marker)
+	if err != nil || string(content) != "installed" {
+		t.Fatalf("installer marker = %q, %v", content, err)
 	}
-	if _, err := os.Stat(filepath.Join(dataRoot, "versions", "0.1.2", "tb")); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(dataRoot); !os.IsNotExist(err) {
+		t.Fatalf("old installation still exists: %v", err)
 	}
 }
 
-func TestUpdateSkipsSameVersionWithoutDownloadingArchive(t *testing.T) {
+func TestUpdatePreservesCurrentInstallationWhenInstallerDownloadFails(t *testing.T) {
+	home := t.TempDir()
+	dataBase := filepath.Join(home, "data")
+	versionRoot := filepath.Join(dataBase, "my-toolbox", "versions", "0.1.1")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", dataBase)
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	builtins := NewToolboxBuiltins(versionRoot, "linux-amd64", "0.1.1", io.Discard)
+	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/releases/latest") {
+			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil
+		}
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable", Body: io.NopCloser(strings.NewReader("unavailable"))}, nil
+	})}
+
+	if err := builtins.update(); err == nil || !strings.Contains(err.Error(), "HTTP 503 Service Unavailable") {
+		t.Fatalf("update() error = %v", err)
+	}
+	if _, err := os.Stat(versionRoot); err != nil {
+		t.Fatalf("failed installer download changed current installation: %v", err)
+	}
+}
+
+func TestUpdateRefusesUnrecognizedWrapperBeforeRemovingCurrentInstallation(t *testing.T) {
+	home := t.TempDir()
+	dataBase := filepath.Join(home, "data")
+	versionRoot := filepath.Join(dataBase, "my-toolbox", "versions", "0.1.1")
+	wrapper := filepath.Join(home, ".local", "bin", "tb")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", dataBase)
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte("user-owned executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	builtins := NewToolboxBuiltins(versionRoot, "linux-amd64", "0.1.1", io.Discard)
+	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/releases/latest") {
+			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil
+		}
+		return responseWithBody("#!/bin/sh\nexit 0\n"), nil
+	})}
+
+	err := builtins.update()
+	if err == nil || !strings.Contains(err.Error(), "refusing to update with unrecognized wrapper") {
+		t.Fatalf("update() error = %v", err)
+	}
+	if _, err := os.Stat(versionRoot); err != nil {
+		t.Fatalf("update changed current installation: %v", err)
+	}
+	content, err := os.ReadFile(wrapper)
+	if err != nil || string(content) != "user-owned executable" {
+		t.Fatalf("update changed unrecognized wrapper: %q, %v", content, err)
+	}
+}
+
+func TestUpdateSkipsSameVersionWithoutDownloadingInstaller(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	requests := 0
 	builtins := NewToolboxBuiltins("", "linux-amd64", "0.1.2", io.Discard)
@@ -376,53 +192,6 @@ func TestUpdateSkipsSameVersionWithoutDownloadingArchive(t *testing.T) {
 	}
 }
 
-func TestUpdateRejectsInvalidChecksumBeforeCreatingVersion(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	archive := validToolboxTar(t)
-	builtins := updateBuiltins(t, "0.1.1", archive, strings.Repeat("0", 64)+"  toolbox-linux-amd64.tar.gz\n")
-
-	if err := builtins.update(); err == nil || !strings.Contains(err.Error(), "SHA-256 mismatch") {
-		t.Fatalf("update() error = %v", err)
-	}
-	versionRoot := filepath.Join(home, ".local", "share", "my-toolbox", "versions", "0.1.2")
-	if _, err := os.Stat(versionRoot); !os.IsNotExist(err) {
-		t.Fatalf("invalid archive created version directory: %v", err)
-	}
-}
-
-func TestUpdateRejectsMalformedArchiveAfterChecksum(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	archive := []byte("not an archive")
-	digest := sha256.Sum256(archive)
-	builtins := updateBuiltins(t, "0.1.1", archive, fmt.Sprintf("%x  toolbox-linux-amd64.tar.gz\n", digest))
-	if err := builtins.update(); err == nil || !strings.Contains(err.Error(), "archive") {
-		t.Fatalf("update() error = %v", err)
-	}
-}
-
-func updateBuiltins(t *testing.T, currentVersion string, archive []byte, checksum string) *ToolboxBuiltins {
-	t.Helper()
-	builtins := NewToolboxBuiltins("", "linux-amd64", currentVersion, io.Discard)
-	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
-		switch {
-		case strings.HasSuffix(request.URL.Path, "/releases/latest"):
-			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil
-		case strings.HasSuffix(request.URL.Path, "/toolbox-linux-amd64.tar.gz.sha256"):
-			return responseWithBody(checksum), nil
-		case strings.HasSuffix(request.URL.Path, "/toolbox-linux-amd64.tar.gz"):
-			return responseWithBytes(archive), nil
-		default:
-			t.Fatalf("unexpected update URL: %s", request.URL)
-			return nil, nil
-		}
-	})}
-	return builtins
-}
-
 func responseWithBody(body string) *http.Response {
 	return responseWithBytes([]byte(body))
 }
@@ -433,58 +202,4 @@ func responseWithBytes(body []byte) *http.Response {
 		Status:     "200 OK",
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}
-}
-
-func validToolboxTar(t *testing.T) []byte {
-	t.Helper()
-	catalog, err := os.ReadFile("../commands.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := map[string][]byte{
-		"tb":            []byte("binary"),
-		"commands.json": catalog,
-		"version.txt":   []byte("0.1.2\n"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py":       []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py":      []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py": []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python3/install_project.py":     []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py":       []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py":      []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py": []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/install_project.py":     []byte("script"),
-		"packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt":       []byte("toml==0.10.2\n"),
-		"packages/scripts/terminal/alacritty/setup_alacritty.sh":                                []byte("script"),
-		"packages/scripts/terminal/kitty/setup_kitty.sh":                                        []byte("script"),
-		"packages/scripts/terminal/wsl/setup_wsl.sh":                                            []byte("script"),
-		"packages/scripts/terminal/wsl/set_default_cwd.sh":                                      []byte("script"),
-		"packages/scripts/utils/change_grub_order.sh":                                           []byte("script"),
-		"packages/scripts/utils/setup_venv.sh":                                                  []byte("script"),
-		"packages/scripts/utils/toggle_nopasswd_sudo.sh":                                        []byte("script"),
-		"packages/others/create_env_alias.py":                                                   []byte("script"),
-		"packages/others/bootstrap_python_from_venv.py":                                         []byte("script"),
-		"packages/others/create_project_template.py":                                            []byte("script"),
-	}
-	archive := &bytes.Buffer{}
-	gzipWriter := gzip.NewWriter(archive)
-	tarWriter := tar.NewWriter(gzipWriter)
-	for name, content := range files {
-		mode := int64(0o644)
-		if name == "tb" {
-			mode = 0o755
-		}
-		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(content))}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tarWriter.Write(content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tarWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return archive.Bytes()
 }

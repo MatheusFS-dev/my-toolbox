@@ -1,4 +1,4 @@
-TOOLBOX
+TOOLBOX 1.2.3
   Portable terminal tools for supported Linux, WSL, and Windows
   environments.
 
@@ -8,7 +8,7 @@ USAGE
   tb <tool> [arguments...]
     Run one supported catalog tool directly, forwarding its arguments.
   tb update
-    Download, verify, and activate the newest toolbox release.
+    Reinstall the toolbox when a newer release is available.
   tb uninstall
     Confirm and remove the toolbox wrapper and installed versions.
   tb version

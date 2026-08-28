@@ -127,13 +127,13 @@ func TestHelpPrintsEveryCatalogToolOnceInCatalogOrder(t *testing.T) {
 	catalog.Commands[1].Visibility = "direct"
 	catalog.Commands[2].Description = "Last description"
 	output := &bytes.Buffer{}
-	app := App{Catalog: catalog, Environment: "linux-native", UI: &fakeUI{}, Executor: &fakeExecutor{}, Output: output}
+	app := App{Catalog: catalog, Environment: "linux-native", UI: &fakeUI{}, Executor: &fakeExecutor{}, Output: output, Version: "1.2.3"}
 
 	if err := app.Execute([]string{"help"}); err != nil {
 		t.Fatal(err)
 	}
 	help := output.String()
-	if !strings.HasPrefix(help, "TOOLBOX\n") {
+	if !strings.HasPrefix(help, "TOOLBOX 1.2.3\n") {
 		t.Fatalf("help = %q", help)
 	}
 	previous := -1

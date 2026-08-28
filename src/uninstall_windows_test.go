@@ -3,9 +3,11 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,6 +50,105 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	}
 	if _, err := os.Stat(unrelated); err != nil {
 		t.Fatalf("uninstall removed unrelated path: %v", err)
+	}
+}
+
+func TestWindowsCleanupReinstallsAfterManagedRemoval(t *testing.T) {
+	localAppData := t.TempDir()
+	dataRoot := filepath.Join(localAppData, "my-toolbox")
+	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	installerPath := filepath.Join(t.TempDir(), "install.ps1")
+	marker := filepath.Join(t.TempDir(), "installed")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("TOOLBOX_TEST_DATA_ROOT", dataRoot)
+	t.Setenv("TOOLBOX_TEST_MARKER", marker)
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte(windowsToolboxWrapper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installer := "if (Test-Path -LiteralPath $env:TOOLBOX_TEST_DATA_ROOT) { exit 2 }\n[IO.File]::WriteAllText($env:TOOLBOX_TEST_MARKER, 'installed')\n"
+	if err := os.WriteFile(installerPath, []byte(installer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanupAndReinstallWindows(dataRoot, wrapper, installerPath); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil || string(content) != "installed" {
+		t.Fatalf("installer marker = %q, %v", content, err)
+	}
+}
+
+func TestWindowsReinstallReportsInstallerOutput(t *testing.T) {
+	localAppData := t.TempDir()
+	dataRoot := filepath.Join(localAppData, "my-toolbox")
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	installerPath := filepath.Join(t.TempDir(), "install.ps1")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte(windowsToolboxWrapper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installer := "[Console]::Error.WriteLine('release download failed')\nexit 1\n"
+	if err := os.WriteFile(installerPath, []byte(installer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cleanupAndReinstallWindows(dataRoot, wrapper, installerPath)
+	if err == nil || !strings.Contains(err.Error(), "release download failed") {
+		t.Fatalf("cleanupAndReinstallWindows() error = %v", err)
+	}
+}
+
+func TestBoundedInstallerOutputKeepsTheFailureTail(t *testing.T) {
+	output := &boundedInstallerOutput{}
+	content := strings.Repeat("earlier output\n", maxInstallerOutputBytes) + "final failure"
+	written, err := output.Write([]byte(content))
+	if err != nil || written != len(content) {
+		t.Fatalf("Write() = %d, %v", written, err)
+	}
+	detail := output.String()
+	if !strings.Contains(detail, "earlier installer output omitted") || !strings.HasSuffix(detail, "final failure") {
+		t.Fatalf("bounded output = %q", detail)
+	}
+	if len(detail) > maxInstallerOutputBytes+100 {
+		t.Fatalf("bounded output length = %d", len(detail))
+	}
+}
+
+func TestWindowsUpdateRefusesUnrecognizedWrapperBeforeSchedulingRemoval(t *testing.T) {
+	localAppData := t.TempDir()
+	dataRoot := filepath.Join(localAppData, "my-toolbox")
+	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte("user-owned wrapper"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	builtins := NewToolboxBuiltins(versionRoot, "windows-amd64", "0.1.1", io.Discard)
+
+	_, err := builtins.remove(filepath.Join(t.TempDir(), "install.ps1"))
+	if err == nil || !strings.Contains(err.Error(), "refusing to update with unrecognized wrapper") {
+		t.Fatalf("remove() error = %v", err)
+	}
+	content, readErr := os.ReadFile(wrapper)
+	if readErr != nil || string(content) != "user-owned wrapper" {
+		t.Fatalf("update changed unrecognized wrapper: %q, %v", content, readErr)
 	}
 }
 

@@ -20,17 +20,11 @@ SELECT TOOLS
 
   Agents
 › ◯ install-codex
-    Download and execute OpenAI’s official Codex installer for the current
-    Linux or Windows platform when `codex` is not already available from
-    PATH or its supported user installation path. Run with closed input;
-    the toolbox performs no separate post-install executable or
-    configuration check.
+    Install Codex for the current user on Linux or Windows. Skips
+    installation when `codex` is already available.
   ◉ install-claude
-    Download and execute Anthropic’s official Claude Code installer for
-    the current Linux or Windows platform when `claude` is not already
-    available from PATH or its supported user installation path. Run with
-    closed input; the toolbox performs no separate post-install executable
-    or configuration check.
+    Install Claude Code for the current user on Linux or Windows. Skips
+    installation when `claude` is already available.
 
 ↑/↓ move • space select • enter run • esc cancel
 1 tool selected
@@ -40,56 +34,56 @@ The example is shortened to show the row layout. The live selector wraps at the 
 
 `tb list` collects every required answer before running any selected tool, executes tools in catalog order, and stops at the first failure. `tb list` excludes direct-only commands; `tb help` includes them. Both commands filter tools for native Linux, WSL, or Windows before building categories, so unsupported categories are omitted when empty. Direct use of an unsupported tool returns an explicit error. Running `tb` without arguments is invalid and directs the user to `tb list`.
 
-`tb help` uses the same category order and description wrapping. ANSI styling is enabled only when standard output is a terminal; redirected help is plain text with the same hierarchy. Wide output is capped at 72 columns, while narrower terminals use their live width.
+`tb help` shows the current toolbox version and uses the same category order and description wrapping. ANSI styling is enabled only when standard output is a terminal; redirected help is plain text with the same hierarchy. Wide output is capped at 72 columns, while narrower terminals use their live width.
 
 ## Tool catalog
 
-The command catalog is defined in `commands.json`. The following descriptions document the reviewed implementation behavior.
+The command catalog is defined in `commands.json`. These descriptions focus on each tool’s purpose and the safeguards that matter during use.
 
 ### Agents
 
-- `install-codex`: Download and execute OpenAI’s official Codex installer for the current Linux or Windows platform when `codex` is not already available from PATH or its supported user installation path. Run with closed input; the toolbox performs no separate post-install executable or configuration check.
-- `install-claude`: Download and execute Anthropic’s official Claude Code installer for the current Linux or Windows platform when `claude` is not already available from PATH or its supported user installation path. Run with closed input; the toolbox performs no separate post-install executable or configuration check.
-- `install-antigravity`: Download and execute Google’s official Antigravity CLI installer for the current Linux or Windows platform when `agy` is not already available from PATH or its supported user installation path. Run with closed input; the toolbox performs no separate post-install executable or configuration check.
+- `install-codex`: Install Codex for the current user on Linux or Windows. Skips installation when `codex` is already available.
+- `install-claude`: Install Claude Code for the current user on Linux or Windows. Skips installation when `claude` is already available.
+- `install-antigravity`: Install Antigravity for the current user on Linux or Windows. Skips installation when `agy` is already available.
 
 ### Base Tools
 
-- `install-uv`: Download and execute Astral’s official uv installer for the current Linux or Windows platform when `uv` is unavailable. Set `UV_NO_MODIFY_PATH=1` so the installer does not edit shell PATH configuration; the toolbox performs no separate post-install executable check.
-- `install-gh`: Resolve the latest GitHub CLI release, download its platform archive and published SHA-256 checksums, verify the selected archive, and atomically install only the `gh` executable into `~/.local/bin` on Linux or `%LOCALAPPDATA%\my-toolbox\bin` on Windows. Print PATH guidance when that directory is not active.
+- `install-uv`: Install uv for the current user on Linux or Windows without changing shell PATH configuration. Skips installation when `uv` is already available.
+- `install-gh`: Download, verify, and install the latest GitHub CLI for the current user. Shows PATH guidance when needed.
 
 ### Agent Plugins
 
-- `install-superpowers-codex`: Require an installed Codex CLI with plugin management, inspect `codex plugin list`, and add `superpowers@openai-curated` when absent. Skip an existing Superpowers installation and leave other Codex plugins unchanged.
-- `install-superpowers-claude`: Require an installed Claude Code CLI with plugin management, inspect `claude plugin list`, and install `superpowers@claude-plugins-official` at user scope when absent. Skip an existing installation and leave other Claude plugins unchanged.
-- `install-superpowers-antigravity`: Require an installed Antigravity CLI with plugin management, inspect `agy plugin list`, and install Superpowers from its GitHub repository when absent. Skip an existing installation and leave other Antigravity plugins unchanged.
+- `install-superpowers-codex`: Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.
+- `install-superpowers-claude`: Add the Superpowers plugin to Claude Code for the current user. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
+- `install-superpowers-antigravity`: Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
 
 ### Agent Workspace
 
-- `setup-agents-codex`: Validate the packaged global instructions, Codex configuration template, optional profiles, and skill packages; render valid TOML into `~/.codex/config.toml`; and install selected profiles and packaged skills under `~/.codex`. List all managed conflicts before writing, require replacement confirmation, and optionally create adjacent backups.
-- `setup-agents-claude`: Validate the packaged instructions, Claude settings JSON, and skill packages, then install `CLAUDE.md`, `settings.json`, and each packaged skill under `~/.claude`. List all managed conflicts before writing, require replacement confirmation, and optionally create adjacent backups.
-- `setup-agents-antigravity`: Validate the packaged instructions, Antigravity settings JSON, and skill packages, then install `GEMINI.md` under `~/.gemini` and settings and skills under `~/.gemini/antigravity-cli`. List all managed conflicts before writing, require replacement confirmation, and optionally create adjacent backups.
-- `setup-agents-project` (direct only): Prompt for an existing project and selected agent formats, install `AGENTS.md` for Codex or Antigravity and `CLAUDE.md` for Claude, and optionally append managed instruction and Superpowers paths to `.gitignore`. Preserve unrelated `.gitignore` content and optionally back up conflicting managed instruction files.
+- `setup-agents-codex`: Set up global Codex instructions, configuration, optional profiles, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+- `setup-agents-claude`: Set up global Claude Code instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+- `setup-agents-antigravity`: Set up global Antigravity instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+- `setup-agents-project` (direct only): Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.
 
 ### Terminal
 
-- `setup-alacritty` (native Linux): On native Debian or Ubuntu Linux, run through sudo and prompt for Alacritty, Zsh, Rust, Zellij, Starship, fonts, shell helpers, Nautilus integration, and default-terminal configuration. Apply system packages and user configuration under the invoking user’s home; optional module failures do not stop later modules, and selected Alacritty configuration replaces `~/.config/alacritty/alacritty.toml` without a backup.
-- `setup-kitty` (native Linux): On native Debian or Ubuntu Linux, run through sudo and prompt for Kitty, Zsh, Rust, Zellij, Starship, fonts, shell helpers, Nautilus integration, and default-terminal configuration. Install Kitty under the invoking user’s home, continue after optional module failures, and back up an existing `~/.config/kitty/kitty.conf` before replacing it.
-- `setup-windows` (Windows): On native Windows 10 build 17763 or newer, or Windows 11, use WinGet to install or update Windows Terminal and PowerShell 7 plus selected fonts and terminal utilities. Write managed Terminal, PowerShell, Starship, Zellij, and VS Code configuration, attempt a timestamped backup under `%LOCALAPPDATA%\project-template\windows-backups`, and report each feature’s result.
-- `setup-wsl` (WSL): On Ubuntu 22.04 or 24.04 under WSL, run through sudo and install selected Zsh, Rust, Zellij, Starship, eza, fzf, and shell-integration features for the invoking user. Install apt dependencies in one pass, attempt backups under `~/.local/state/project-template/wsl-backups`, continue after optional feature failures, and report that the terminal must be restarted.
-- `set-vscode-wsl-cwd` (Windows): On Windows, validate an absolute directory in the default WSL distribution, add or update the managed `WSL (project-template)` terminal profile in VS Code’s user `settings.json`, and open that WSL directory in VS Code. Preserve JSONC comments and file encoding, create a backup when settings change, and support `-Undo` for removing the managed profile.
-- `set-default-cwd` (WSL): On WSL, prompt for an explicit existing absolute directory and update managed blocks in `~/.bashrc` and `~/.zshrc` so shells starting in the home directory change to it. Preserve unrelated content, permissions, and line endings; back up changed existing files and reject symlinks or malformed markers.
+- `setup-alacritty` (native Linux): Build an Alacritty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Alacritty configuration is replaced without a backup.
+- `setup-kitty` (native Linux): Build a Kitty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Kitty configuration is backed up before replacement.
+- `setup-windows` (Windows): Set up Windows Terminal, PowerShell 7, selected fonts, and terminal tools with WinGet. Backs up managed configuration when possible and reports each result.
+- `setup-wsl` (WSL): Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. Uses sudo for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.
+- `set-vscode-wsl-cwd` (Windows): Open a chosen WSL directory in VS Code and use it as the working directory of a managed terminal profile. Preserves JSONC comments, backs up changed settings, and supports `-Undo`.
+- `set-default-cwd` (WSL): Make Bash and Zsh start in a chosen WSL directory when opened from home. Preserves unrelated shell configuration and backs up changed files.
 
 ### System Utilities
 
-- `change-grub-order` (native Linux): On native Linux through sudo, parse `/boot/grub/grub.cfg`, display submenu-aware boot entries and the current default, and prompt for a replacement. Back up `/etc/default/grub`, update `GRUB_DEFAULT`, optionally disable `GRUB_SAVEDEFAULT`, run `update-grub`, and print the resulting configuration.
-- `setup-venv` (Linux or WSL): On Linux or WSL, install or remove a managed `venv` shell function in `~/.bashrc` and, when Zsh is installed, `~/.zshrc`. The function searches the current directory and its parents for `.venv/bin/activate`; unrelated shell content is retained, but this script does not create backups.
-- `toggle-nopasswd-sudo` (Linux or WSL): On Linux or WSL through sudo, detect whether the selected user currently has passwordless sudo and offer the opposite action. Manage only `/etc/sudoers.d/99-<user>-nopasswd`, validate an enabling rule with `visudo`, verify the effective sudo state afterward, and report external rules when disabling cannot remove NOPASSWD access.
+- `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
+- `setup-venv` (Linux or WSL): Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.
+- `toggle-nopasswd-sudo` (Linux or WSL): Enable or disable passwordless sudo for one Linux or WSL user. Validates enabling changes and only manages the toolbox-owned sudoers file.
 
 ### Project Utilities
 
-- `create-env-alias` (Linux or WSL): Validate a selected virtual environment or project containing `.venv`, prompt for an alias and explicit Bash, Zsh, or both selection, and preview activation changes to `~/.bashrc` and/or `~/.zshrc`. Require separate replacement confirmation, optionally back up conflicts, preserve unrelated content and permissions, and replace each file atomically.
-- `bootstrap-python-from-venv` (Linux or WSL): Scan project Python files and optional notebooks once, exclude standard-library and local modules, and map remaining imports through a selected virtual environment’s distribution metadata. Generate unpinned requirements, `pyproject.toml`, and `.python-version`, preserve unrelated TOML, stop on malformed or ambiguous input, optionally back up conflicts, and optionally validate and run `uv lock`.
-- `create-project-template`: Dynamically discover and recursively merge the packaged template into an explicit existing destination, including dotfiles, empty directories, and symlinks. Preserve destination-only paths, reject overlap and entry-type mismatches before copying, list same-type conflicts once, and overwrite them only after explicit confirmation without creating template backups.
+- `create-env-alias` (Linux or WSL): Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.
+- `bootstrap-python-from-venv` (Linux or WSL): Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.
+- `create-project-template`: Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.
 
 The copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. The vendored Alacritty, Kitty, and WSL setup scripts target the documented Debian or Ubuntu environments; their optional desktop integrations also require the upstream GNOME/Nautilus tools. The toolbox preserves those scripts and their exit behavior byte-for-byte.
 
@@ -107,7 +101,9 @@ Windows PowerShell:
 irm https://matheusfs-dev.github.io/my-toolbox/install.ps1 | iex
 ```
 
-Bootstrap installation does not replace an existing toolbox. Use `tb update` to download and verify a newer release, validate its payload, install it into a versioned user directory, and atomically switch the stable wrapper.
+Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` downloads the bootstrap installer, removes the managed toolbox installation, and runs the installer again. If installation fails after removal, run the installation command above to restore `tb`.
+
+Versions up to `0.1.6` use the former archive updater and cannot receive the reinstall-based fix. Run the installation command once to move from `0.1.6` to a newer release.
 
 The published URLs become available only after GitHub Pages is enabled for the repository and the included Pages workflow has deployed successfully.
 

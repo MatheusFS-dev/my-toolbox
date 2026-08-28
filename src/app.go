@@ -60,7 +60,7 @@ func (app App) Execute(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprint(output, renderHelp(filteredCommands(app.Catalog, app.Environment, true), width, styled))
+		_, err = fmt.Fprint(output, renderHelp(filteredCommands(app.Catalog, app.Environment, true), app.Version, width, styled))
 		return err
 	case "version":
 		_, err := fmt.Fprintln(output, app.Version)

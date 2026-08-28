@@ -17,17 +17,72 @@ import (
 
 const windowsCleanupMode = "toolbox-windows-cleanup"
 
+const maxInstallerOutputBytes = 16 * 1024
+
+// boundedInstallerOutput retains only the final installer diagnostics.
+type boundedInstallerOutput struct {
+	content   []byte
+	truncated bool
+}
+
+// Write adds installer output while retaining at most the configured tail.
+//
+// Args:
+//   - content: Installer stdout or stderr bytes. Earlier bytes are discarded
+//     when the combined output exceeds maxInstallerOutputBytes.
+//
+// Returns:
+//   - int: Full input length because truncation is intentional, not a short write.
+//   - error: Always nil.
+func (output *boundedInstallerOutput) Write(content []byte) (int, error) {
+	written := len(content)
+	if len(content) >= maxInstallerOutputBytes {
+		output.content = append(output.content[:0], content[len(content)-maxInstallerOutputBytes:]...)
+		output.truncated = true
+		return written, nil
+	}
+	overflow := len(output.content) + len(content) - maxInstallerOutputBytes
+	if overflow > 0 {
+		copy(output.content, output.content[overflow:])
+		output.content = output.content[:len(output.content)-overflow]
+		output.truncated = true
+	}
+	output.content = append(output.content, content...)
+	return written, nil
+}
+
+// String formats retained installer diagnostics for the deferred status file.
+//
+// Args: None.
+//
+// Returns:
+//   - string: Trimmed output tail, prefixed with a truncation marker when
+//     earlier installer output was omitted.
+func (output *boundedInstallerOutput) String() string {
+	detail := strings.TrimSpace(string(output.content))
+	if !output.truncated {
+		return detail
+	}
+	if detail == "" {
+		return "[earlier installer output omitted]"
+	}
+	return "[earlier installer output omitted]\n" + detail
+}
+
 // uninstallPlatform starts a temporary Go cleanup helper for Windows.
 //
 // Args:
 //   - dataRoot: Validated toolbox data directory containing the running binary.
 //   - wrapper: Stable wrapper path inside dataRoot.
+//   - installerPath: Empty for uninstall only, or a downloaded PowerShell
+//     installer owned by the detached helper.
+//   - output: Unused because deferred work reports through the status file.
 //
 // Returns:
 //   - string: Status file that will contain success or an error message.
 //   - error: Helper-copy or process-startup failure.
-func uninstallPlatform(dataRoot, wrapper string) (string, error) {
-	return scheduleWindowsRemoval(dataRoot, wrapper, os.Getpid())
+func uninstallPlatform(dataRoot, wrapper, installerPath string, _ io.Writer) (string, error) {
+	return scheduleWindowsRemoval(dataRoot, wrapper, installerPath, os.Getpid())
 }
 
 // scheduleWindowsRemoval copies tb outside its locked installation and starts it.
@@ -35,12 +90,14 @@ func uninstallPlatform(dataRoot, wrapper string) (string, error) {
 // Args:
 //   - dataRoot: Validated toolbox directory containing managed runtime files.
 //   - wrapper: Stable wrapper path to revalidate immediately before removal.
+//   - installerPath: Empty for uninstall only, or a downloaded PowerShell
+//     installer for the helper to run and remove after cleanup.
 //   - processID: Running tb process identifier that must exit before removal.
 //
 // Returns:
 //   - string: Status file that will contain success or an error message.
 //   - error: Helper-copy or process-startup failure.
-func scheduleWindowsRemoval(dataRoot, wrapper string, processID int) (string, error) {
+func scheduleWindowsRemoval(dataRoot, wrapper, installerPath string, processID int) (string, error) {
 	statusPath := filepath.Join(os.TempDir(), fmt.Sprintf("my-toolbox-uninstall-%d.status", processID))
 	if err := os.Remove(statusPath); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("remove stale Windows uninstall status: %w", err)
@@ -80,6 +137,7 @@ func scheduleWindowsRemoval(dataRoot, wrapper string, processID int) (string, er
 		"TOOLBOX_UNINSTALL_ROOT="+dataRoot,
 		"TOOLBOX_UNINSTALL_WRAPPER="+wrapper,
 		"TOOLBOX_UNINSTALL_STATUS="+statusPath,
+		"TOOLBOX_REINSTALL_SCRIPT="+installerPath,
 	)
 	if err := command.Start(); err != nil {
 		return "", fmt.Errorf("start Windows uninstall cleanup: %w", err)
@@ -105,11 +163,17 @@ func runPlatformCleanup() (bool, error) {
 	statusPath := os.Getenv("TOOLBOX_UNINSTALL_STATUS")
 	dataRoot := os.Getenv("TOOLBOX_UNINSTALL_ROOT")
 	wrapper := os.Getenv("TOOLBOX_UNINSTALL_WRAPPER")
+	installerPath := os.Getenv("TOOLBOX_REINSTALL_SCRIPT")
 	processID, err := strconv.Atoi(os.Getenv("TOOLBOX_UNINSTALL_PID"))
 	if err != nil || processID <= 0 {
 		err = fmt.Errorf("invalid Windows uninstall process ID")
 	} else if err = waitForWindowsProcess(processID); err == nil {
-		err = cleanupWindowsPaths(dataRoot, wrapper)
+		err = cleanupAndReinstallWindows(dataRoot, wrapper, installerPath)
+	}
+	if installerPath != "" {
+		if removeErr := os.Remove(installerPath); removeErr != nil && !os.IsNotExist(removeErr) && err == nil {
+			err = fmt.Errorf("remove temporary installer: %w", removeErr)
+		}
 	}
 	status := "success"
 	if err != nil {
@@ -123,6 +187,33 @@ func runPlatformCleanup() (bool, error) {
 		err = fmt.Errorf("write Windows uninstall status: %w", writeErr)
 	}
 	return true, err
+}
+
+// cleanupAndReinstallWindows removes managed paths before running an optional installer.
+//
+// Args:
+//   - dataRoot: Validated toolbox directory containing managed runtime files.
+//   - wrapper: Stable wrapper path to revalidate during removal.
+//   - installerPath: Empty for uninstall only, or a downloaded PowerShell
+//     installer that must run after managed removal completes.
+//
+// Returns:
+//   - error: Managed cleanup or installer execution failure.
+func cleanupAndReinstallWindows(dataRoot, wrapper, installerPath string) error {
+	if err := cleanupWindowsPaths(dataRoot, wrapper); err != nil {
+		return err
+	}
+	if installerPath == "" {
+		return nil
+	}
+	installerOutput := &boundedInstallerOutput{}
+	if err := runClosedInput("powershell", []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installerPath}, nil, installerOutput); err != nil {
+		if detail := installerOutput.String(); detail != "" {
+			return fmt.Errorf("reinstall toolbox: %s: %w", detail, err)
+		}
+		return fmt.Errorf("reinstall toolbox: %w", err)
+	}
+	return nil
 }
 
 // waitForWindowsProcess blocks until the original tb process exits.

@@ -28,51 +28,7 @@ set /p TOOLBOX_VERSION=<"%LOCALAPPDATA%\my-toolbox\current.txt"
 // Returns:
 //   - error: Path validation, cleanup scheduling, or filesystem failure.
 func (builtins *ToolboxBuiltins) uninstall() error {
-	dataRoot, err := toolboxDataRoot(builtins.platform)
-	if err != nil {
-		return err
-	}
-	expectedRoot := filepath.Join(dataRoot, "versions", builtins.version)
-	actualRoot, err := filepath.Abs(builtins.root)
-	if err != nil {
-		return fmt.Errorf("resolve executable root: %w", err)
-	}
-	expectedRoot, err = filepath.Abs(expectedRoot)
-	if err != nil {
-		return fmt.Errorf("resolve installed version directory: %w", err)
-	}
-	pathsMatch := filepath.Clean(actualRoot) == filepath.Clean(expectedRoot)
-	if builtins.platform == "windows-amd64" {
-		pathsMatch = strings.EqualFold(filepath.Clean(actualRoot), filepath.Clean(expectedRoot))
-	}
-	if !pathsMatch {
-		return fmt.Errorf("refusing to uninstall outside installed version directory %s", expectedRoot)
-	}
-
-	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
-	expectedWrapper := windowsToolboxWrapper
-	if builtins.platform != "windows-amd64" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("resolve user home: %w", err)
-		}
-		wrapper = filepath.Join(home, ".local", "bin", "tb")
-		expectedWrapper = linuxToolboxWrapper
-	}
-	ownedWrapper, err := isOwnedToolboxWrapper(wrapper, expectedWrapper)
-	if err != nil {
-		return err
-	}
-	if !ownedWrapper {
-		if _, statErr := os.Stat(wrapper); statErr == nil {
-			if _, err := fmt.Fprintf(builtins.output, "Preserving unrecognized wrapper %s.\n", wrapper); err != nil {
-				return err
-			}
-		} else if !os.IsNotExist(statErr) {
-			return fmt.Errorf("inspect toolbox wrapper: %w", statErr)
-		}
-	}
-	statusPath, err := uninstallPlatform(dataRoot, wrapper)
+	statusPath, err := builtins.remove("")
 	if err != nil {
 		return err
 	}
@@ -82,6 +38,67 @@ func (builtins *ToolboxBuiltins) uninstall() error {
 		_, err = fmt.Fprintln(builtins.output, "Uninstalled my-toolbox.")
 	}
 	return err
+}
+
+// remove validates and removes the managed installation, then optionally reinstalls it.
+//
+// Args:
+//   - installerPath: Empty for uninstall only. A non-empty platform installer
+//     runs after managed removal; on Windows the detached cleanup helper owns
+//     and removes the temporary installer.
+//
+// Returns:
+//   - string: Windows status path for deferred work, or empty on Unix.
+//   - error: Path validation, cleanup scheduling, filesystem, or installer failure.
+func (builtins *ToolboxBuiltins) remove(installerPath string) (string, error) {
+	dataRoot, err := toolboxDataRoot(builtins.platform)
+	if err != nil {
+		return "", err
+	}
+	expectedRoot := filepath.Join(dataRoot, "versions", builtins.version)
+	actualRoot, err := filepath.Abs(builtins.root)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable root: %w", err)
+	}
+	expectedRoot, err = filepath.Abs(expectedRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve installed version directory: %w", err)
+	}
+	pathsMatch := filepath.Clean(actualRoot) == filepath.Clean(expectedRoot)
+	if builtins.platform == "windows-amd64" {
+		pathsMatch = strings.EqualFold(filepath.Clean(actualRoot), filepath.Clean(expectedRoot))
+	}
+	if !pathsMatch {
+		return "", fmt.Errorf("refusing to uninstall outside installed version directory %s", expectedRoot)
+	}
+
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	expectedWrapper := windowsToolboxWrapper
+	if builtins.platform != "windows-amd64" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve user home: %w", err)
+		}
+		wrapper = filepath.Join(home, ".local", "bin", "tb")
+		expectedWrapper = linuxToolboxWrapper
+	}
+	ownedWrapper, err := isOwnedToolboxWrapper(wrapper, expectedWrapper)
+	if err != nil {
+		return "", err
+	}
+	if !ownedWrapper {
+		if _, statErr := os.Stat(wrapper); statErr == nil {
+			if installerPath != "" {
+				return "", fmt.Errorf("refusing to update with unrecognized wrapper %s", wrapper)
+			}
+			if _, err := fmt.Fprintf(builtins.output, "Preserving unrecognized wrapper %s.\n", wrapper); err != nil {
+				return "", err
+			}
+		} else if !os.IsNotExist(statErr) {
+			return "", fmt.Errorf("inspect toolbox wrapper: %w", statErr)
+		}
+	}
+	return uninstallPlatform(dataRoot, wrapper, installerPath, builtins.output)
 }
 
 // isOwnedToolboxWrapper verifies exact wrapper content before deletion.

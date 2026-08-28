@@ -144,23 +144,42 @@ func (builtins *ToolboxBuiltins) runOfficialInstaller(linuxURL, windowsURL strin
 	if err != nil {
 		return err
 	}
-	temporaryFile, err := os.CreateTemp("", "toolbox-installer-*"+extension)
+	path, err := writeTemporaryInstaller(script, extension)
 	if err != nil {
-		return fmt.Errorf("create installer file: %w", err)
+		return err
 	}
-	path := temporaryFile.Name()
 	defer os.Remove(path)
-	if _, err := temporaryFile.Write(script); err != nil {
-		temporaryFile.Close()
-		return fmt.Errorf("write installer file: %w", err)
-	}
-	if err := temporaryFile.Close(); err != nil {
-		return fmt.Errorf("close installer file: %w", err)
-	}
 	if builtins.platform == "windows-amd64" {
 		return runClosedInput("powershell", []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path}, environment, builtins.output)
 	}
 	return runClosedInput("bash", []string{path}, environment, builtins.output)
+}
+
+// writeTemporaryInstaller writes a downloaded installer outside the managed toolbox root.
+//
+// Args:
+//   - script: Complete installer bytes downloaded before any installed files are removed.
+//   - extension: Platform script extension, either .sh or .ps1.
+//
+// Returns:
+//   - string: Temporary installer path. The caller owns its removal.
+//   - error: Temporary-file creation, write, or close failure.
+func writeTemporaryInstaller(script []byte, extension string) (string, error) {
+	temporaryFile, err := os.CreateTemp("", "toolbox-installer-*"+extension)
+	if err != nil {
+		return "", fmt.Errorf("create installer file: %w", err)
+	}
+	path := temporaryFile.Name()
+	if _, err := temporaryFile.Write(script); err != nil {
+		temporaryFile.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("write installer file: %w", err)
+	}
+	if err := temporaryFile.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close installer file: %w", err)
+	}
+	return path, nil
 }
 
 func runClosedInput(name string, arguments, environment []string, output io.Writer) error {

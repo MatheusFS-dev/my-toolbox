@@ -45,7 +45,7 @@ func TestRedirectedHelpMatchesEnvironmentFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := renderHelp(filteredCommands(catalog, test.environment, true), 80, false)
+			got := renderHelp(filteredCommands(catalog, test.environment, true), "1.2.3", 80, false)
 			if got != string(want) {
 				t.Fatalf("redirected help mismatch\n--- got ---\n%s--- want ---\n%s", got, want)
 			}
@@ -61,7 +61,7 @@ func TestPlainHelpHasExactHierarchyAndWrapping(t *testing.T) {
 		{Name: "native-tool", Category: "Tools", Description: "A native tool with a description that wraps onto another line at this width."},
 		{Name: "direct-tool", Category: "Direct Tools", Description: "A direct-only tool."},
 	}
-	want := "TOOLBOX\n" +
+	want := "TOOLBOX 1.2.3\n" +
 		"  Portable terminal tools for supported Linux, WSL, and Windows\n" +
 		"  environments.\n\n" +
 		"USAGE\n" +
@@ -70,7 +70,7 @@ func TestPlainHelpHasExactHierarchyAndWrapping(t *testing.T) {
 		"  tb <tool> [arguments...]\n" +
 		"    Run one supported catalog tool directly, forwarding its arguments.\n" +
 		"  tb update\n" +
-		"    Download, verify, and activate the newest toolbox release.\n" +
+		"    Reinstall the toolbox when a newer release is available.\n" +
 		"  tb uninstall\n" +
 		"    Confirm and remove the toolbox wrapper and installed versions.\n" +
 		"  tb version\n" +
@@ -85,7 +85,7 @@ func TestPlainHelpHasExactHierarchyAndWrapping(t *testing.T) {
 		"  Direct Tools\n" +
 		"    direct-tool\n" +
 		"      A direct-only tool.\n"
-	got := renderHelp(commands, 72, false)
+	got := renderHelp(commands, "1.2.3", 72, false)
 	if got != want {
 		t.Fatalf("plain help mismatch\n--- got ---\n%s--- want ---\n%s", got, want)
 	}
@@ -96,8 +96,8 @@ func TestPlainHelpHasExactHierarchyAndWrapping(t *testing.T) {
 
 func TestTTYHelpStylesHeadingsWithoutBackgrounds(t *testing.T) {
 	commands := []Command{{Name: "tool", Category: "Tools", Description: "Description."}}
-	help := renderHelp(commands, 72, true)
-	for _, heading := range []string{"TOOLBOX", "USAGE", "AVAILABLE TOOLS", "Tools"} {
+	help := renderHelp(commands, "1.2.3", 72, true)
+	for _, heading := range []string{"TOOLBOX 1.2.3", "USAGE", "AVAILABLE TOOLS", "Tools"} {
 		if !strings.Contains(help, "\x1b[1;37m"+heading) {
 			t.Fatalf("TTY help is missing styled heading %q: %q", heading, help)
 		}
@@ -113,7 +113,7 @@ func TestHelpCapsWideTerminalsAndUsesNarrowLiveWidth(t *testing.T) {
 		terminalWidth int
 		maxWidth      int
 	}{{terminalWidth: 120, maxWidth: 72}, {terminalWidth: 32, maxWidth: 32}} {
-		for _, line := range strings.Split(renderHelp([]Command{command}, test.terminalWidth, false), "\n") {
+		for _, line := range strings.Split(renderHelp([]Command{command}, "1.2.3", test.terminalWidth, false), "\n") {
 			if lipgloss.Width(line) > test.maxWidth {
 				t.Fatalf("terminal width %d produced line width %d: %q", test.terminalWidth, lipgloss.Width(line), line)
 			}
