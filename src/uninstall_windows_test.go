@@ -10,7 +10,156 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows/registry"
 )
+
+func TestRemoveWindowsPathEntriesRemovesEveryManagedVariantAndPreservesText(t *testing.T) {
+	managed := `C:\Users\Example\AppData\Local\my-toolbox\bin`
+	for _, test := range []struct {
+		name      string
+		pathValue string
+		want      string
+	}{
+		{name: "single", pathValue: `C:\Before;C:\Users\Example\AppData\Local\my-toolbox\bin;C:\After`, want: `C:\Before;C:\After`},
+		{name: "multiple variants and empty entries", pathValue: `;C:\Before;;"C:\USERS\EXAMPLE\APPDATA\LOCAL\MY-TOOLBOX\BIN\";C:\After;C:\Users\Example\AppData\Local\my-toolbox\bin/;`, want: `;C:\Before;;C:\After;`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, changed := removeWindowsPathEntries(test.pathValue, managed)
+			if !changed || got != test.want {
+				t.Fatalf("removeWindowsPathEntries() = %q, %t, want %q, true", got, changed, test.want)
+			}
+		})
+	}
+}
+
+func TestRemoveWindowsPathEntriesLeavesMissingEntryUnchanged(t *testing.T) {
+	pathValue := `;C:\Before;;C:\After;`
+
+	got, changed := removeWindowsPathEntries(pathValue, `C:\Managed\bin`)
+	if changed || got != pathValue {
+		t.Fatalf("removeWindowsPathEntries() = %q, %t, want %q, false", got, changed, pathValue)
+	}
+}
+
+func TestWindowsUninstallRemovesManagedUserPathAndNotifies(t *testing.T) {
+	localAppData := t.TempDir()
+	dataRoot := filepath.Join(localAppData, "my-toolbox")
+	binRoot := filepath.Join(dataRoot, "bin")
+	wrapper := filepath.Join(binRoot, "tb.cmd")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	if err := os.MkdirAll(binRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wrapper, []byte(windowsToolboxWrapper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalRead := readWindowsUserPath
+	originalWrite := writeWindowsUserPath
+	originalNotify := notifyWindowsEnvironmentChange
+	t.Cleanup(func() {
+		readWindowsUserPath = originalRead
+		writeWindowsUserPath = originalWrite
+		notifyWindowsEnvironmentChange = originalNotify
+	})
+	readWindowsUserPath = func() (string, uint32, bool, error) {
+		return `C:\Before;` + strings.ToUpper(binRoot) + `\;` + binRoot + `;C:\After`, registry.EXPAND_SZ, true, nil
+	}
+	writtenPath := ""
+	writtenType := uint32(0)
+	writeWindowsUserPath = func(value string, valueType uint32) error {
+		writtenPath = value
+		writtenType = valueType
+		return nil
+	}
+	notifications := 0
+	notifyWindowsEnvironmentChange = func() error {
+		notifications++
+		return nil
+	}
+
+	if err := cleanupAndReinstallWindows(dataRoot, wrapper, ""); err != nil {
+		t.Fatal(err)
+	}
+	if writtenPath != `C:\Before;C:\After` {
+		t.Fatalf("written user PATH = %q", writtenPath)
+	}
+	if writtenType != registry.EXPAND_SZ {
+		t.Fatalf("written registry type = %d, want %d", writtenType, registry.EXPAND_SZ)
+	}
+	if notifications != 1 {
+		t.Fatalf("environment notifications = %d, want 1", notifications)
+	}
+}
+
+func TestWindowsUninstallMissingUserPathEntryIsNoOp(t *testing.T) {
+	originalRead := readWindowsUserPath
+	originalWrite := writeWindowsUserPath
+	originalNotify := notifyWindowsEnvironmentChange
+	t.Cleanup(func() {
+		readWindowsUserPath = originalRead
+		writeWindowsUserPath = originalWrite
+		notifyWindowsEnvironmentChange = originalNotify
+	})
+	readWindowsUserPath = func() (string, uint32, bool, error) {
+		return `;C:\Before;;C:\After;`, registry.SZ, true, nil
+	}
+	writes := 0
+	writeWindowsUserPath = func(value string, valueType uint32) error {
+		writes++
+		return nil
+	}
+	notifications := 0
+	notifyWindowsEnvironmentChange = func() error {
+		notifications++
+		return nil
+	}
+
+	if err := removeWindowsUserPathEntry(`C:\Managed\bin`); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 || notifications != 0 {
+		t.Fatalf("missing entry caused %d writes and %d notifications", writes, notifications)
+	}
+}
+
+func TestRemoveWindowsUserPathEntryPreservesRegistryValueType(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		valueType uint32
+	}{
+		{name: "string", valueType: registry.SZ},
+		{name: "expand string", valueType: registry.EXPAND_SZ},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			originalRead := readWindowsUserPath
+			originalWrite := writeWindowsUserPath
+			originalNotify := notifyWindowsEnvironmentChange
+			t.Cleanup(func() {
+				readWindowsUserPath = originalRead
+				writeWindowsUserPath = originalWrite
+				notifyWindowsEnvironmentChange = originalNotify
+			})
+			readWindowsUserPath = func() (string, uint32, bool, error) {
+				return `C:\Managed\bin`, test.valueType, true, nil
+			}
+			writtenType := uint32(0)
+			writeWindowsUserPath = func(value string, valueType uint32) error {
+				writtenType = valueType
+				return nil
+			}
+			notifyWindowsEnvironmentChange = func() error { return nil }
+
+			if err := removeWindowsUserPathEntry(`C:\Managed\bin`); err != nil {
+				t.Fatal(err)
+			}
+			if writtenType != test.valueType {
+				t.Fatalf("written registry type = %d, want %d", writtenType, test.valueType)
+			}
+		})
+	}
+}
 
 func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	localAppData := t.TempDir()
@@ -72,7 +221,14 @@ func TestWindowsCleanupReinstallsAfterManagedRemoval(t *testing.T) {
 	if err := os.WriteFile(wrapper, []byte(windowsToolboxWrapper), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	installer := "if (Test-Path -LiteralPath $env:TOOLBOX_TEST_DATA_ROOT) { exit 2 }\n[IO.File]::WriteAllText($env:TOOLBOX_TEST_MARKER, 'installed')\n"
+	originalRead := readWindowsUserPath
+	t.Cleanup(func() { readWindowsUserPath = originalRead })
+	pathReads := 0
+	readWindowsUserPath = func() (string, uint32, bool, error) {
+		pathReads++
+		return "", registry.SZ, true, nil
+	}
+	installer := "if (Test-Path -LiteralPath (Join-Path $env:TOOLBOX_TEST_DATA_ROOT 'versions')) { exit 2 }\n[IO.File]::WriteAllText($env:TOOLBOX_TEST_MARKER, 'installed')\n"
 	if err := os.WriteFile(installerPath, []byte(installer), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +239,9 @@ func TestWindowsCleanupReinstallsAfterManagedRemoval(t *testing.T) {
 	content, err := os.ReadFile(marker)
 	if err != nil || string(content) != "installed" {
 		t.Fatalf("installer marker = %q, %v", content, err)
+	}
+	if pathReads != 0 {
+		t.Fatalf("reinstall read user PATH %d times", pathReads)
 	}
 }
 
