@@ -157,7 +157,7 @@ func TestValidatePayloadRejectsMalformedArchive(t *testing.T) {
 
 func TestValidatePayloadRequiresEveryDeclaredNonBuiltinEntrypoint(t *testing.T) {
 	root := t.TempDir()
-	catalog := `{"commands":[{"name":"builtin-tool","description":"Builtin","package":"p","visibility":"list","protocol":"builtin","environments":["linux-native"],"entrypoints":{"linux-amd64":["builtin","builtin-tool"],"linux-arm64":["builtin","builtin-tool"]}},{"name":"script-tool","description":"Script","package":"p","visibility":"list","protocol":"interactive-script","environments":["linux-native"],"entrypoints":{"linux-amd64":["bash-script","packages/p/script.sh"],"linux-arm64":["bash-script","packages/p/script.sh"]}}]}`
+	catalog := `{"commands":[{"name":"builtin-tool","category":"Test","description":"Builtin","package":"p","visibility":"list","protocol":"builtin","environments":["linux-native"],"entrypoints":{"linux-amd64":["builtin","builtin-tool"],"linux-arm64":["builtin","builtin-tool"]}},{"name":"script-tool","category":"Test","description":"Script","package":"p","visibility":"list","protocol":"interactive-script","environments":["linux-native"],"entrypoints":{"linux-amd64":["bash-script","packages/p/script.sh"],"linux-arm64":["bash-script","packages/p/script.sh"]}}]}`
 	files := map[string][]byte{
 		"tb":            []byte("binary"),
 		"commands.json": []byte(catalog),

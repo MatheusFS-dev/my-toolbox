@@ -56,7 +56,7 @@ func (executor *fakeExecutor) Run(command Command, _ map[string]any, arguments [
 func testCatalog(names ...string) Catalog {
 	commands := make([]Command, 0, len(names))
 	for _, name := range names {
-		commands = append(commands, Command{Name: name, Description: name, Package: "test", Visibility: "list", Protocol: "builtin", Environments: []string{"linux-native"}})
+		commands = append(commands, Command{Name: name, Category: "Test", Description: name, Package: "test", Visibility: "list", Protocol: "builtin", Environments: []string{"linux-native"}})
 	}
 	return Catalog{Commands: commands}
 }
@@ -79,7 +79,7 @@ func TestListAndHelpExcludeCommandsFromOtherEnvironments(t *testing.T) {
 	if err := app.Execute([]string{"help"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "native  [test]") || strings.Contains(output.String(), "wsl  [test]") || strings.Contains(output.String(), "windows  [test]") {
+	if !strings.Contains(output.String(), "    native\n") || strings.Contains(output.String(), "    wsl\n") || strings.Contains(output.String(), "    windows\n") {
 		t.Fatalf("help = %q", output.String())
 	}
 }
@@ -124,7 +124,6 @@ func TestHelpPrintsEveryCatalogToolOnceInCatalogOrder(t *testing.T) {
 	catalog := testCatalog("first", "direct", "last")
 	catalog.Commands[0].Description = "First description"
 	catalog.Commands[1].Description = "Direct description"
-	catalog.Commands[1].Package = "direct-package"
 	catalog.Commands[1].Visibility = "direct"
 	catalog.Commands[2].Description = "Last description"
 	output := &bytes.Buffer{}
@@ -134,11 +133,11 @@ func TestHelpPrintsEveryCatalogToolOnceInCatalogOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	help := output.String()
-	if !strings.HasPrefix(help, "Usage: tb list | tb <tool> [arguments...] | tb update | tb uninstall | tb version | tb help\n") {
+	if !strings.HasPrefix(help, "TOOLBOX\n") {
 		t.Fatalf("help = %q", help)
 	}
 	previous := -1
-	for _, text := range []string{"first  [test]\n    First description", "direct  [direct-package]\n    Direct description", "last  [test]\n    Last description"} {
+	for _, text := range []string{"    first\n      First description", "    direct\n      Direct description", "    last\n      Last description"} {
 		if strings.Count(help, text) != 1 {
 			t.Fatalf("help occurrence for %q = %d; help = %q", text, strings.Count(help, text), help)
 		}
@@ -160,7 +159,7 @@ func TestRepositoryHelpIncludesDirectProjectTool(t *testing.T) {
 	if err := app.Execute([]string{"help"}); err != nil {
 		t.Fatal(err)
 	}
-	entry := "setup-agents-project  [agent-workspace-template]\n    Install selected agent instruction files into a project."
+	entry := "    setup-agents-project\n"
 	if strings.Count(output.String(), entry) != 1 {
 		t.Fatalf("project help entry count = %d; help = %q", strings.Count(output.String(), entry), output.String())
 	}

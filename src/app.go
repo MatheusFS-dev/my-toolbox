@@ -56,18 +56,12 @@ func (app App) Execute(arguments []string) error {
 	}
 	switch arguments[0] {
 	case "help":
-		if _, err := fmt.Fprintln(output, "Usage: tb list | tb <tool> [arguments...] | tb update | tb uninstall | tb version | tb help"); err != nil {
+		styled, width, err := helpTerminalProperties(output)
+		if err != nil {
 			return err
 		}
-		for _, command := range app.Catalog.Commands {
-			if !command.SupportsEnvironment(app.Environment) {
-				continue
-			}
-			if _, err := fmt.Fprintf(output, "%s  [%s]\n    %s\n\n", command.Name, command.Package, command.Description); err != nil {
-				return err
-			}
-		}
-		return nil
+		_, err = fmt.Fprint(output, renderHelp(filteredCommands(app.Catalog, app.Environment, true), width, styled))
+		return err
 	case "version":
 		_, err := fmt.Fprintln(output, app.Version)
 		return err
@@ -75,12 +69,7 @@ func (app App) Execute(arguments []string) error {
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb list does not accept arguments")
 		}
-		listedCommands := make([]Command, 0, len(app.Catalog.Commands))
-		for _, command := range app.Catalog.Commands {
-			if command.Visibility == "list" && command.SupportsEnvironment(app.Environment) {
-				listedCommands = append(listedCommands, command)
-			}
-		}
+		listedCommands := filteredCommands(app.Catalog, app.Environment, false)
 		selected, err := app.UI.Select(listedCommands)
 		if err != nil {
 			return err

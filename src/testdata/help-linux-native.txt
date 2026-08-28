@@ -1,0 +1,26 @@
+TOOLBOX
+  Portable terminal tools for supported Linux, WSL, and Windows
+  environments.
+
+USAGE
+  tb list
+    Select supported tools interactively and run them in catalog order.
+  tb <tool> [arguments...]
+    Run one supported catalog tool directly, forwarding its arguments.
+  tb update
+    Download, verify, and activate the newest toolbox release.
+  tb uninstall
+    Confirm and remove the toolbox wrapper and installed versions.
+  tb version
+    Print the installed toolbox version.
+  tb help
+    Show this usage and the tools supported in the current environment.
+
+AVAILABLE TOOLS
+  Agent Workspace
+    direct-project
+      A supported direct-only project tool.
+
+  Terminal
+    native-tool
+      A native Linux tool.

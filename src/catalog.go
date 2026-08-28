@@ -24,6 +24,7 @@ var supportedPlatforms = []string{"linux-amd64", "linux-arm64", "windows-amd64"}
 // Command describes one editable catalog tool and its platform entrypoints.
 type Command struct {
 	Name             string              `json:"name"`
+	Category         string              `json:"category"`
 	Description      string              `json:"description"`
 	Package          string              `json:"package"`
 	Visibility       string              `json:"visibility"`
@@ -129,6 +130,9 @@ func LoadCatalog(reader io.Reader) (Catalog, error) {
 			if command.Protocol == "interactive-python" && len(entrypoint) > 2 && entrypoint[2] == "" {
 				return Catalog{}, fmt.Errorf("command %q has invalid %s Python 2.7 fallback entrypoint", command.Name, platform)
 			}
+		}
+		if command.Category == "" {
+			return Catalog{}, fmt.Errorf("command %q has an empty category", command.Name)
 		}
 	}
 	return catalog, nil
