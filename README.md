@@ -101,6 +101,8 @@ Windows PowerShell:
 irm https://matheusfs-dev.github.io/my-toolbox/install.ps1 | iex
 ```
 
+On Windows, the installer adds `%LOCALAPPDATA%\my-toolbox\bin` to the user PATH and activates it in the current PowerShell session, so `tb` is available immediately. Running the installer again repairs either PATH entry without duplicating equivalent quoted, case-varied, or trailing-slash entries.
+
 Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` downloads the bootstrap installer, removes the managed toolbox installation, and runs the installer again. If installation fails after removal, run the installation command above to restore `tb`.
 
 Versions up to `0.1.6` use the former archive updater and cannot receive the reinstall-based fix. Run the installation command once to move from `0.1.6` to a newer release.
@@ -109,7 +111,7 @@ The published URLs become available only after GitHub Pages is enabled for the r
 
 ## Uninstallation
 
-Run `tb uninstall` and confirm removal. The command removes the toolbox wrapper and every installed toolbox version. It does not remove tools, plugins, agent configurations, or generated workspaces.
+Run `tb uninstall` and confirm removal. The command removes the toolbox wrapper and every installed toolbox version. On Windows, it also removes every exact managed wrapper-directory entry from the user PATH while preserving all unrelated PATH entries. It does not remove tools, plugins, agent configurations, or generated workspaces.
 
 ## Development
 

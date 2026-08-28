@@ -7,6 +7,7 @@ $Payload = Join-Path $TestRoot 'payload'
 $Downloads = Join-Path $TestRoot 'downloads'
 $OriginalLocalAppData = $env:LOCALAPPDATA
 $OriginalPath = $env:PATH
+$OriginalPathExt = $env:PATHEXT
 New-Item -ItemType Directory -Path $Payload, $Downloads | Out-Null
 $TemporaryBefore = @(
     Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'my-toolbox-*' |
@@ -56,9 +57,21 @@ try {
         }
     }
 
+    function Invoke-TestInstaller {
+        param(
+            [Parameter(Mandatory = $true)]
+            [scriptblock]$UserPathWriter
+        )
+
+        & $Installer -UserPathReader { $global:ToolboxInstallerTestUserPath } -UserPathWriter $UserPathWriter
+    }
+
     $env:LOCALAPPDATA = Join-Path $TestRoot 'localappdata'
     $env:PATH = 'C:\Windows\System32'
-    $Output = (& $Installer *>&1 | Out-String)
+    $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
+    $global:ToolboxInstallerTestUserPath = 'C:\Persisted\One;;C:\Persisted\Two'
+    $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
+    $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
     foreach ($Text in @(
         ' __  __ __   __  _____ ___   ___  _     ____   _____  __',
         '[INFO] Stage 1/7: prerequisites',
@@ -68,8 +81,7 @@ try {
         '[INFO] Stage 5/7: extraction/validation',
         '[INFO] Stage 6/7: installation',
         '[INFO] Stage 7/7: activation',
-        '[OK] Stage 7/7: activation',
-        'Add '
+        '[OK] Stage 7/7: activation'
     )) {
         if (-not $Output.Contains($Text)) {
             throw "Installer output is missing '$Text'. Output: $Output"
@@ -82,6 +94,46 @@ try {
     if (-not (Test-Path -LiteralPath $InstalledTool -PathType Leaf)) {
         throw 'Installer did not install the fixture payload.'
     }
+    $WrapperRoot = Join-Path $env:LOCALAPPDATA 'my-toolbox\bin'
+    $ExpectedUserPath = "C:\Persisted\One;;C:\Persisted\Two;$WrapperRoot"
+    if ($global:ToolboxInstallerTestUserPath -cne $ExpectedUserPath) {
+        throw "Installer user PATH = '$global:ToolboxInstallerTestUserPath', want '$ExpectedUserPath'."
+    }
+    $ExpectedProcessPath = "C:\Windows\System32;$WrapperRoot"
+    if ($env:PATH -cne $ExpectedProcessPath) {
+        throw "Installer process PATH = '$env:PATH', want '$ExpectedProcessPath'."
+    }
+    $InstalledCommand = Get-Command tb -ErrorAction Stop
+    if (-not [string]::Equals($InstalledCommand.Source, (Join-Path $WrapperRoot 'tb.cmd'), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Get-Command tb resolved '$($InstalledCommand.Source)'."
+    }
+
+    $env:PATH = 'C:\Windows\System32'
+    $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Repair'
+    $RepairOutput = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
+    if (-not $RepairOutput.Contains('is already installed')) {
+        throw "Existing installation did not take the repair path. Output: $RepairOutput"
+    }
+    if ($global:ToolboxInstallerTestUserPath -cne "C:\Persisted\Repair;$WrapperRoot") {
+        throw "Existing installation did not repair user PATH: '$global:ToolboxInstallerTestUserPath'."
+    }
+    if ($env:PATH -cne "C:\Windows\System32;$WrapperRoot") {
+        throw "Existing installation did not repair process PATH: '$env:PATH'."
+    }
+    if ($null -eq (Get-Command tb -ErrorAction SilentlyContinue)) {
+        throw 'Get-Command tb did not resolve after repairing an existing installation.'
+    }
+
+    $QuotedVariant = '"' + $WrapperRoot.ToUpperInvariant() + '\"'
+    $global:ToolboxInstallerTestUserPath = "C:\Before;$QuotedVariant;;C:\After"
+    $env:PATH = "C:\Windows\System32;$($WrapperRoot.ToUpperInvariant())\"
+    Invoke-TestInstaller -UserPathWriter $PathWriter | Out-Null
+    if ($global:ToolboxInstallerTestUserPath -cne "C:\Before;$QuotedVariant;;C:\After") {
+        throw "Installer duplicated or changed a user PATH variant: '$global:ToolboxInstallerTestUserPath'."
+    }
+    if ($env:PATH -cne "C:\Windows\System32;$($WrapperRoot.ToUpperInvariant())\") {
+        throw "Installer duplicated or changed a process PATH variant: '$env:PATH'."
+    }
     $TemporaryAfter = @(
         Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'my-toolbox-*' |
             ForEach-Object FullName
@@ -92,10 +144,31 @@ try {
     }
 
     Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox') -Recurse -Force
+    $env:PATH = 'C:\Windows\System32'
+    $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Failure'
+    $Failure = ''
+    try {
+        Invoke-TestInstaller -UserPathWriter { param([string]$Value) throw 'Injected user PATH persistence failure.' }
+    } catch {
+        $Failure = ($_ | Out-String)
+    }
+    if (-not $Failure.Contains('[FAIL] Stage 7/7: activation')) {
+        throw "PATH persistence failure did not identify Stage 7. Error: $Failure"
+    }
+    if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5')) {
+        throw 'PATH persistence failure did not roll back the version directory.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\bin\tb.cmd')) {
+        throw 'PATH persistence failure did not roll back the wrapper.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\current.txt')) {
+        throw 'PATH persistence failure did not roll back activation.'
+    }
+
     Set-Content -LiteralPath "$global:ToolboxInstallerFixtureArchive.sha256" -Value "$('0' * 64)  toolbox-windows-amd64.zip" -Encoding ascii
     $Failure = ''
     try {
-        & $Installer
+        Invoke-TestInstaller -UserPathWriter $PathWriter
     } catch {
         $Failure = ($_ | Out-String)
     }
@@ -117,8 +190,10 @@ try {
     }
 } finally {
     Remove-Variable -Name ToolboxInstallerFixtureArchive -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name ToolboxInstallerTestUserPath -Scope Global -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $OriginalLocalAppData
     $env:PATH = $OriginalPath
+    $env:PATHEXT = $OriginalPathExt
     if (Test-Path -LiteralPath $TestRoot) {
         Remove-Item -LiteralPath $TestRoot -Recurse -Force
     }

@@ -1,3 +1,10 @@
+param(
+    [Parameter(DontShow = $true)]
+    [scriptblock]$UserPathReader = { [Environment]::GetEnvironmentVariable('Path', 'User') },
+    [Parameter(DontShow = $true)]
+    [scriptblock]$UserPathWriter = { param([string]$Value) [Environment]::SetEnvironmentVariable('Path', $Value, 'User') }
+)
+
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'MatheusFS-dev/my-toolbox'
@@ -81,6 +88,74 @@ function Complete-Stage {
     None.
     #>
     Write-Status -Kind OK -Message "Stage $CurrentStage/7: $CurrentStageName"
+}
+
+function Get-NormalizedPathEntry {
+    <#
+    .SYNOPSIS
+    Normalizes a PATH entry for identity comparison only.
+    .PARAMETER Entry
+    A single PATH entry that may be quoted or end in a directory separator.
+    .OUTPUTS
+    System.String.
+    #>
+    param(
+        [AllowEmptyString()]
+        [string]$Entry
+    )
+
+    $Normalized = $Entry.Trim()
+    if ($Normalized.Length -ge 2 -and $Normalized[0] -eq '"' -and $Normalized[$Normalized.Length - 1] -eq '"') {
+        $Normalized = $Normalized.Substring(1, $Normalized.Length - 2)
+    }
+    return $Normalized.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+}
+
+function Add-PathEntry {
+    <#
+    .SYNOPSIS
+    Appends one PATH entry unless an equivalent entry is already present.
+    .PARAMETER Value
+    Existing PATH text to preserve byte-for-byte as the result prefix.
+    .PARAMETER Entry
+    Directory to append when absent.
+    .OUTPUTS
+    System.String.
+    #>
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Value,
+        [Parameter(Mandatory = $true)]
+        [string]$Entry
+    )
+
+    $Existing = if ($null -eq $Value) { '' } else { $Value }
+    $NormalizedEntry = Get-NormalizedPathEntry -Entry $Entry
+    foreach ($Candidate in ($Existing -split ';')) {
+        if ([string]::Equals((Get-NormalizedPathEntry -Entry $Candidate), $NormalizedEntry, [StringComparison]::OrdinalIgnoreCase)) {
+            return $Existing
+        }
+    }
+    if ([string]::IsNullOrEmpty($Existing) -or $Existing.EndsWith(';')) {
+        return $Existing + $Entry
+    }
+    return $Existing + ';' + $Entry
+}
+
+function Enable-ToolboxPath {
+    <#
+    .SYNOPSIS
+    Activates the toolbox wrapper for future and current processes.
+    .OUTPUTS
+    None.
+    #>
+    $UserPath = & $UserPathReader
+    $UpdatedUserPath = Add-PathEntry -Value $UserPath -Entry $WrapperRoot
+    if ($UpdatedUserPath -cne $UserPath) {
+        & $UserPathWriter $UpdatedUserPath | Out-Null
+    }
+    $env:PATH = Add-PathEntry -Value $env:PATH -Entry $WrapperRoot
 }
 
 function Expand-ToolboxArchive {
@@ -187,6 +262,10 @@ try {
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         Write-Status -Kind INFO -Message "my-toolbox $CurrentVersion is already installed. Run tb update to upgrade."
         Complete-Stage
+        Start-Stage -Number 7 -Name 'activation'
+        Enable-ToolboxPath
+        Complete-Stage
+        $InstallSucceeded = $true
         return
     }
     if (-not [Environment]::Is64BitOperatingSystem) {
@@ -296,10 +375,8 @@ try {
     $Activated = $true
     Move-Item -LiteralPath $TemporaryCurrent -Destination $CurrentFile
     $TemporaryCurrent = $null
+    Enable-ToolboxPath
     Write-Status -Kind OK -Message "Installed my-toolbox $Version."
-    if (($env:PATH -split ';') -notcontains $WrapperRoot) {
-        Write-Status -Kind INFO -Message "Add $WrapperRoot to PATH to run tb."
-    }
     Complete-Stage
     $InstallSucceeded = $true
 } catch {

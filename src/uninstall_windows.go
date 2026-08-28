@@ -11,13 +11,22 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const windowsCleanupMode = "toolbox-windows-cleanup"
 
 const maxInstallerOutputBytes = 16 * 1024
+
+var (
+	readWindowsUserPath            = readWindowsUserPathRegistry
+	writeWindowsUserPath           = writeWindowsUserPathRegistry
+	notifyWindowsEnvironmentChange = broadcastWindowsEnvironmentChange
+	sendMessageTimeout             = windows.NewLazySystemDLL("user32.dll").NewProc("SendMessageTimeoutW")
+)
 
 // boundedInstallerOutput retains only the final installer diagnostics.
 type boundedInstallerOutput struct {
@@ -204,7 +213,7 @@ func cleanupAndReinstallWindows(dataRoot, wrapper, installerPath string) error {
 		return err
 	}
 	if installerPath == "" {
-		return nil
+		return removeWindowsUserPathEntry(filepath.Dir(wrapper))
 	}
 	installerOutput := &boundedInstallerOutput{}
 	if err := runClosedInput("powershell", []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installerPath}, nil, installerOutput); err != nil {
@@ -214,6 +223,129 @@ func cleanupAndReinstallWindows(dataRoot, wrapper, installerPath string) error {
 		return fmt.Errorf("reinstall toolbox: %w", err)
 	}
 	return nil
+}
+
+// removeWindowsPathEntries removes every equivalent managed directory entry.
+// Unrelated entries, their order, and empty entries are preserved exactly.
+//
+// Args:
+//   - value: Existing semicolon-delimited Windows PATH text.
+//   - managed: Managed wrapper directory to remove.
+//
+// Returns:
+//   - string: PATH text with managed entries removed.
+//   - bool: True when at least one entry was removed.
+func removeWindowsPathEntries(value, managed string) (string, bool) {
+	managed = normalizeWindowsPathEntry(managed)
+	entries := strings.Split(value, ";")
+	kept := make([]string, 0, len(entries))
+	changed := false
+	for _, entry := range entries {
+		if strings.EqualFold(normalizeWindowsPathEntry(entry), managed) {
+			changed = true
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if !changed {
+		return value, false
+	}
+	return strings.Join(kept, ";"), true
+}
+
+// normalizeWindowsPathEntry normalizes only syntax ignored for PATH identity.
+func normalizeWindowsPathEntry(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = value[1 : len(value)-1]
+	}
+	return strings.TrimRight(value, `\/`)
+}
+
+// removeWindowsUserPathEntry removes the managed wrapper directory from the
+// persisted user PATH and notifies running Windows applications of the change.
+func removeWindowsUserPathEntry(managed string) error {
+	value, valueType, exists, err := readWindowsUserPath()
+	if err != nil {
+		return fmt.Errorf("read Windows user PATH: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	updated, changed := removeWindowsPathEntries(value, managed)
+	if !changed {
+		return nil
+	}
+	if err := writeWindowsUserPath(updated, valueType); err != nil {
+		return fmt.Errorf("write Windows user PATH: %w", err)
+	}
+	if err := notifyWindowsEnvironmentChange(); err != nil {
+		return fmt.Errorf("notify Windows environment change: %w", err)
+	}
+	return nil
+}
+
+// readWindowsUserPathRegistry reads PATH without expanding registry variables.
+func readWindowsUserPathRegistry() (string, uint32, bool, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, err
+	}
+	defer key.Close()
+	value, valueType, err := key.GetStringValue("Path")
+	if errors.Is(err, registry.ErrNotExist) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", valueType, false, err
+	}
+	return value, valueType, true, nil
+}
+
+// writeWindowsUserPathRegistry writes PATH using its original registry type.
+func writeWindowsUserPathRegistry(value string, valueType uint32) error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	switch valueType {
+	case registry.SZ:
+		return key.SetStringValue("Path", value)
+	case registry.EXPAND_SZ:
+		return key.SetExpandStringValue("Path", value)
+	default:
+		return fmt.Errorf("unsupported PATH registry type %d", valueType)
+	}
+}
+
+// broadcastWindowsEnvironmentChange tells running applications to refresh
+// environment settings after the persisted user PATH changes.
+func broadcastWindowsEnvironmentChange() error {
+	environment, err := windows.UTF16PtrFromString("Environment")
+	if err != nil {
+		return err
+	}
+	var messageResult uintptr
+	result, _, callErr := sendMessageTimeout.Call(
+		0xffff,
+		0x001a,
+		0,
+		uintptr(unsafe.Pointer(environment)),
+		0x0002,
+		5000,
+		uintptr(unsafe.Pointer(&messageResult)),
+	)
+	if result != 0 {
+		return nil
+	}
+	if callErr == windows.ERROR_SUCCESS {
+		return fmt.Errorf("SendMessageTimeoutW returned no result")
+	}
+	return callErr
 }
 
 // waitForWindowsProcess blocks until the original tb process exits.
