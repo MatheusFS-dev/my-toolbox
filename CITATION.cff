@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+type: software
+authors:
+  - family-names: Ferreira Silva
+    given-names: Matheus
+    website: "https://www.linkedin.com/in/matheus-ferreira-silva/"
+title: my-toolbox
+version: 0.1.9
+date-released: 2026-08-28
+license: Apache-2.0
+repository-code: "https://github.com/MatheusFS-dev/my-toolbox"
