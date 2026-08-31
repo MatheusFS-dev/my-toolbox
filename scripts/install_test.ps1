@@ -75,7 +75,11 @@ try {
     $WindowsPowerShellProfile = Join-Path $Documents 'WindowsPowerShell\profile.ps1'
     $PowerShellProfile = Join-Path $Documents 'PowerShell\profile.ps1'
     New-Item -ItemType Directory -Path (Split-Path -Parent $WindowsPowerShellProfile) | Out-Null
-    [IO.File]::WriteAllText($WindowsPowerShellProfile, "`$café = 'unrelated'", [Text.UTF8Encoding]::new($false))
+    # Construct the non-ASCII text without a source-file literal so Windows
+    # PowerShell 5.1 cannot decode the test fixture itself through its legacy code page.
+    $UnrelatedProfileText = '$caf' + [char]0x00E9 + " = 'unrelated'"
+    $UnrelatedProfileBytes = ([Text.UTF8Encoding]::new($false)).GetBytes($UnrelatedProfileText)
+    [IO.File]::WriteAllBytes($WindowsPowerShellProfile, $UnrelatedProfileBytes)
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\One;;C:\Persisted\Two'
     $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
     $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
@@ -109,13 +113,28 @@ try {
         }
     }
     $ManagedBlock = "# >>> my-toolbox completion >>>`r`n. (Join-Path `$env:LOCALAPPDATA 'my-toolbox\completions\tb.ps1')`r`n# <<< my-toolbox completion <<<`r`n"
-    $ExpectedWindowsPowerShellProfile = "`$café = 'unrelated'`r`n$ManagedBlock"
+    $ExpectedWindowsPowerShellProfile = "$UnrelatedProfileText`r`n$ManagedBlock"
     $ExpectedPowerShellProfile = $ManagedBlock
     if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne $ExpectedWindowsPowerShellProfile) {
         throw 'Installer did not preserve and activate the Windows PowerShell profile exactly.'
     }
     if ([IO.File]::ReadAllText($PowerShellProfile) -cne $ExpectedPowerShellProfile) {
         throw 'Installer did not preserve and activate the PowerShell profile exactly.'
+    }
+    $PublishedProfileBytes = [IO.File]::ReadAllBytes($WindowsPowerShellProfile)
+    if ($PublishedProfileBytes.Length -lt 3 -or $PublishedProfileBytes[0] -ne 0xEF -or $PublishedProfileBytes[1] -ne 0xBB -or $PublishedProfileBytes[2] -ne 0xBF) {
+        throw 'Installer did not make the BOM-less UTF-8 profile compatible with Windows PowerShell 5.1.'
+    }
+    for ($Index = 0; $Index -lt $UnrelatedProfileBytes.Length; $Index++) {
+        if ($PublishedProfileBytes[$Index + 3] -ne $UnrelatedProfileBytes[$Index]) {
+            throw 'Installer changed unrelated BOM-less UTF-8 profile bytes.'
+        }
+    }
+    $ProfileTokens = $null
+    $ProfileErrors = $null
+    [void][Management.Automation.Language.Parser]::ParseFile($WindowsPowerShellProfile, [ref]$ProfileTokens, [ref]$ProfileErrors)
+    if ($ProfileErrors.Count -gt 0) {
+        throw "Installed Windows PowerShell profile does not parse: $ProfileErrors"
     }
     $WrapperRoot = Join-Path $env:LOCALAPPDATA 'my-toolbox\bin'
     $ExpectedUserPath = "C:\Persisted\One;;C:\Persisted\Two;$WrapperRoot"
@@ -136,7 +155,7 @@ try {
     $env:PATH = 'C:\Windows\System32'
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Repair'
     Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\completions') -Recurse -Force
-    [IO.File]::WriteAllText($WindowsPowerShellProfile, "`$café = 'unrelated'", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllBytes($WindowsPowerShellProfile, $UnrelatedProfileBytes)
     Remove-Item -LiteralPath $PowerShellProfile -Force
     $RepairOutput = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
     if (-not $RepairOutput.Contains('is already installed')) {
@@ -188,7 +207,7 @@ try {
     }
 
     Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox') -Recurse -Force
-    [IO.File]::WriteAllText($WindowsPowerShellProfile, "`$café = 'unrelated'", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllBytes($WindowsPowerShellProfile, $UnrelatedProfileBytes)
     Remove-Item -LiteralPath $PowerShellProfile -Force
     Remove-Item -LiteralPath (Split-Path -Parent $PowerShellProfile)
     $env:PATH = 'C:\Windows\System32'
@@ -211,7 +230,7 @@ try {
     if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\current.txt')) {
         throw 'PATH persistence failure did not roll back activation.'
     }
-    if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne "`$café = 'unrelated'" -or (Test-Path -LiteralPath (Split-Path -Parent $PowerShellProfile))) {
+    if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne $UnrelatedProfileText -or (Test-Path -LiteralPath (Split-Path -Parent $PowerShellProfile))) {
         throw 'PATH persistence failure did not restore PowerShell profiles.'
     }
     if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\completions')) {

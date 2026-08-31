@@ -196,6 +196,7 @@ function New-CompletionProfileState {
     }
     $Encoding = [Text.Encoding]::Default
     $PreambleLength = 0
+    $AddUtf8Preamble = $false
     $Text = $null
     if ($OriginalBytes.Length -ge 3 -and $OriginalBytes[0] -eq 0xEF -and $OriginalBytes[1] -eq 0xBB -and $OriginalBytes[2] -eq 0xBF) {
         $Encoding = [Text.UTF8Encoding]::new($true, $true)
@@ -213,6 +214,9 @@ function New-CompletionProfileState {
         try {
             $Text = $Utf8Encoding.GetString($OriginalBytes)
             $Encoding = $Utf8Encoding
+            # Windows PowerShell 5.1 requires the UTF-8 preamble to decode
+            # non-ASCII script files as UTF-8 when it loads the profile.
+            $AddUtf8Preamble = $true
         } catch [Text.DecoderFallbackException] {
             $Text = $Encoding.GetString($OriginalBytes)
         }
@@ -244,10 +248,21 @@ function New-CompletionProfileState {
         [Array]::Copy($OriginalBytes, 0, $CandidateBytes, 0, $OriginalBytes.Length)
         [Array]::Copy($AddedBytes, 0, $CandidateBytes, $OriginalBytes.Length, $AddedBytes.Length)
     }
+    $CandidatePreambleLength = $PreambleLength
+    if ($AddUtf8Preamble) {
+        # Prefixing the preamble leaves every unrelated original byte intact
+        # while making the resulting profile portable across both runtimes.
+        $Utf8Preamble = [byte[]](0xEF, 0xBB, 0xBF)
+        $BytesWithPreamble = [byte[]]::new($Utf8Preamble.Length + $CandidateBytes.Length)
+        [Array]::Copy($Utf8Preamble, 0, $BytesWithPreamble, 0, $Utf8Preamble.Length)
+        [Array]::Copy($CandidateBytes, 0, $BytesWithPreamble, $Utf8Preamble.Length, $CandidateBytes.Length)
+        $CandidateBytes = $BytesWithPreamble
+        $CandidatePreambleLength = $Utf8Preamble.Length
+    }
 
     $Tokens = $null
     $ParseErrors = $null
-    $CandidateText = $Encoding.GetString($CandidateBytes, $PreambleLength, $CandidateBytes.Length - $PreambleLength)
+    $CandidateText = $Encoding.GetString($CandidateBytes, $CandidatePreambleLength, $CandidateBytes.Length - $CandidatePreambleLength)
     [void][Management.Automation.Language.Parser]::ParseInput($CandidateText, [ref]$Tokens, [ref]$ParseErrors)
     if ($ParseErrors.Count -gt 0) {
         throw "PowerShell profile candidate is invalid for ${Path}: $ParseErrors"
