@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 )
 
 // ErrCancelled identifies selection or configuration cancellation.
@@ -55,6 +56,23 @@ func (app App) Execute(arguments []string) error {
 		output = io.Discard
 	}
 	switch arguments[0] {
+	case "__complete":
+		if len(arguments) != 1 {
+			return fmt.Errorf("tb __complete does not accept arguments")
+		}
+		names := []string{"help", "list", "uninstall", "update", "version"}
+		for _, command := range app.Catalog.Commands {
+			if command.SupportsEnvironment(app.Environment) {
+				names = append(names, command.Name)
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if _, err := fmt.Fprintln(output, name); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "help":
 		styled, width, err := helpTerminalProperties(output)
 		if err != nil {

@@ -7,6 +7,10 @@ versions_root="$data_root/versions"
 current_file="$data_root/current.txt"
 wrapper_root="$HOME/.local/bin"
 wrapper_path="$wrapper_root/tb"
+completion_root="$data_root/completions"
+bash_profile="$HOME/.bashrc"
+zsh_profile_root="${ZDOTDIR:-$HOME}"
+zsh_profile="$zsh_profile_root/.zshrc"
 temporary_root=
 temporary_current=
 temporary_wrapper=
@@ -18,6 +22,19 @@ published_wrapper=0
 activated=0
 saved_wrapper=
 saved_wrapper_candidate=
+completion_published=0
+completion_replaced=0
+saved_completion_root=
+bash_profile_existed=0
+zsh_profile_existed=0
+bash_profile_published=0
+zsh_profile_published=0
+zsh_profile_root_existed=0
+zsh_profile_existing_ancestor=
+bash_profile_backup=
+zsh_profile_backup=
+temporary_bash_profile=
+temporary_zsh_profile=
 
 if [ -t 1 ]; then
     color_info='\033[36m'
@@ -53,10 +70,194 @@ complete_stage() {
     status_line OK "Stage $current_stage/7: $current_stage_name"
 }
 
+# Builds one validated profile candidate without changing the live profile.
+#
+# Args:
+#   $1: Live profile path.
+#   $2: Candidate path in the installer temporary directory.
+#   $3: Original-profile backup path used by activation rollback.
+#   $4: Exact managed source command.
+#   $5: Shell name used for syntax validation.
+#
+# Returns:
+#   Zero for a validated candidate, or nonzero for malformed markers, an
+#   unsupported profile file type, or invalid shell syntax.
+prepare_profile() {
+    profile=$1
+    candidate=$2
+    backup=$3
+    source_line=$4
+    shell_name=$5
+    start_marker='# >>> my-toolbox completion >>>'
+    end_marker='# <<< my-toolbox completion <<<'
+    start_count=0
+    end_count=0
+    start_occurrences=0
+    end_occurrences=0
+
+    if [ -L "$profile" ]; then
+        printf 'Shell profile is a symbolic link: %s.\n' "$profile" >&2
+        return 1
+    elif [ -f "$profile" ]; then
+        start_count=$(grep -Fxc "$start_marker" "$profile" || true)
+        end_count=$(grep -Fxc "$end_marker" "$profile" || true)
+        start_occurrences=$(grep -Fc "$start_marker" "$profile" || true)
+        end_occurrences=$(grep -Fc "$end_marker" "$profile" || true)
+        if [ "$start_count" -ne "$start_occurrences" ] || [ "$end_count" -ne "$end_occurrences" ] || \
+            [ "$start_count" -ne "$end_count" ] || [ "$start_count" -gt 1 ]; then
+            printf 'Malformed my-toolbox completion markers in %s.\n' "$profile" >&2
+            return 1
+        fi
+        if [ "$start_count" -eq 1 ]; then
+            managed_block=$(sed -n '/^# >>> my-toolbox completion >>>$/,/^# <<< my-toolbox completion <<<$/{p;}' "$profile")
+            expected_block=$(printf '%s\n%s\n%s\n' "$start_marker" "$source_line" "$end_marker")
+            if [ "$managed_block" != "$expected_block" ]; then
+                printf 'Malformed my-toolbox completion block in %s.\n' "$profile" >&2
+                return 1
+            fi
+        fi
+        cp -p "$profile" "$backup"
+        cp -p "$profile" "$candidate"
+    elif [ -e "$profile" ]; then
+        printf 'Shell profile is not a regular file: %s.\n' "$profile" >&2
+        return 1
+    else
+        : > "$candidate"
+    fi
+
+    if [ "${start_count:-0}" -eq 0 ]; then
+        if [ -s "$candidate" ]; then
+            printf '\n' >> "$candidate"
+        fi
+        printf '%s\n%s\n%s\n' "$start_marker" "$source_line" "$end_marker" >> "$candidate"
+    fi
+
+    if [ "$shell_name" = "bash" ]; then
+        bash -n "$candidate"
+    else
+        zsh -n "$candidate"
+    fi
+}
+
+# Publishes stable completion assets and exact shell profile blocks.
+#
+# Args: None. The function uses the validated global version and profile paths.
+#
+# Returns:
+#   Zero after idempotent publication, or nonzero for missing version assets,
+#   malformed profiles, syntax failures, or filesystem publication failures.
+activate_completions() {
+    for completion_asset in _tb tb.bash tb.ps1; do
+        [ -f "$version_root/completions/$completion_asset" ] || {
+            printf 'Installed version is missing completion asset %s.\n' "$completion_asset" >&2
+            return 1
+        }
+    done
+
+    quoted_completion_root=$(printf '%s' "$completion_root" | sed "s/'/'\\\\''/g")
+    bash_source_line=". '$quoted_completion_root/tb.bash'"
+    zsh_source_line="source '$quoted_completion_root/_tb'"
+    bash_profile_backup="$temporary_root/bashrc.original"
+    zsh_profile_backup="$temporary_root/zshrc.original"
+    temporary_bash_profile="$temporary_root/bashrc.candidate"
+    temporary_zsh_profile="$temporary_root/zshrc.candidate"
+    if [ -f "$bash_profile" ]; then
+        bash_profile_existed=1
+    fi
+    if [ -f "$zsh_profile" ]; then
+        zsh_profile_existed=1
+    fi
+    if [ -d "$zsh_profile_root" ]; then
+        zsh_profile_root_existed=1
+    else
+        # Record the nearest existing ancestor so rollback removes only directory
+        # levels that this activation had to create.
+        zsh_profile_existing_ancestor=$zsh_profile_root
+        while [ ! -d "$zsh_profile_existing_ancestor" ]; do
+            zsh_profile_existing_ancestor=$(dirname "$zsh_profile_existing_ancestor")
+        done
+    fi
+    prepare_profile "$bash_profile" "$temporary_bash_profile" "$bash_profile_backup" "$bash_source_line" bash
+    prepare_profile "$zsh_profile" "$temporary_zsh_profile" "$zsh_profile_backup" "$zsh_source_line" zsh
+
+    completion_assets_match=1
+    if [ -d "$completion_root" ]; then
+        for completion_asset in _tb tb.bash tb.ps1; do
+            if ! cmp -s "$version_root/completions/$completion_asset" "$completion_root/$completion_asset"; then
+                completion_assets_match=0
+            fi
+        done
+    elif [ -e "$completion_root" ]; then
+        printf 'Completion path is not a directory: %s\n' "$completion_root" >&2
+        return 1
+    else
+        completion_assets_match=0
+    fi
+    if [ "$completion_assets_match" -eq 0 ]; then
+        if [ -d "$completion_root" ]; then
+            saved_completion_root="$data_root/.completions.previous.$$"
+            [ ! -e "$saved_completion_root" ] || {
+                printf 'Completion rollback path already exists: %s\n' "$saved_completion_root" >&2
+                return 1
+            }
+            mv "$completion_root" "$saved_completion_root"
+            completion_replaced=1
+        else
+            completion_published=1
+        fi
+        cp -R "$version_root/completions" "$completion_root"
+    fi
+
+    mkdir -p "$zsh_profile_root"
+    if [ "$bash_profile_existed" -eq 0 ] || ! cmp -s "$temporary_bash_profile" "$bash_profile"; then
+        bash_profile_published=1
+        mv "$temporary_bash_profile" "$bash_profile"
+    else
+        rm -f "$temporary_bash_profile"
+    fi
+    temporary_bash_profile=
+    if [ "$zsh_profile_existed" -eq 0 ] || ! cmp -s "$temporary_zsh_profile" "$zsh_profile"; then
+        zsh_profile_published=1
+        mv "$temporary_zsh_profile" "$zsh_profile"
+    else
+        rm -f "$temporary_zsh_profile"
+    fi
+    temporary_zsh_profile=
+}
+
 on_exit() {
     exit_status=$1
     trap - 0
     if [ "$exit_status" -ne 0 ]; then
+        if [ "$zsh_profile_published" -eq 1 ]; then
+            if [ "$zsh_profile_existed" -eq 1 ]; then
+                cp -p "$zsh_profile_backup" "$zsh_profile"
+            else
+                rm -f "$zsh_profile"
+            fi
+        fi
+        if [ "$bash_profile_published" -eq 1 ]; then
+            if [ "$bash_profile_existed" -eq 1 ]; then
+                cp -p "$bash_profile_backup" "$bash_profile"
+            else
+                rm -f "$bash_profile"
+            fi
+        fi
+        if [ "$zsh_profile_root_existed" -eq 0 ] && [ -d "$zsh_profile_root" ]; then
+            created_directory=$zsh_profile_root
+            while [ "$created_directory" != "$zsh_profile_existing_ancestor" ]; do
+                if ! rmdir "$created_directory" 2>/dev/null; then
+                    break
+                fi
+                created_directory=$(dirname "$created_directory")
+            done
+        fi
+        if [ "$completion_replaced" -eq 1 ]; then
+            rm -rf "$completion_root"
+            mv "$saved_completion_root" "$completion_root"
+        elif [ "$completion_published" -eq 1 ]; then
+            rm -rf "$completion_root"
+        fi
         if [ "$activated" -eq 1 ]; then
             rm -f "$current_file"
         fi
@@ -84,6 +285,9 @@ on_exit() {
     if [ "$exit_status" -eq 0 ] && [ -n "$saved_wrapper" ] && [ -e "$saved_wrapper" ]; then
         rm -f "$saved_wrapper"
     fi
+    if [ "$exit_status" -eq 0 ] && [ -n "$saved_completion_root" ] && [ -e "$saved_completion_root" ]; then
+        rm -rf "$saved_completion_root"
+    fi
     if [ -n "$temporary_root" ] && [ -d "$temporary_root" ]; then
         rm -rf "$temporary_root"
     fi
@@ -104,9 +308,22 @@ cat <<'BANNER'
 BANNER
 
 start_stage 1 prerequisites
+command -v bash >/dev/null 2>&1 || {
+    printf 'bash is required to install my-toolbox completion.\n' >&2
+    exit 1
+}
+command -v zsh >/dev/null 2>&1 || {
+    printf 'zsh is required to install my-toolbox completion.\n' >&2
+    exit 1
+}
 if [ -f "$current_file" ]; then
     current_version=$(sed -n '1p' "$current_file")
     status_line INFO "my-toolbox $current_version is already installed. Run tb update to upgrade."
+    complete_stage
+    version_root="$versions_root/$current_version"
+    temporary_root=$(mktemp -d)
+    start_stage 7 activation
+    activate_completions
     complete_stage
     exit 0
 fi
@@ -172,6 +389,9 @@ mkdir -p "$versions_root"
 staging_payload=$(mktemp -d "$versions_root/.install-$version.XXXXXX")
 tar -xzf "$temporary_root/$archive" -C "$staging_payload"
 for required in tb commands.json version.txt \
+    completions/_tb \
+    completions/tb.bash \
+    completions/tb.ps1 \
     packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py \
     packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py \
     packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py \
@@ -236,6 +456,7 @@ temporary_wrapper=
 complete_stage
 
 start_stage 7 activation
+activate_completions
 temporary_current="$data_root/current.txt.new"
 printf '%s\n' "$version" > "$temporary_current"
 activated=1

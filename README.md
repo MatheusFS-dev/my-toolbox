@@ -57,6 +57,8 @@ The toolbox gathers all required answers before it runs selected tools, executes
 curl -fsSL https://matheusfs-dev.github.io/my-toolbox/install.sh | sh
 ```
 
+Bash and Zsh must both be installed so the installer can validate their profile changes before publication.
+
 ### Windows PowerShell
 
 ```powershell
@@ -64,6 +66,8 @@ irm https://matheusfs-dev.github.io/my-toolbox/install.ps1 | iex
 ```
 
 On Windows, the installer adds `%LOCALAPPDATA%\my-toolbox\bin` to the user `PATH` and activates it in the current PowerShell session, making `tb` available immediately. Running the installer again repairs the managed `PATH` entry without duplicating equivalent entries.
+
+The installers automatically register top-level `tb` completion for Bash, Zsh, Windows PowerShell 5.1, and PowerShell 7. They add marked source blocks to `$HOME/.bashrc`, `${ZDOTDIR:-$HOME}/.zshrc`, and both PowerShell `CurrentUserAllHosts` profiles. Open a new shell session after installation to activate completion.
 
 Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` downloads the bootstrap installer, removes the managed toolbox installation, and runs the installer again. If installation fails after removal, rerun the installation command for your platform to restore `tb`.
 
@@ -98,6 +102,8 @@ SELECT TOOLS
 The example is shortened to show the row layout. The live selector wraps to the current terminal width, capped at 72 columns. Its title and controls remain visible while tool rows scroll; selected markers and names are green, while descriptions remain gray.
 
 `tb list` excludes direct-only commands, while `tb help` includes them. Running `tb` without arguments is invalid and directs you to `tb list`. Help output uses ANSI styling only when standard output is a terminal; redirected output remains plain text with the same hierarchy.
+
+Tab completion suggests environment-supported built-in, listed, and direct-only command names for the first argument after `tb`. The toolbox does not add flag, path, or later-argument suggestions for commands delegated to selected tools.
 
 ## Tool Catalog
 

@@ -7,6 +7,7 @@ trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 mkdir -p "$test_root/bin" "$test_root/payload" "$test_root/home" "$test_root/downloads" "$test_root/tmp"
 
 cp "$repository_root/commands.json" "$test_root/payload/commands.json"
+cp -R "$repository_root/completions" "$test_root/payload/completions"
 printf '%s\n' '0.1.5' > "$test_root/payload/version.txt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$test_root/payload/tb"
 chmod 755 "$test_root/payload/tb"
@@ -77,7 +78,26 @@ exec /bin/mv "$@"
 SH
 chmod 755 "$test_root/bin/uname" "$test_root/bin/curl" "$test_root/bin/mv"
 
-output=$(HOME="$test_root/home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh")
+mkdir -p "$test_root/no-zsh-bin" "$test_root/no-zsh-home"
+ln -s /bin/bash "$test_root/no-zsh-bin/bash"
+ln -s /bin/cat "$test_root/no-zsh-bin/cat"
+if HOME="$test_root/no-zsh-home" PATH="$test_root/no-zsh-bin" /bin/sh "$repository_root/install.sh" >"$test_root/no-zsh.out" 2>&1; then
+    printf 'Installer accepted activation without Zsh validation.\n' >&2
+    exit 1
+fi
+if ! grep -F 'zsh is required to install my-toolbox completion' "$test_root/no-zsh.out" >/dev/null; then
+    printf 'Missing Zsh did not fail explicitly.\n' >&2
+    exit 1
+fi
+if [ -e "$test_root/no-zsh-home/.bashrc" ] || [ -e "$test_root/no-zsh-home/.local/share/my-toolbox" ]; then
+    printf 'Missing-Zsh failure changed the target home.\n' >&2
+    exit 1
+fi
+
+mkdir -p "$test_root/home/zsh"
+printf '%s' 'bash unrelated' > "$test_root/home/.bashrc"
+printf '%s\n' 'zsh unrelated' > "$test_root/home/zsh/.zshrc"
+output=$(HOME="$test_root/home" ZDOTDIR="$test_root/home/zsh" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh")
 for text in \
     ' __  __ __   __  _____ ___   ___  _     ____   _____  __' \
     '[INFO] Stage 1/7: prerequisites' \
@@ -102,10 +122,70 @@ if [ ! -f "$test_root/home/.local/share/my-toolbox/versions/0.1.5/packages/other
     printf 'Installer did not install the fixture payload.\n' >&2
     exit 1
 fi
+for completion in _tb tb.bash tb.ps1; do
+    if ! cmp -s "$repository_root/completions/$completion" "$test_root/home/.local/share/my-toolbox/completions/$completion"; then
+        printf 'Installer did not publish completion asset %s.\n' "$completion" >&2
+        exit 1
+    fi
+done
+{
+    printf '%s\n' 'bash unrelated'
+    printf '%s\n' '# >>> my-toolbox completion >>>'
+    printf ". '%s'\n" "$test_root/home/.local/share/my-toolbox/completions/tb.bash"
+    printf '%s\n' '# <<< my-toolbox completion <<<'
+} > "$test_root/expected-bashrc"
+{
+    printf '%s\n\n' 'zsh unrelated'
+    printf '%s\n' '# >>> my-toolbox completion >>>'
+    printf "source '%s'\n" "$test_root/home/.local/share/my-toolbox/completions/_tb"
+    printf '%s\n' '# <<< my-toolbox completion <<<'
+} > "$test_root/expected-zshrc"
+if ! cmp -s "$test_root/expected-bashrc" "$test_root/home/.bashrc"; then
+    printf 'Installer did not preserve and activate the Bash profile exactly.\n' >&2
+    exit 1
+fi
+if ! cmp -s "$test_root/expected-zshrc" "$test_root/home/zsh/.zshrc"; then
+    printf 'Installer did not preserve and activate the Zsh profile exactly.\n' >&2
+    exit 1
+fi
+rm -rf "$test_root/home/.local/share/my-toolbox/completions"
+printf '%s' 'bash unrelated' > "$test_root/home/.bashrc"
+printf '%s\n' 'zsh unrelated' > "$test_root/home/zsh/.zshrc"
+HOME="$test_root/home" ZDOTDIR="$test_root/home/zsh" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >/dev/null
+if ! cmp -s "$test_root/expected-bashrc" "$test_root/home/.bashrc" || ! cmp -s "$test_root/expected-zshrc" "$test_root/home/zsh/.zshrc"; then
+    printf 'Existing installation did not repair shell completion activation.\n' >&2
+    exit 1
+fi
+for completion in _tb tb.bash tb.ps1; do
+    if ! cmp -s "$repository_root/completions/$completion" "$test_root/home/.local/share/my-toolbox/completions/$completion"; then
+        printf 'Existing installation did not repair completion asset %s.\n' "$completion" >&2
+        exit 1
+    fi
+done
+HOME="$test_root/home" ZDOTDIR="$test_root/home/zsh" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >/dev/null
+for profile in "$test_root/home/.bashrc" "$test_root/home/zsh/.zshrc"; do
+    if [ "$(grep -Fxc '# >>> my-toolbox completion >>>' "$profile")" -ne 1 ] || [ "$(grep -Fxc '# <<< my-toolbox completion <<<' "$profile")" -ne 1 ]; then
+        printf 'Installer duplicated a managed completion block in %s.\n' "$profile" >&2
+        exit 1
+    fi
+done
 if find "$test_root/tmp" -mindepth 1 -print | grep . >/dev/null; then
     printf 'Installer left a temporary directory behind.\n' >&2
     exit 1
 fi
+
+mkdir -p "$test_root/missing-profiles-home"
+HOME="$test_root/missing-profiles-home" ZDOTDIR="$test_root/missing-profiles-home/config/zsh" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >/dev/null
+if [ ! -f "$test_root/missing-profiles-home/.bashrc" ] || [ ! -f "$test_root/missing-profiles-home/config/zsh/.zshrc" ]; then
+    printf 'Installer did not create missing Bash and Zsh profiles.\n' >&2
+    exit 1
+fi
+for profile in "$test_root/missing-profiles-home/.bashrc" "$test_root/missing-profiles-home/config/zsh/.zshrc"; do
+    if [ "$(grep -Fxc '# >>> my-toolbox completion >>>' "$profile")" -ne 1 ] || [ "$(grep -Fxc '# <<< my-toolbox completion <<<' "$profile")" -ne 1 ]; then
+        printf 'Installer did not activate completion in new profile %s.\n' "$profile" >&2
+        exit 1
+    fi
+done
 
 mkdir -p "$test_root/failure-home"
 printf '%064d  toolbox-linux-amd64.tar.gz\n' 0 > "$test_root/downloads/toolbox-linux-amd64.tar.gz.sha256"
@@ -145,7 +225,8 @@ if find "$test_root/publication-failure-home/.local/share/my-toolbox/versions" -
 fi
 
 mkdir -p "$test_root/activation-failure-home"
-if HOME="$test_root/activation-failure-home" TMPDIR="$test_root/tmp" FAIL_CURRENT_MOVE=1 FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/activation-failure.out" 2>&1; then
+printf '%s' 'original bash bytes' > "$test_root/activation-failure-home/.bashrc"
+if HOME="$test_root/activation-failure-home" ZDOTDIR="$test_root/activation-failure-home/config/zsh" TMPDIR="$test_root/tmp" FAIL_CURRENT_MOVE=1 FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/activation-failure.out" 2>&1; then
     printf 'Installer accepted an activation publication failure.\n' >&2
     exit 1
 fi
@@ -155,11 +236,40 @@ if ! grep -F '[FAIL] Stage 7/7: activation' "$test_root/activation-failure.out" 
 fi
 if [ -e "$test_root/activation-failure-home/.local/share/my-toolbox/versions/0.1.5" ] ||
     [ -e "$test_root/activation-failure-home/.local/bin/tb" ] ||
-    [ -e "$test_root/activation-failure-home/.local/share/my-toolbox/current.txt" ]; then
+    [ -e "$test_root/activation-failure-home/.local/share/my-toolbox/current.txt" ] ||
+    [ -e "$test_root/activation-failure-home/.local/share/my-toolbox/completions" ]; then
     printf 'Activation failure left a partial installation behind.\n' >&2
+    exit 1
+fi
+if [ "$(cat "$test_root/activation-failure-home/.bashrc")" != 'original bash bytes' ] ||
+    [ -e "$test_root/activation-failure-home/config" ]; then
+    printf 'Activation failure did not restore the original shell profiles.\n' >&2
     exit 1
 fi
 if find "$test_root/tmp" -mindepth 1 -print | grep . >/dev/null; then
     printf 'Activation failure left a temporary directory behind.\n' >&2
+    exit 1
+fi
+
+mkdir -p "$test_root/malformed-home/zsh"
+printf '%s\n' 'unrelated' '# >>> my-toolbox completion >>>' > "$test_root/malformed-home/.bashrc"
+printf '%s\n' 'zsh unrelated' > "$test_root/malformed-home/zsh/.zshrc"
+if HOME="$test_root/malformed-home" ZDOTDIR="$test_root/malformed-home/zsh" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/malformed.out" 2>&1; then
+    printf 'Installer accepted malformed completion markers.\n' >&2
+    exit 1
+fi
+if ! grep -F 'Malformed my-toolbox completion markers' "$test_root/malformed.out" >/dev/null; then
+    printf 'Malformed completion markers did not fail explicitly.\n' >&2
+    exit 1
+fi
+if [ "$(cat "$test_root/malformed-home/.bashrc")" != "unrelated
+# >>> my-toolbox completion >>>" ]; then
+    printf 'Malformed-marker failure changed the Bash profile.\n' >&2
+    exit 1
+fi
+if [ -e "$test_root/malformed-home/.local/share/my-toolbox/versions/0.1.5" ] ||
+    [ -e "$test_root/malformed-home/.local/bin/tb" ] ||
+    [ -e "$test_root/malformed-home/.local/share/my-toolbox/completions" ]; then
+    printf 'Malformed-marker failure left a partial installation behind.\n' >&2
     exit 1
 fi

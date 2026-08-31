@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -13,6 +14,22 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 )
+
+// useTemporaryWindowsDocuments redirects known-folder profile cleanup for one test.
+//
+// Args:
+//   - t: Active test whose cleanup restores the production resolver.
+//
+// Returns:
+//   - string: Temporary Documents folder returned by the injected resolver.
+func useTemporaryWindowsDocuments(t *testing.T) string {
+	t.Helper()
+	documents := t.TempDir()
+	original := windowsDocumentsPath
+	windowsDocumentsPath = func() (string, error) { return documents, nil }
+	t.Cleanup(func() { windowsDocumentsPath = original })
+	return documents
+}
 
 func TestRemoveWindowsPathEntriesRemovesEveryManagedVariantAndPreservesText(t *testing.T) {
 	managed := `C:\Users\Example\AppData\Local\my-toolbox\bin`
@@ -48,11 +65,27 @@ func TestWindowsUninstallRemovesManagedUserPathAndNotifies(t *testing.T) {
 	binRoot := filepath.Join(dataRoot, "bin")
 	wrapper := filepath.Join(binRoot, "tb.cmd")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	documents := useTemporaryWindowsDocuments(t)
 	if err := os.MkdirAll(binRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(wrapper, []byte(windowsToolboxWrapper), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	profilePaths := []string{
+		filepath.Join(documents, "WindowsPowerShell", "profile.ps1"),
+		filepath.Join(documents, "PowerShell", "profile.ps1"),
+	}
+	profileOriginals := []string{"windows powershell unrelated", "powershell unrelated\r\n"}
+	sourceLine := `. (Join-Path $env:LOCALAPPDATA 'my-toolbox\completions\tb.ps1')`
+	for index, profilePath := range profilePaths {
+		if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		block := fmt.Sprintf("\r\n%s\r\n%s\r\n%s\r\n", completionMarkerStart, sourceLine, completionMarkerEnd)
+		if err := os.WriteFile(profilePath, []byte(profileOriginals[index]+block), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	originalRead := readWindowsUserPath
@@ -90,6 +123,49 @@ func TestWindowsUninstallRemovesManagedUserPathAndNotifies(t *testing.T) {
 	}
 	if notifications != 1 {
 		t.Fatalf("environment notifications = %d, want 1", notifications)
+	}
+	for index, profilePath := range profilePaths {
+		content, err := os.ReadFile(profilePath)
+		if err != nil || string(content) != profileOriginals[index] {
+			t.Fatalf("profile %s = %q, %v", profilePath, content, err)
+		}
+	}
+}
+
+func TestWindowsUninstallRejectsMalformedCompletionMarkersBeforeDeletingInstallation(t *testing.T) {
+	localAppData := t.TempDir()
+	dataRoot := filepath.Join(localAppData, "my-toolbox")
+	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	documents := useTemporaryWindowsDocuments(t)
+	profile := filepath.Join(documents, "WindowsPowerShell", "profile.ps1")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	for _, directory := range []string{versionRoot, filepath.Dir(wrapper), filepath.Dir(profile)} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(wrapper, []byte(windowsToolboxWrapper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	malformed := []byte("unrelated\r\n" + completionMarkerStart + "\r\n")
+	if err := os.WriteFile(profile, malformed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cleanupAndReinstallWindows(dataRoot, wrapper, "")
+	if err == nil || !strings.Contains(err.Error(), "malformed my-toolbox completion markers") {
+		t.Fatalf("cleanupAndReinstallWindows() error = %v", err)
+	}
+	if _, err := os.Stat(versionRoot); err != nil {
+		t.Fatalf("malformed markers removed installation: %v", err)
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatalf("malformed markers removed wrapper: %v", err)
+	}
+	content, readErr := os.ReadFile(profile)
+	if readErr != nil || string(content) != string(malformed) {
+		t.Fatalf("malformed profile = %q, %v", content, readErr)
 	}
 }
 
@@ -166,20 +242,22 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	dataRoot := filepath.Join(localAppData, "my-toolbox")
 	versionsRoot := filepath.Join(dataRoot, "versions", "0.1.1")
 	binRoot := filepath.Join(dataRoot, "bin")
+	completionRoot := filepath.Join(dataRoot, "completions")
 	wrapper := filepath.Join(binRoot, "tb.cmd")
 	githubCLI := filepath.Join(binRoot, "gh.exe")
 	currentFile := filepath.Join(dataRoot, "current.txt")
 	unrelated := filepath.Join(localAppData, "unrelated")
 	t.Setenv("LOCALAPPDATA", localAppData)
-	for _, path := range []string{versionsRoot, binRoot, unrelated} {
+	for _, path := range []string{versionsRoot, binRoot, completionRoot, unrelated} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for path, content := range map[string]string{
-		wrapper:     windowsToolboxWrapper,
-		githubCLI:   "installed gh",
-		currentFile: "0.1.1\n",
+		wrapper:                                 windowsToolboxWrapper,
+		githubCLI:                               "installed gh",
+		currentFile:                             "0.1.1\n",
+		filepath.Join(completionRoot, "tb.ps1"): "completion",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -188,7 +266,7 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	if err := cleanupWindowsPaths(dataRoot, wrapper); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{versionsRoot, currentFile, wrapper} {
+	for _, path := range []string{versionsRoot, completionRoot, currentFile, wrapper} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("managed path still exists: %s", path)
 		}
@@ -210,6 +288,7 @@ func TestWindowsCleanupReinstallsAfterManagedRemoval(t *testing.T) {
 	installerPath := filepath.Join(t.TempDir(), "install.ps1")
 	marker := filepath.Join(t.TempDir(), "installed")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	useTemporaryWindowsDocuments(t)
 	t.Setenv("TOOLBOX_TEST_DATA_ROOT", dataRoot)
 	t.Setenv("TOOLBOX_TEST_MARKER", marker)
 	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
@@ -251,6 +330,7 @@ func TestWindowsReinstallReportsInstallerOutput(t *testing.T) {
 	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
 	installerPath := filepath.Join(t.TempDir(), "install.ps1")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	useTemporaryWindowsDocuments(t)
 	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}

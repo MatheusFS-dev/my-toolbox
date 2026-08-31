@@ -39,13 +39,30 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Get-ChildItem packages/scripts -Recurse -Filter *.ps1 | ForEach-Object {
+          $PowerShellFiles = @(
+            Get-ChildItem packages/scripts -Recurse -Filter *.ps1
+            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1
+          )
+          $PowerShellFiles | ForEach-Object {
             $Errors = $null
             [void][Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$Errors)
             if ($Errors.Count -gt 0) {
               throw "PowerShell syntax error in $($_.FullName): $Errors"
             }
           }
+          & ./scripts/completion_test.ps1
+          & ./scripts/install_test.ps1
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1')) {
+            $Errors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $Path), [ref]$null, [ref]$Errors)
+            if ($Errors.Count -gt 0) {
+              throw "Windows PowerShell syntax error in ${Path}: $Errors"
+            }
+          }
+          & ./scripts/completion_test.ps1
           & ./scripts/install_test.ps1
 
   python2-syntax:
@@ -64,7 +81,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - run: sudo apt-get update && sudo apt-get install -y zsh
       - run: sh scripts/next-release-version_test.sh
       - run: sh scripts/build-release_test.sh
       - run: sh scripts/install_test.sh
-      - run: shellcheck install.sh scripts/build-release.sh scripts/build-release_test.sh scripts/install_test.sh scripts/testdata/go
+      - run: sh scripts/completion_test.sh
+      - run: bash -n completions/tb.bash
+      - run: zsh -n completions/_tb
+      - run: shellcheck install.sh completions/tb.bash scripts/build-release.sh scripts/build-release_test.sh scripts/completion_test.sh scripts/install_test.sh scripts/testdata/go

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // uninstallPlatform synchronously removes Linux toolbox-managed paths.
@@ -32,6 +34,9 @@ func uninstallPlatform(dataRoot, wrapper, installerPath string, output io.Writer
 			return "", fmt.Errorf("inspect toolbox wrapper: %w", err)
 		}
 	}
+	if err := removeUnixCompletionProfiles(dataRoot); err != nil {
+		return "", err
+	}
 	if err := os.RemoveAll(dataRoot); err != nil {
 		return "", fmt.Errorf("remove toolbox data directory: %w", err)
 	}
@@ -46,6 +51,37 @@ func uninstallPlatform(dataRoot, wrapper, installerPath string, output io.Writer
 		}
 	}
 	return "", nil
+}
+
+// removeUnixCompletionProfiles removes exact Bash and Zsh activation blocks.
+//
+// Args:
+//   - dataRoot: Stable toolbox data root referenced by both managed source lines.
+//
+// Returns:
+//   - error: Home resolution, malformed-marker, profile write, or rollback failure.
+func removeUnixCompletionProfiles(dataRoot string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve user home for completion cleanup: %w", err)
+	}
+	zshRoot := os.Getenv("ZDOTDIR")
+	if zshRoot == "" {
+		zshRoot = home
+	}
+	quotedCompletionRoot := strings.ReplaceAll(filepath.Join(dataRoot, "completions"), "'", "'\\''")
+	return removeCompletionProfileBlocks([]completionProfileRequest{
+		{
+			path:       filepath.Join(home, ".bashrc"),
+			sourceLine: ". '" + filepath.ToSlash(filepath.Join(quotedCompletionRoot, "tb.bash")) + "'",
+			newline:    "\n",
+		},
+		{
+			path:       filepath.Join(zshRoot, ".zshrc"),
+			sourceLine: "source '" + filepath.ToSlash(filepath.Join(quotedCompletionRoot, "_tb")) + "'",
+			newline:    "\n",
+		},
+	})
 }
 
 // runPlatformCleanup reports that Linux has no detached cleanup mode.

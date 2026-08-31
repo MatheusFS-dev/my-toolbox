@@ -2,7 +2,9 @@ param(
     [Parameter(DontShow = $true)]
     [scriptblock]$UserPathReader = { [Environment]::GetEnvironmentVariable('Path', 'User') },
     [Parameter(DontShow = $true)]
-    [scriptblock]$UserPathWriter = { param([string]$Value) [Environment]::SetEnvironmentVariable('Path', $Value, 'User') }
+    [scriptblock]$UserPathWriter = { param([string]$Value) [Environment]::SetEnvironmentVariable('Path', $Value, 'User') },
+    [Parameter(DontShow = $true)]
+    [scriptblock]$DocumentsPathReader = { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) }
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +15,7 @@ $VersionsRoot = Join-Path $DataRoot 'versions'
 $CurrentFile = Join-Path $DataRoot 'current.txt'
 $WrapperRoot = Join-Path $DataRoot 'bin'
 $WrapperPath = Join-Path $WrapperRoot 'tb.cmd'
+$CompletionRoot = Join-Path $DataRoot 'completions'
 $TemporaryRoot = $null
 $TemporaryCurrent = $null
 $TemporaryWrapper = $null
@@ -23,6 +26,10 @@ $PublishedVersion = $false
 $PublishedWrapper = $false
 $Activated = $false
 $SavedWrapper = $null
+$CompletionPublished = $false
+$CompletionReplaced = $false
+$SavedCompletionRoot = $null
+$PublishedProfiles = @()
 $InstallSucceeded = $false
 
 function Write-Status {
@@ -158,6 +165,165 @@ function Enable-ToolboxPath {
     $env:PATH = Add-PathEntry -Value $env:PATH -Entry $WrapperRoot
 }
 
+function New-CompletionProfileState {
+    <#
+    .SYNOPSIS
+    Builds and validates one exact PowerShell profile activation candidate.
+    .PARAMETER Path
+    CurrentUserAllHosts profile path whose unrelated bytes must remain unchanged.
+    .PARAMETER SourceLine
+    Exact ASCII command that loads the stable toolbox completion registration.
+    .OUTPUTS
+    PSCustomObject containing original bytes, candidate bytes, and path state for publication and rollback.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$SourceLine
+    )
+
+    $StartMarker = '# >>> my-toolbox completion >>>'
+    $EndMarker = '# <<< my-toolbox completion <<<'
+    $Existed = Test-Path -LiteralPath $Path -PathType Leaf
+    if (-not $Existed -and (Test-Path -LiteralPath $Path)) {
+        throw "PowerShell profile is not a regular file: $Path"
+    }
+    if ($Existed) {
+        $OriginalBytes = [IO.File]::ReadAllBytes($Path)
+    } else {
+        $OriginalBytes = [byte[]]::new(0)
+    }
+    $Encoding = [Text.Encoding]::Default
+    $PreambleLength = 0
+    $Text = $null
+    if ($OriginalBytes.Length -ge 3 -and $OriginalBytes[0] -eq 0xEF -and $OriginalBytes[1] -eq 0xBB -and $OriginalBytes[2] -eq 0xBF) {
+        $Encoding = [Text.UTF8Encoding]::new($true, $true)
+        $PreambleLength = 3
+    } elseif ($OriginalBytes.Length -ge 2 -and $OriginalBytes[0] -eq 0xFF -and $OriginalBytes[1] -eq 0xFE) {
+        $Encoding = [Text.UnicodeEncoding]::new($false, $true, $true)
+        $PreambleLength = 2
+    } elseif ($OriginalBytes.Length -ge 2 -and $OriginalBytes[0] -eq 0xFE -and $OriginalBytes[1] -eq 0xFF) {
+        $Encoding = [Text.UnicodeEncoding]::new($true, $true, $true)
+        $PreambleLength = 2
+    } else {
+        # PowerShell 7 writes BOM-less UTF-8 by default. Decode it strictly
+        # before using the Windows PowerShell system-code-page fallback.
+        $Utf8Encoding = [Text.UTF8Encoding]::new($false, $true)
+        try {
+            $Text = $Utf8Encoding.GetString($OriginalBytes)
+            $Encoding = $Utf8Encoding
+        } catch [Text.DecoderFallbackException] {
+            $Text = $Encoding.GetString($OriginalBytes)
+        }
+    }
+    if ($null -eq $Text) {
+        $Text = $Encoding.GetString($OriginalBytes, $PreambleLength, $OriginalBytes.Length - $PreambleLength)
+    }
+    $StartOccurrences = [regex]::Matches($Text, [regex]::Escape($StartMarker)).Count
+    $EndOccurrences = [regex]::Matches($Text, [regex]::Escape($EndMarker)).Count
+    $StartLines = [regex]::Matches($Text, '(?m)^' + [regex]::Escape($StartMarker) + '\r?$').Count
+    $EndLines = [regex]::Matches($Text, '(?m)^' + [regex]::Escape($EndMarker) + '\r?$').Count
+    if ($StartOccurrences -ne $StartLines -or $EndOccurrences -ne $EndLines -or $StartLines -ne $EndLines -or $StartLines -gt 1) {
+        throw "Malformed my-toolbox completion markers in $Path."
+    }
+
+    $BlockWithoutTerminator = "$StartMarker`r`n$SourceLine`r`n$EndMarker"
+    if ($StartLines -eq 1) {
+        $StartIndex = $Text.IndexOf($StartMarker, [StringComparison]::Ordinal)
+        $EndIndex = $Text.IndexOf($EndMarker, $StartIndex, [StringComparison]::Ordinal)
+        $ManagedBlock = $Text.Substring($StartIndex, $EndIndex + $EndMarker.Length - $StartIndex)
+        if ($ManagedBlock -cne $BlockWithoutTerminator) {
+            throw "Malformed my-toolbox completion block in $Path."
+        }
+        $CandidateBytes = $OriginalBytes
+    } else {
+        $Separator = if ($OriginalBytes.Length -eq 0) { '' } else { "`r`n" }
+        $AddedBytes = $Encoding.GetBytes("$Separator$BlockWithoutTerminator`r`n")
+        $CandidateBytes = [byte[]]::new($OriginalBytes.Length + $AddedBytes.Length)
+        [Array]::Copy($OriginalBytes, 0, $CandidateBytes, 0, $OriginalBytes.Length)
+        [Array]::Copy($AddedBytes, 0, $CandidateBytes, $OriginalBytes.Length, $AddedBytes.Length)
+    }
+
+    $Tokens = $null
+    $ParseErrors = $null
+    $CandidateText = $Encoding.GetString($CandidateBytes, $PreambleLength, $CandidateBytes.Length - $PreambleLength)
+    [void][Management.Automation.Language.Parser]::ParseInput($CandidateText, [ref]$Tokens, [ref]$ParseErrors)
+    if ($ParseErrors.Count -gt 0) {
+        throw "PowerShell profile candidate is invalid for ${Path}: $ParseErrors"
+    }
+    return [pscustomobject]@{
+        Path = $Path
+        Parent = Split-Path -Parent $Path
+        ParentExisted = Test-Path -LiteralPath (Split-Path -Parent $Path) -PathType Container
+        Existed = $Existed
+        OriginalBytes = $OriginalBytes
+        CandidateBytes = $CandidateBytes
+    }
+}
+
+function Enable-ToolboxCompletion {
+    <#
+    .SYNOPSIS
+    Publishes stable completion assets and exact PowerShell profile blocks.
+    .DESCRIPTION
+    Validates both profile candidates before publication. Existing managed
+    assets and profile bytes are left unchanged when already current, while
+    missing or stale managed assets are replaced transactionally.
+    .OUTPUTS
+    None.
+    #>
+    foreach ($CompletionAsset in @('_tb', 'tb.bash', 'tb.ps1')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $VersionRoot "completions\$CompletionAsset") -PathType Leaf)) {
+            throw "Installed version is missing completion asset $CompletionAsset."
+        }
+    }
+
+    $Documents = [string](& $DocumentsPathReader)
+    if ([string]::IsNullOrWhiteSpace($Documents)) {
+        throw 'The current user Documents known folder could not be resolved.'
+    }
+    $CompletionSourceLine = ". (Join-Path `$env:LOCALAPPDATA 'my-toolbox\completions\tb.ps1')"
+    $ProfileStates = @(
+        New-CompletionProfileState -Path (Join-Path $Documents 'WindowsPowerShell\profile.ps1') -SourceLine $CompletionSourceLine
+        New-CompletionProfileState -Path (Join-Path $Documents 'PowerShell\profile.ps1') -SourceLine $CompletionSourceLine
+    )
+
+    $CompletionAssetsMatch = Test-Path -LiteralPath $CompletionRoot -PathType Container
+    if (-not $CompletionAssetsMatch -and (Test-Path -LiteralPath $CompletionRoot)) {
+        throw "Completion path is not a directory: $CompletionRoot"
+    }
+    if ($CompletionAssetsMatch) {
+        foreach ($CompletionAsset in @('_tb', 'tb.bash', 'tb.ps1')) {
+            $VersionAsset = Join-Path $VersionRoot "completions\$CompletionAsset"
+            $StableAsset = Join-Path $CompletionRoot $CompletionAsset
+            if (-not (Test-Path -LiteralPath $StableAsset -PathType Leaf) -or -not [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals([IO.File]::ReadAllBytes($VersionAsset), [IO.File]::ReadAllBytes($StableAsset))) {
+                $CompletionAssetsMatch = $false
+                break
+            }
+        }
+    }
+    if (-not $CompletionAssetsMatch) {
+        if (Test-Path -LiteralPath $CompletionRoot -PathType Container) {
+            $script:SavedCompletionRoot = Join-Path $DataRoot ('.completions-previous-' + [Guid]::NewGuid())
+            Move-Item -LiteralPath $CompletionRoot -Destination $SavedCompletionRoot
+            $script:CompletionReplaced = $true
+        } else {
+            $script:CompletionPublished = $true
+        }
+        Copy-Item -LiteralPath (Join-Path $VersionRoot 'completions') -Destination $CompletionRoot -Recurse
+    }
+
+    foreach ($ProfileState in $ProfileStates) {
+        if ([Collections.StructuralComparisons]::StructuralEqualityComparer.Equals($ProfileState.OriginalBytes, $ProfileState.CandidateBytes)) {
+            continue
+        }
+        New-Item -ItemType Directory -Force -Path $ProfileState.Parent | Out-Null
+        $script:PublishedProfiles += $ProfileState
+        [IO.File]::WriteAllBytes($ProfileState.Path, $ProfileState.CandidateBytes)
+    }
+}
+
 function Expand-ToolboxArchive {
     <#
     .SYNOPSIS
@@ -262,7 +428,9 @@ try {
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         Write-Status -Kind INFO -Message "my-toolbox $CurrentVersion is already installed. Run tb update to upgrade."
         Complete-Stage
+        $VersionRoot = Join-Path $VersionsRoot $CurrentVersion
         Start-Stage -Number 7 -Name 'activation'
+        Enable-ToolboxCompletion
         Enable-ToolboxPath
         Complete-Stage
         $InstallSucceeded = $true
@@ -325,6 +493,9 @@ try {
         'tb.exe',
         'commands.json',
         'version.txt',
+        'completions\_tb',
+        'completions\tb.bash',
+        'completions\tb.ps1',
         'packages\agent-workspace-template\source\scripts\windows\install_codex.py',
         'packages\agent-workspace-template\source\scripts\windows\install_claude.py',
         'packages\agent-workspace-template\source\scripts\windows\install_antigravity.py',
@@ -370,6 +541,7 @@ try {
     Complete-Stage
 
     Start-Stage -Number 7 -Name 'activation'
+    Enable-ToolboxCompletion
     $TemporaryCurrent = Join-Path $DataRoot 'current.txt.new'
     Set-Content -LiteralPath $TemporaryCurrent -Value $Version -Encoding ascii
     $Activated = $true
@@ -385,6 +557,27 @@ try {
     throw "$Failure. $($_.Exception.Message)"
 } finally {
     if (-not $InstallSucceeded) {
+        foreach ($ProfileState in $PublishedProfiles) {
+            if ($ProfileState.Existed) {
+                [IO.File]::WriteAllBytes($ProfileState.Path, $ProfileState.OriginalBytes)
+            } elseif (Test-Path -LiteralPath $ProfileState.Path) {
+                Remove-Item -LiteralPath $ProfileState.Path -Force
+            }
+        }
+        foreach ($ProfileState in $PublishedProfiles) {
+            if (-not $ProfileState.ParentExisted -and (Test-Path -LiteralPath $ProfileState.Parent -PathType Container)) {
+                Remove-Item -LiteralPath $ProfileState.Parent -ErrorAction SilentlyContinue
+            }
+        }
+        if ($CompletionPublished -and (Test-Path -LiteralPath $CompletionRoot)) {
+            Remove-Item -LiteralPath $CompletionRoot -Recurse -Force
+        }
+        if ($CompletionReplaced) {
+            if (Test-Path -LiteralPath $CompletionRoot) {
+                Remove-Item -LiteralPath $CompletionRoot -Recurse -Force
+            }
+            Move-Item -LiteralPath $SavedCompletionRoot -Destination $CompletionRoot
+        }
         if ($Activated -and (Test-Path -LiteralPath $CurrentFile)) {
             Remove-Item -LiteralPath $CurrentFile -Force
         }
@@ -399,6 +592,9 @@ try {
         }
     } elseif ($null -ne $SavedWrapper -and (Test-Path -LiteralPath $SavedWrapper)) {
         Remove-Item -LiteralPath $SavedWrapper -Force
+    }
+    if ($InstallSucceeded -and $null -ne $SavedCompletionRoot -and (Test-Path -LiteralPath $SavedCompletionRoot)) {
+        Remove-Item -LiteralPath $SavedCompletionRoot -Recurse -Force
     }
     if ($null -ne $TemporaryCurrent -and (Test-Path -LiteralPath $TemporaryCurrent)) {
         Remove-Item -LiteralPath $TemporaryCurrent -Force

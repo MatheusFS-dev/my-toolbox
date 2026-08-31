@@ -1,0 +1,19 @@
+#compdef tb
+
+autoload -Uz compinit
+compinit
+
+# Completes only the first argument after tb from the live command catalog.
+_tb_completion() {
+    if (( CURRENT != 2 )); then
+        return 0
+    fi
+
+    local output
+    local -a candidates
+    output=$(tb __complete) || return 1
+    candidates=("${(@f)output}")
+    compadd -- "${candidates[@]}"
+}
+
+compdef _tb_completion tb

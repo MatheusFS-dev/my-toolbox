@@ -84,6 +84,74 @@ func TestListAndHelpExcludeCommandsFromOtherEnvironments(t *testing.T) {
 	}
 }
 
+func TestCompletePrintsSortedBuiltinsAndSupportedCatalogCommands(t *testing.T) {
+	catalog := testCatalog("zeta", "direct", "other-environment", "alpha")
+	catalog.Commands[1].Visibility = "direct"
+	catalog.Commands[2].Environments = []string{"windows"}
+	output := &bytes.Buffer{}
+	app := App{Catalog: catalog, Environment: "linux-native", Output: output}
+
+	if err := app.Execute([]string{"__complete"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "alpha\ndirect\nhelp\nlist\nuninstall\nupdate\nversion\nzeta\n"
+	if output.String() != want {
+		t.Fatalf("completion output = %q, want %q", output.String(), want)
+	}
+}
+
+func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
+	catalog, err := LoadCatalogFile("../commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		environment string
+		want        string
+	}{
+		{
+			environment: "linux-native",
+			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
+		},
+		{
+			environment: "linux-wsl",
+			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
+		},
+		{
+			environment: "windows",
+			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.environment, func(t *testing.T) {
+			output := &bytes.Buffer{}
+			app := App{Catalog: catalog, Environment: test.environment, Output: output}
+			if err := app.Execute([]string{"__complete"}); err != nil {
+				t.Fatal(err)
+			}
+			if output.String() != test.want {
+				t.Fatalf("completion output = %q, want %q", output.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestCompleteRejectsArgumentsAndStaysHiddenFromHelp(t *testing.T) {
+	output := &bytes.Buffer{}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", Output: output, Version: "1.2.3"}
+
+	err := app.Execute([]string{"__complete", "unexpected"})
+	if err == nil || !strings.Contains(err.Error(), "tb __complete does not accept arguments") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if err := app.Execute([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "__complete") {
+		t.Fatalf("hidden completion command appeared in help: %q", output.String())
+	}
+}
+
 func TestDirectCommandRejectsUnsupportedEnvironment(t *testing.T) {
 	catalog := testCatalog("wsl-only")
 	catalog.Commands[0].Environments = []string{"linux-wsl"}

@@ -47,7 +47,7 @@ for platform in linux-amd64 linux-arm64; do
         exit 1
     fi
 
-    for required_entry in tb commands.json packages/ version.txt; do
+    for required_entry in tb commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ version.txt; do
         if ! printf '%s\n' "$entries" | grep -Fx "$required_entry" >/dev/null; then
             printf '%s is missing %s.\n' "$archive" "$required_entry" >&2
             exit 1
@@ -77,7 +77,7 @@ if printf '%s\n' "$windows_entries" | grep -Fx 'stale-entry.txt' >/dev/null; the
     printf 'Windows release retained an entry from an older archive.\n' >&2
     exit 1
 fi
-for required_entry in tb.exe commands.json packages/ version.txt; do
+for required_entry in tb.exe commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ version.txt; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$required_entry" >/dev/null; then
         printf '%s is missing %s.\n' "$windows_archive" "$required_entry" >&2
         exit 1

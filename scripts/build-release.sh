@@ -43,6 +43,7 @@ build_payload() {
             -o "$payload/$binary_name" ./src
     )
     cp "$repository_root/commands.json" "$payload/commands.json"
+    cp -R "$repository_root/completions" "$payload/completions"
     cp -R "$repository_root/packages" "$payload/packages"
     find "$payload/packages" -name .git -exec rm -rf {} +
     find "$payload/packages" -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -57,7 +58,7 @@ build_payload windows-amd64 windows amd64 tb.exe
 for platform in linux-amd64 linux-arm64; do
     archive="toolbox-$platform.tar.gz"
     tar -C "$temporary_root/$platform" -czf "$output_directory/$archive" \
-        tb commands.json packages version.txt
+        tb commands.json completions packages version.txt
     (
         cd "$output_directory"
         sha256sum "$archive" > "$archive.sha256"

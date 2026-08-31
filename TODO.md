@@ -1,3 +1,1 @@
-- [x] Add tools to install CLI agents: Codex, Claude, and Antigravity.
-- [x] Add tools to install the `uv` and `gh` base tools.
-- [x] Add tools to install Superpowers plugins.
+- [x] Make tab autocomplete commands of tb on all plataforms

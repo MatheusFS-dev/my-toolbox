@@ -25,6 +25,7 @@ var (
 	readWindowsUserPath            = readWindowsUserPathRegistry
 	writeWindowsUserPath           = writeWindowsUserPathRegistry
 	notifyWindowsEnvironmentChange = broadcastWindowsEnvironmentChange
+	windowsDocumentsPath           = resolveWindowsDocumentsPath
 	sendMessageTimeout             = windows.NewLazySystemDLL("user32.dll").NewProc("SendMessageTimeoutW")
 )
 
@@ -209,6 +210,9 @@ func runPlatformCleanup() (bool, error) {
 // Returns:
 //   - error: Managed cleanup or installer execution failure.
 func cleanupAndReinstallWindows(dataRoot, wrapper, installerPath string) error {
+	if err := removeWindowsCompletionProfiles(); err != nil {
+		return err
+	}
 	if err := cleanupWindowsPaths(dataRoot, wrapper); err != nil {
 		return err
 	}
@@ -223,6 +227,46 @@ func cleanupAndReinstallWindows(dataRoot, wrapper, installerPath string) error {
 		return fmt.Errorf("reinstall toolbox: %w", err)
 	}
 	return nil
+}
+
+// removeWindowsCompletionProfiles removes exact CurrentUserAllHosts blocks.
+//
+// Args: None.
+//
+// Returns:
+//   - error: Documents resolution, malformed-marker, profile write, or rollback failure.
+func removeWindowsCompletionProfiles() error {
+	documents, err := windowsDocumentsPath()
+	if err != nil {
+		return fmt.Errorf("resolve Windows Documents folder for completion cleanup: %w", err)
+	}
+	if documents == "" {
+		return fmt.Errorf("resolve Windows Documents folder for completion cleanup: empty path")
+	}
+	sourceLine := `. (Join-Path $env:LOCALAPPDATA 'my-toolbox\completions\tb.ps1')`
+	return removeCompletionProfileBlocks([]completionProfileRequest{
+		{
+			path:       filepath.Join(documents, "WindowsPowerShell", "profile.ps1"),
+			sourceLine: sourceLine,
+			newline:    "\r\n",
+		},
+		{
+			path:       filepath.Join(documents, "PowerShell", "profile.ps1"),
+			sourceLine: sourceLine,
+			newline:    "\r\n",
+		},
+	})
+}
+
+// resolveWindowsDocumentsPath resolves the current user's Documents known folder.
+//
+// Args: None.
+//
+// Returns:
+//   - string: Absolute Documents known-folder path for the current user.
+//   - error: Windows known-folder resolution failure.
+func resolveWindowsDocumentsPath() (string, error) {
+	return windows.KnownFolderPath(windows.FOLDERID_Documents, windows.KF_FLAG_DEFAULT)
 }
 
 // removeWindowsPathEntries removes every equivalent managed directory entry.
@@ -422,6 +466,9 @@ func cleanupWindowsPaths(dataRoot, wrapper string) error {
 	defer toolboxRoot.Close()
 	if err := toolboxRoot.RemoveAll("versions"); err != nil {
 		return fmt.Errorf("remove Windows toolbox versions: %w", err)
+	}
+	if err := toolboxRoot.RemoveAll("completions"); err != nil {
+		return fmt.Errorf("remove Windows toolbox completions: %w", err)
 	}
 	if err := toolboxRoot.Remove("current.txt"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Windows toolbox current version: %w", err)

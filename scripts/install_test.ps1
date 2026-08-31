@@ -5,10 +5,11 @@ $Installer = Join-Path $RepositoryRoot 'install.ps1'
 $TestRoot = Join-Path ([IO.Path]::GetTempPath()) ("my-toolbox-installer-test-" + [Guid]::NewGuid())
 $Payload = Join-Path $TestRoot 'payload'
 $Downloads = Join-Path $TestRoot 'downloads'
+$Documents = Join-Path $TestRoot 'Documents'
 $OriginalLocalAppData = $env:LOCALAPPDATA
 $OriginalPath = $env:PATH
 $OriginalPathExt = $env:PATHEXT
-New-Item -ItemType Directory -Path $Payload, $Downloads | Out-Null
+New-Item -ItemType Directory -Path $Payload, $Downloads, $Documents | Out-Null
 $TemporaryBefore = @(
     Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'my-toolbox-*' |
         ForEach-Object FullName
@@ -16,6 +17,7 @@ $TemporaryBefore = @(
 
 try {
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'commands.json') -Destination (Join-Path $Payload 'commands.json')
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'completions') -Destination (Join-Path $Payload 'completions') -Recurse
     Set-Content -LiteralPath (Join-Path $Payload 'version.txt') -Value '0.1.5' -Encoding ascii
     Set-Content -LiteralPath (Join-Path $Payload 'tb.exe') -Value 'fixture' -Encoding ascii
     $Catalog = Get-Content -LiteralPath (Join-Path $RepositoryRoot 'commands.json') -Raw | ConvertFrom-Json
@@ -63,12 +65,17 @@ try {
             [scriptblock]$UserPathWriter
         )
 
-        & $Installer -UserPathReader { $global:ToolboxInstallerTestUserPath } -UserPathWriter $UserPathWriter
+        & $Installer -UserPathReader { $global:ToolboxInstallerTestUserPath } -UserPathWriter $UserPathWriter -DocumentsPathReader { $global:ToolboxInstallerTestDocuments }
     }
 
     $env:LOCALAPPDATA = Join-Path $TestRoot 'localappdata'
     $env:PATH = 'C:\Windows\System32'
     $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
+    $global:ToolboxInstallerTestDocuments = $Documents
+    $WindowsPowerShellProfile = Join-Path $Documents 'WindowsPowerShell\profile.ps1'
+    $PowerShellProfile = Join-Path $Documents 'PowerShell\profile.ps1'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $WindowsPowerShellProfile) | Out-Null
+    [IO.File]::WriteAllText($WindowsPowerShellProfile, "`$café = 'unrelated'", [Text.UTF8Encoding]::new($false))
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\One;;C:\Persisted\Two'
     $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
     $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
@@ -94,6 +101,22 @@ try {
     if (-not (Test-Path -LiteralPath $InstalledTool -PathType Leaf)) {
         throw 'Installer did not install the fixture payload.'
     }
+    foreach ($Completion in @('_tb', 'tb.bash', 'tb.ps1')) {
+        $ExpectedCompletion = Join-Path $RepositoryRoot "completions\$Completion"
+        $InstalledCompletion = Join-Path $env:LOCALAPPDATA "my-toolbox\completions\$Completion"
+        if (-not [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals([IO.File]::ReadAllBytes($ExpectedCompletion), [IO.File]::ReadAllBytes($InstalledCompletion))) {
+            throw "Installer did not publish completion asset $Completion."
+        }
+    }
+    $ManagedBlock = "# >>> my-toolbox completion >>>`r`n. (Join-Path `$env:LOCALAPPDATA 'my-toolbox\completions\tb.ps1')`r`n# <<< my-toolbox completion <<<`r`n"
+    $ExpectedWindowsPowerShellProfile = "`$café = 'unrelated'`r`n$ManagedBlock"
+    $ExpectedPowerShellProfile = $ManagedBlock
+    if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne $ExpectedWindowsPowerShellProfile) {
+        throw 'Installer did not preserve and activate the Windows PowerShell profile exactly.'
+    }
+    if ([IO.File]::ReadAllText($PowerShellProfile) -cne $ExpectedPowerShellProfile) {
+        throw 'Installer did not preserve and activate the PowerShell profile exactly.'
+    }
     $WrapperRoot = Join-Path $env:LOCALAPPDATA 'my-toolbox\bin'
     $ExpectedUserPath = "C:\Persisted\One;;C:\Persisted\Two;$WrapperRoot"
     if ($global:ToolboxInstallerTestUserPath -cne $ExpectedUserPath) {
@@ -103,13 +126,18 @@ try {
     if ($env:PATH -cne $ExpectedProcessPath) {
         throw "Installer process PATH = '$env:PATH', want '$ExpectedProcessPath'."
     }
-    $InstalledCommand = Get-Command tb -ErrorAction Stop
-    if (-not [string]::Equals($InstalledCommand.Source, (Join-Path $WrapperRoot 'tb.cmd'), [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Get-Command tb resolved '$($InstalledCommand.Source)'."
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $InstalledCommand = Get-Command tb -ErrorAction Stop
+        if (-not [string]::Equals($InstalledCommand.Source, (Join-Path $WrapperRoot 'tb.cmd'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Get-Command tb resolved '$($InstalledCommand.Source)'."
+        }
     }
 
     $env:PATH = 'C:\Windows\System32'
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Repair'
+    Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\completions') -Recurse -Force
+    [IO.File]::WriteAllText($WindowsPowerShellProfile, "`$café = 'unrelated'", [Text.UTF8Encoding]::new($false))
+    Remove-Item -LiteralPath $PowerShellProfile -Force
     $RepairOutput = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
     if (-not $RepairOutput.Contains('is already installed')) {
         throw "Existing installation did not take the repair path. Output: $RepairOutput"
@@ -120,19 +148,35 @@ try {
     if ($env:PATH -cne "C:\Windows\System32;$WrapperRoot") {
         throw "Existing installation did not repair process PATH: '$env:PATH'."
     }
-    if ($null -eq (Get-Command tb -ErrorAction SilentlyContinue)) {
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and $null -eq (Get-Command tb -ErrorAction SilentlyContinue)) {
         throw 'Get-Command tb did not resolve after repairing an existing installation.'
     }
-
-    $QuotedVariant = '"' + $WrapperRoot.ToUpperInvariant() + '\"'
-    $global:ToolboxInstallerTestUserPath = "C:\Before;$QuotedVariant;;C:\After"
-    $env:PATH = "C:\Windows\System32;$($WrapperRoot.ToUpperInvariant())\"
-    Invoke-TestInstaller -UserPathWriter $PathWriter | Out-Null
-    if ($global:ToolboxInstallerTestUserPath -cne "C:\Before;$QuotedVariant;;C:\After") {
-        throw "Installer duplicated or changed a user PATH variant: '$global:ToolboxInstallerTestUserPath'."
+    if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne $ExpectedWindowsPowerShellProfile -or [IO.File]::ReadAllText($PowerShellProfile) -cne $ExpectedPowerShellProfile) {
+        throw 'Existing installation did not repair PowerShell completion activation.'
     }
-    if ($env:PATH -cne "C:\Windows\System32;$($WrapperRoot.ToUpperInvariant())\") {
-        throw "Installer duplicated or changed a process PATH variant: '$env:PATH'."
+    foreach ($Completion in @('_tb', 'tb.bash', 'tb.ps1')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA "my-toolbox\completions\$Completion") -PathType Leaf)) {
+            throw "Existing installation did not repair completion asset $Completion."
+        }
+    }
+    foreach ($ProfilePath in @($WindowsPowerShellProfile, $PowerShellProfile)) {
+        $ProfileText = [IO.File]::ReadAllText($ProfilePath)
+        if ([regex]::Matches($ProfileText, [regex]::Escape('# >>> my-toolbox completion >>>')).Count -ne 1 -or [regex]::Matches($ProfileText, [regex]::Escape('# <<< my-toolbox completion <<<')).Count -ne 1) {
+            throw "Installer duplicated a managed completion block in $ProfilePath."
+        }
+    }
+
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $QuotedVariant = '"' + $WrapperRoot.ToUpperInvariant() + '\"'
+        $global:ToolboxInstallerTestUserPath = "C:\Before;$QuotedVariant;;C:\After"
+        $env:PATH = "C:\Windows\System32;$($WrapperRoot.ToUpperInvariant())\"
+        Invoke-TestInstaller -UserPathWriter $PathWriter | Out-Null
+        if ($global:ToolboxInstallerTestUserPath -cne "C:\Before;$QuotedVariant;;C:\After") {
+            throw "Installer duplicated or changed a user PATH variant: '$global:ToolboxInstallerTestUserPath'."
+        }
+        if ($env:PATH -cne "C:\Windows\System32;$($WrapperRoot.ToUpperInvariant())\") {
+            throw "Installer duplicated or changed a process PATH variant: '$env:PATH'."
+        }
     }
     $TemporaryAfter = @(
         Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'my-toolbox-*' |
@@ -144,6 +188,9 @@ try {
     }
 
     Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox') -Recurse -Force
+    [IO.File]::WriteAllText($WindowsPowerShellProfile, "`$café = 'unrelated'", [Text.UTF8Encoding]::new($false))
+    Remove-Item -LiteralPath $PowerShellProfile -Force
+    Remove-Item -LiteralPath (Split-Path -Parent $PowerShellProfile)
     $env:PATH = 'C:\Windows\System32'
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Failure'
     $Failure = ''
@@ -163,6 +210,30 @@ try {
     }
     if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\current.txt')) {
         throw 'PATH persistence failure did not roll back activation.'
+    }
+    if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne "`$café = 'unrelated'" -or (Test-Path -LiteralPath (Split-Path -Parent $PowerShellProfile))) {
+        throw 'PATH persistence failure did not restore PowerShell profiles.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\completions')) {
+        throw 'PATH persistence failure did not roll back completion assets.'
+    }
+
+    $MalformedProfile = "unrelated`r`n# >>> my-toolbox completion >>>`r`n"
+    [IO.File]::WriteAllText($WindowsPowerShellProfile, $MalformedProfile, [Text.UTF8Encoding]::new($false))
+    $Failure = ''
+    try {
+        Invoke-TestInstaller -UserPathWriter $PathWriter
+    } catch {
+        $Failure = ($_ | Out-String)
+    }
+    if (-not $Failure.Contains('Malformed my-toolbox completion markers')) {
+        throw "Malformed completion markers did not fail explicitly. Error: $Failure"
+    }
+    if ([IO.File]::ReadAllText($WindowsPowerShellProfile) -cne $MalformedProfile) {
+        throw 'Malformed-marker failure changed the Windows PowerShell profile.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5')) {
+        throw 'Malformed-marker failure did not roll back the version directory.'
     }
 
     Set-Content -LiteralPath "$global:ToolboxInstallerFixtureArchive.sha256" -Value "$('0' * 64)  toolbox-windows-amd64.zip" -Encoding ascii
@@ -191,6 +262,7 @@ try {
 } finally {
     Remove-Variable -Name ToolboxInstallerFixtureArchive -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ToolboxInstallerTestUserPath -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name ToolboxInstallerTestDocuments -Scope Global -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $OriginalLocalAppData
     $env:PATH = $OriginalPath
     $env:PATHEXT = $OriginalPathExt
