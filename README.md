@@ -57,12 +57,24 @@ The toolbox gathers all required answers before it runs selected tools, executes
 curl -fsSL https://matheusfs-dev.github.io/my-toolbox/install.sh | sh
 ```
 
+or, via cutt.ly:
+
+```sh
+curl -fsSL https://cutt.ly/tblinux | sh
+```
+
 Bash and Zsh must both be installed so the installer can validate their profile changes before publication.
 
 ### Windows PowerShell
 
 ```powershell
 irm https://matheusfs-dev.github.io/my-toolbox/install.ps1 | iex
+```
+
+or , via cutt.ly:
+
+```powershell
+irm https://cutt.ly/tbwin | iex
 ```
 
 On Windows, the installer adds `%LOCALAPPDATA%\my-toolbox\bin` to the user `PATH` and activates it in the current PowerShell session, making `tb` available immediately. Running the installer again repairs the managed `PATH` entry without duplicating equivalent entries.
