@@ -2,14 +2,19 @@
 set -eu
 
 repository="MatheusFS-dev/my-toolbox"
-data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"
+home_root=${HOME:-}
+if [ -n "${XDG_DATA_HOME:-}" ]; then
+    data_root="$XDG_DATA_HOME/my-toolbox"
+else
+    data_root="$home_root/.local/share/my-toolbox"
+fi
 versions_root="$data_root/versions"
 current_file="$data_root/current.txt"
-wrapper_root="$HOME/.local/bin"
+wrapper_root="$home_root/.local/bin"
 wrapper_path="$wrapper_root/tb"
 completion_root="$data_root/completions"
-bash_profile="$HOME/.bashrc"
-zsh_profile_root="${ZDOTDIR:-$HOME}"
+bash_profile="$home_root/.bashrc"
+zsh_profile_root="${ZDOTDIR:-$home_root}"
 zsh_profile="$zsh_profile_root/.zshrc"
 temporary_root=
 temporary_current=
@@ -68,6 +73,284 @@ start_stage() {
 
 complete_stage() {
     status_line OK "Stage $current_stage/7: $current_stage_name"
+}
+
+inventory_required_commands() {
+    missing_commands=
+    missing_packages=
+    for required_command in \
+        bash zsh curl tar \
+        sha256sum cp mv rm mkdir rmdir dirname mktemp head chmod uname id \
+        sed grep cmp sudo; do
+        if command -v "$required_command" >/dev/null 2>&1; then
+            continue
+        fi
+        missing_commands="${missing_commands}${missing_commands:+ }$required_command"
+        case "$required_command" in
+            bash|zsh|curl|tar|sed|grep|sudo) required_package=$required_command ;;
+            cmp) required_package=diffutils ;;
+            *) required_package=coreutils ;;
+        esac
+        case " $missing_packages " in
+            *" $required_package "*) ;;
+            *) missing_packages="${missing_packages}${missing_packages:+ }$required_package" ;;
+        esac
+    done
+}
+
+detect_package_manager() {
+    package_manager=
+    for candidate in apt-get dnf yum pacman zypper apk; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            package_manager=$candidate
+            return
+        fi
+    done
+}
+
+package_install_command() {
+    command_prefix=$1
+    case "$package_manager" in
+        apt-get)
+            package_command="$command_prefix${command_prefix:+ }apt-get update && $command_prefix${command_prefix:+ }apt-get install -y $missing_packages"
+            ;;
+        dnf|yum)
+            package_command="$command_prefix${command_prefix:+ }$package_manager install -y $missing_packages"
+            ;;
+        pacman)
+            package_command="$command_prefix${command_prefix:+ }pacman -Sy --needed --noconfirm $missing_packages"
+            ;;
+        zypper)
+            package_command="$command_prefix${command_prefix:+ }zypper --non-interactive install $missing_packages"
+            ;;
+        apk)
+            package_command="$command_prefix${command_prefix:+ }apk add $missing_packages"
+            ;;
+    esac
+}
+
+install_missing_packages() {
+    case "$package_manager" in
+        apt-get)
+            # The package list is assembled only from fixed names above.
+            # shellcheck disable=SC2086
+            $elevation apt-get update && $elevation apt-get install -y $missing_packages
+            ;;
+        dnf|yum)
+            # shellcheck disable=SC2086
+            $elevation "$package_manager" install -y $missing_packages
+            ;;
+        pacman)
+            # shellcheck disable=SC2086
+            $elevation pacman -Sy --needed --noconfirm $missing_packages
+            ;;
+        zypper)
+            # shellcheck disable=SC2086
+            $elevation zypper --non-interactive install $missing_packages
+            ;;
+        apk)
+            # shellcheck disable=SC2086
+            $elevation apk add $missing_packages
+            ;;
+    esac
+}
+
+ensure_required_commands() {
+    allow_package_install=${1:-1}
+    [ -n "$missing_commands" ] || return 0
+    printf 'Missing required commands: %s\n' "$missing_commands" >&2
+    printf 'Missing Linux packages: %s\n' "$missing_packages" >&2
+    detect_package_manager
+    if [ -z "$package_manager" ]; then
+        printf 'No supported package manager was found. Install these packages manually: %s\n' "$missing_packages" >&2
+        return 1
+    fi
+
+    elevation=
+    if ! command -v id >/dev/null 2>&1 || [ "$(id -u)" -ne 0 ]; then
+        if ! command -v sudo >/dev/null 2>&1; then
+            package_install_command ""
+            printf 'Run as root: %s\n' "$package_command" >&2
+            return 1
+        fi
+        elevation=sudo
+    fi
+    package_install_command "$elevation"
+
+    if [ "$allow_package_install" -ne 1 ]; then
+        printf 'Install manually: %s\n' "$package_command" >&2
+        return 1
+    fi
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        printf 'Install manually: %s\n' "$package_command" >&2
+        return 1
+    fi
+    printf 'Install missing packages? [y/N] '
+    IFS= read -r package_reply || package_reply=
+    case "$package_reply" in
+        y|Y|yes|YES|Yes) ;;
+        *)
+            printf 'Install manually: %s\n' "$package_command" >&2
+            return 1
+            ;;
+    esac
+    if ! install_missing_packages; then
+        printf 'Package installation failed. Retry manually: %s\n' "$package_command" >&2
+        return 1
+    fi
+    packages_installed=1
+}
+
+report_environment_problem() {
+    printf '%s\n' "$1" >&2
+    environment_problems=1
+}
+
+validate_writable_path() {
+    checked_path=$1
+    path_label=$2
+    existing_path=$checked_path
+    while [ ! -e "$existing_path" ]; do
+        parent_path=$(dirname "$existing_path")
+        if [ "$parent_path" = "$existing_path" ]; then
+            report_environment_problem "$path_label is not writable: $checked_path"
+            return
+        fi
+        existing_path=$parent_path
+    done
+    if [ ! -d "$existing_path" ] || [ ! -w "$existing_path" ] || [ ! -x "$existing_path" ]; then
+        report_environment_problem "$path_label is not writable: $checked_path"
+    fi
+}
+
+validate_managed_file() {
+    managed_path=$1
+    managed_label=$2
+    allow_symbolic_link=$3
+    require_readable=$4
+    if [ -L "$managed_path" ]; then
+        if [ "$allow_symbolic_link" -ne 1 ]; then
+            report_environment_problem "$managed_label has unsupported type: $managed_path"
+        fi
+    elif [ -e "$managed_path" ] && [ ! -f "$managed_path" ]; then
+        report_environment_problem "$managed_label has unsupported type: $managed_path"
+    elif [ "$require_readable" -eq 1 ] && [ -f "$managed_path" ] && [ ! -r "$managed_path" ]; then
+        report_environment_problem "$managed_label is not readable: $managed_path"
+    fi
+}
+
+inventory_environment() {
+    environment_problems=0
+    case "$home_root" in
+        /*) ;;
+        *) report_environment_problem 'HOME is not set to an absolute path.' ;;
+    esac
+    if [ -n "${XDG_DATA_HOME:-}" ]; then
+        case "$XDG_DATA_HOME" in
+            /*) ;;
+            *) report_environment_problem "XDG_DATA_HOME must be an absolute path: $XDG_DATA_HOME" ;;
+        esac
+    fi
+    if [ -n "${ZDOTDIR:-}" ]; then
+        case "$ZDOTDIR" in
+            /*) ;;
+            *) report_environment_problem "ZDOTDIR must be an absolute path: $ZDOTDIR" ;;
+        esac
+    fi
+
+    if command -v uname >/dev/null 2>&1; then
+        machine_architecture=$(uname -m)
+        case "$machine_architecture" in
+            x86_64|amd64) archive="toolbox-linux-amd64.tar.gz" ;;
+            aarch64|arm64) archive="toolbox-linux-arm64.tar.gz" ;;
+            *) report_environment_problem "Unsupported Linux architecture: $machine_architecture" ;;
+        esac
+    fi
+
+    if command -v mktemp >/dev/null 2>&1 && command -v rm >/dev/null 2>&1; then
+        if prerequisite_temporary=$(mktemp -d 2>/dev/null); then
+            rm -rf "$prerequisite_temporary"
+        else
+            report_environment_problem "Cannot create a temporary directory under ${TMPDIR:-/tmp}."
+        fi
+    fi
+
+    if command -v dirname >/dev/null 2>&1; then
+        case "$home_root" in
+            /*)
+                case "${XDG_DATA_HOME:-}" in
+                    ''|/*)
+                        validate_writable_path "$data_root" 'Toolbox data path'
+                        validate_writable_path "$versions_root" 'Toolbox versions path'
+                        validate_writable_path "$completion_root" 'Toolbox completion path'
+                        ;;
+                esac
+                validate_writable_path "$wrapper_root" 'Toolbox wrapper path'
+                case "${ZDOTDIR:-}" in
+                    ''|/*) validate_writable_path "$zsh_profile_root" 'Zsh profile path' ;;
+                esac
+                ;;
+        esac
+    fi
+    case "$home_root" in
+        /*)
+            case "${XDG_DATA_HOME:-}" in
+                ''|/*) validate_managed_file "$current_file" 'Toolbox current file' 0 1 ;;
+            esac
+            validate_managed_file "$wrapper_path" 'Toolbox wrapper' 1 0
+            validate_writable_path "$home_root" 'Bash profile path'
+            validate_managed_file "$bash_profile" 'Bash profile' 0 1
+            case "${ZDOTDIR:-}" in
+                ''|/*) validate_managed_file "$zsh_profile" 'Zsh profile' 0 1 ;;
+            esac
+            ;;
+    esac
+}
+
+inventory_python() {
+    python_problem=0
+    if command -v python3 >/dev/null 2>&1 &&
+        python3 -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] else 1)' >/dev/null 2>&1; then
+        return
+    fi
+    if command -v python2.7 >/dev/null 2>&1 &&
+        python2.7 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (2, 7) else 1)' >/dev/null 2>&1; then
+        if ! python2.7 -c 'import sys, toml; sys.exit(0 if getattr(toml, "__version__", "") == "0.10.2" else 1)' >/dev/null 2>&1; then
+            printf 'Python 2.7 requires toml==0.10.2. Run: python2.7 -m pip install --user toml==0.10.2\n' >&2
+            python_problem=1
+        fi
+        return
+    fi
+    printf 'No supported Python interpreter was found. Install Python 3.11 or newer, or Python 2.7.\n' >&2
+    python_problem=1
+}
+
+verify_prerequisites() {
+    package_install_attempted=0
+    while :; do
+        packages_installed=0
+        inventory_required_commands
+        inventory_environment
+        inventory_python
+
+        if [ "$package_install_attempted" -eq 1 ] && [ -n "$missing_commands" ]; then
+            printf 'Missing required commands after package installation: %s\n' "$missing_commands" >&2
+            ensure_required_commands 0 || true
+            return 1
+        fi
+        if [ "$environment_problems" -ne 0 ] || [ "$python_problem" -ne 0 ]; then
+            if [ -n "$missing_commands" ]; then
+                ensure_required_commands 0 || true
+            fi
+            return 1
+        fi
+        if [ -z "$missing_commands" ]; then
+            return 0
+        fi
+        ensure_required_commands || return 1
+        [ "$packages_installed" -eq 1 ] || return 1
+        package_install_attempted=1
+    done
 }
 
 # Builds one validated profile candidate without changing the live profile.
@@ -243,7 +526,7 @@ on_exit() {
                 rm -f "$bash_profile"
             fi
         fi
-        if [ "$zsh_profile_root_existed" -eq 0 ] && [ -d "$zsh_profile_root" ]; then
+        if [ "$zsh_profile_root_existed" -eq 0 ] && [ -n "$zsh_profile_existing_ancestor" ] && [ -d "$zsh_profile_root" ]; then
             created_directory=$zsh_profile_root
             while [ "$created_directory" != "$zsh_profile_existing_ancestor" ]; do
                 if ! rmdir "$created_directory" 2>/dev/null; then
@@ -299,23 +582,16 @@ on_exit() {
 trap 'on_exit "$?"' 0
 trap 'exit 1' HUP INT TERM
 
-cat <<'BANNER'
- __  __ __   __  _____ ___   ___  _     ____   _____  __
-|  \/  |\ \ / / |_   _/ _ \ / _ \| |   | __ ) / _ \ \/ /
-| |\/| | \ V /    | || | | | | | | |   |  _ \| | | \  /
-| |  | |  | |     | || |_| | |_| | |___| |_) | |_| /  \
-|_|  |_|  |_|     |_| \___/ \___/|_____|____/ \___/_/\_\
-BANNER
+# shellcheck disable=SC1003
+printf '%s\n' \
+    ' __  __ __   __  _____ ___   ___  _     ____   _____  __' \
+    '|  \/  |\ \ / / |_   _/ _ \ / _ \| |   | __ ) / _ \ \/ /' \
+    '| |\/| | \ V /    | || | | | | | | |   |  _ \| | | \  /' \
+    '| |  | |  | |     | || |_| | |_| | |___| |_) | |_| /  \' \
+    '|_|  |_|  |_|     |_| \___/ \___/|_____|____/ \___/_/\_\'
 
 start_stage 1 prerequisites
-command -v bash >/dev/null 2>&1 || {
-    printf 'bash is required to install my-toolbox completion.\n' >&2
-    exit 1
-}
-command -v zsh >/dev/null 2>&1 || {
-    printf 'zsh is required to install my-toolbox completion.\n' >&2
-    exit 1
-}
+verify_prerequisites || exit 1
 if [ -f "$current_file" ]; then
     current_version=$(sed -n '1p' "$current_file")
     status_line INFO "my-toolbox $current_version is already installed. Run tb update to upgrade."
@@ -327,23 +603,6 @@ if [ -f "$current_file" ]; then
     complete_stage
     exit 0
 fi
-case "$(uname -m)" in
-    x86_64|amd64) archive="toolbox-linux-amd64.tar.gz" ;;
-    aarch64|arm64) archive="toolbox-linux-arm64.tar.gz" ;;
-    *) printf 'Unsupported Linux architecture: %s\n' "$(uname -m)" >&2; exit 1 ;;
-esac
-command -v curl >/dev/null 2>&1 || {
-    printf 'curl is required to install my-toolbox.\n' >&2
-    exit 1
-}
-command -v sha256sum >/dev/null 2>&1 || {
-    printf 'sha256sum is required to verify my-toolbox.\n' >&2
-    exit 1
-}
-command -v tar >/dev/null 2>&1 || {
-    printf 'tar is required to extract my-toolbox.\n' >&2
-    exit 1
-}
 complete_stage
 
 start_stage 2 "release lookup"

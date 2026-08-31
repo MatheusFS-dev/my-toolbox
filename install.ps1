@@ -4,18 +4,31 @@ param(
     [Parameter(DontShow = $true)]
     [scriptblock]$UserPathWriter = { param([string]$Value) [Environment]::SetEnvironmentVariable('Path', $Value, 'User') },
     [Parameter(DontShow = $true)]
-    [scriptblock]$DocumentsPathReader = { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) }
+    [scriptblock]$DocumentsPathReader = { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) },
+    [Parameter(DontShow = $true)]
+    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue },
+    [Parameter(DontShow = $true)]
+    [scriptblock]$PythonVersionProbe = {
+        param([string]$Command, [string[]]$PrefixArguments)
+        try {
+            & $Command @PrefixArguments -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] else 1)' *> $null
+            return $LASTEXITCODE -eq 0
+        } catch {
+            return $false
+        }
+    }
 )
 
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'MatheusFS-dev/my-toolbox'
-$DataRoot = Join-Path $env:LOCALAPPDATA 'my-toolbox'
-$VersionsRoot = Join-Path $DataRoot 'versions'
-$CurrentFile = Join-Path $DataRoot 'current.txt'
-$WrapperRoot = Join-Path $DataRoot 'bin'
-$WrapperPath = Join-Path $WrapperRoot 'tb.cmd'
-$CompletionRoot = Join-Path $DataRoot 'completions'
+$LocalAppData = [string]$env:LOCALAPPDATA
+$DataRoot = if ([string]::IsNullOrWhiteSpace($LocalAppData)) { '' } else { Join-Path $LocalAppData 'my-toolbox' }
+$VersionsRoot = if ($DataRoot.Length -eq 0) { '' } else { Join-Path $DataRoot 'versions' }
+$CurrentFile = if ($DataRoot.Length -eq 0) { '' } else { Join-Path $DataRoot 'current.txt' }
+$WrapperRoot = if ($DataRoot.Length -eq 0) { '' } else { Join-Path $DataRoot 'bin' }
+$WrapperPath = if ($WrapperRoot.Length -eq 0) { '' } else { Join-Path $WrapperRoot 'tb.cmd' }
+$CompletionRoot = if ($DataRoot.Length -eq 0) { '' } else { Join-Path $DataRoot 'completions' }
 $TemporaryRoot = $null
 $TemporaryCurrent = $null
 $TemporaryWrapper = $null
@@ -95,6 +108,227 @@ function Complete-Stage {
     None.
     #>
     Write-Status -Kind OK -Message "Stage $CurrentStage/7: $CurrentStageName"
+}
+
+function Get-PrerequisiteCommandPath {
+    <#
+    .SYNOPSIS
+    Resolves one command through the installer's injectable command reader.
+    .PARAMETER Name
+    Command or launcher name to resolve.
+    .OUTPUTS
+    System.String when the command exists; otherwise no output.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $Resolved = & $CommandReader $Name
+    if ($null -eq $Resolved) {
+        return $null
+    }
+    if ($Resolved -is [string]) {
+        return [string]$Resolved
+    }
+    foreach ($Property in @('Source', 'Path', 'Definition', 'Name')) {
+        $Value = $Resolved.$Property
+        if (-not [string]::IsNullOrWhiteSpace([string]$Value)) {
+            return [string]$Value
+        }
+    }
+    return $null
+}
+
+function Test-PrerequisitePathWritable {
+    <#
+    .SYNOPSIS
+    Verifies that a path or its nearest existing ancestor accepts a temporary file.
+    .PARAMETER Path
+    Absolute installation or profile directory to validate without creating toolbox files.
+    .OUTPUTS
+    System.Boolean.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        $Candidate = [IO.Path]::GetFullPath($Path)
+        while (-not [IO.Directory]::Exists($Candidate)) {
+            if ([IO.File]::Exists($Candidate)) {
+                return $false
+            }
+            $Parent = [IO.Directory]::GetParent($Candidate)
+            if ($null -eq $Parent) {
+                return $false
+            }
+            $Candidate = $Parent.FullName
+        }
+        $Probe = Join-Path $Candidate ('.my-toolbox-write-' + [Guid]::NewGuid())
+        $Stream = [IO.File]::Open($Probe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $Stream.Dispose()
+        [IO.File]::Delete($Probe)
+        return $true
+    } catch {
+        if ($null -ne $Probe -and [IO.File]::Exists($Probe)) {
+            [IO.File]::Delete($Probe)
+        }
+        return $false
+    }
+}
+
+function Get-ManagedFilePrerequisiteFailure {
+    <#
+    .SYNOPSIS
+    Validates one managed file target without changing its contents.
+    .PARAMETER Path
+    Managed file path to inspect.
+    .PARAMETER Label
+    User-facing target name used in actionable failures.
+    .PARAMETER RejectReparsePoint
+    Rejects symbolic links and other reparse points when true.
+    .PARAMETER RequireWritable
+    Rejects a read-only existing regular file when true.
+    .OUTPUTS
+    System.String when the target is invalid; otherwise no output.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [bool]$RejectReparsePoint = $true,
+        [bool]$RequireWritable = $false
+    )
+
+    if ([IO.Directory]::Exists($Path)) {
+        return "$Label has unsupported type: $Path"
+    }
+    if (-not [IO.File]::Exists($Path)) {
+        return $null
+    }
+    try {
+        $Attributes = [IO.File]::GetAttributes($Path)
+        if ($RejectReparsePoint -and ($Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            return "$Label has unsupported type: $Path"
+        }
+        if ($RequireWritable -and ($Attributes -band [IO.FileAttributes]::ReadOnly)) {
+            return "$Label is not writable: $Path"
+        }
+        $RequiredAccess = if ($RequireWritable) { [IO.FileAccess]::ReadWrite } else { [IO.FileAccess]::Read }
+        $Stream = [IO.File]::Open($Path, [IO.FileMode]::Open, $RequiredAccess, [IO.FileShare]::ReadWrite)
+        $Stream.Dispose()
+    } catch {
+        return "$Label is not readable: $Path"
+    }
+    return $null
+}
+
+function Get-PrerequisiteFailures {
+    <#
+    .SYNOPSIS
+    Inventories all Windows bootstrap capabilities and environment paths.
+    .OUTPUTS
+    System.String for each actionable prerequisite failure.
+    #>
+    $Failures = @()
+    $MissingCapabilities = @()
+    foreach ($CommandName in @('Invoke-RestMethod', 'Invoke-WebRequest', 'Get-FileHash')) {
+        if ([string]::IsNullOrWhiteSpace((Get-PrerequisiteCommandPath -Name $CommandName))) {
+            $MissingCapabilities += $CommandName
+        }
+    }
+    if ($MissingCapabilities.Count -gt 0) {
+        $Failures += 'Missing PowerShell capabilities: ' + ($MissingCapabilities -join ', ') + '.'
+        $Failures += 'Install Windows PowerShell 5.1 or PowerShell 7 to provide the missing capabilities.'
+    }
+    if ($PSVersionTable.PSVersion -lt [Version]'5.1') {
+        $Failures += 'my-toolbox requires Windows PowerShell 5.1 or PowerShell 7.'
+    }
+    $OperatingSystemArchitecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    if (-not [Environment]::Is64BitOperatingSystem -or ($OperatingSystemArchitecture -and $OperatingSystemArchitecture -ne 'AMD64')) {
+        $Failures += 'my-toolbox requires 64-bit Windows on x64.'
+    }
+
+    $PythonCommand = $null
+    $PyLauncher = Get-PrerequisiteCommandPath -Name 'py'
+    if (-not [string]::IsNullOrWhiteSpace($PyLauncher) -and (& $PythonVersionProbe $PyLauncher @('-3'))) {
+        $PythonCommand = $PyLauncher
+    }
+    if ($null -eq $PythonCommand) {
+        $Python = Get-PrerequisiteCommandPath -Name 'python'
+        if (-not [string]::IsNullOrWhiteSpace($Python) -and (& $PythonVersionProbe $Python @())) {
+            $PythonCommand = $Python
+        }
+    }
+    if ($null -eq $PythonCommand) {
+        $Failures += 'No supported Python interpreter was found. Install Python 3.11 or newer.'
+    }
+    if ([string]::IsNullOrWhiteSpace($LocalAppData) -or -not [IO.Path]::IsPathRooted($LocalAppData)) {
+        $Failures += 'LOCALAPPDATA is not set to an absolute path.'
+    }
+    $Documents = [string](& $DocumentsPathReader)
+    if ([string]::IsNullOrWhiteSpace($Documents)) {
+        $Failures += 'The current user Documents known folder could not be resolved.'
+    } elseif (-not [IO.Path]::IsPathRooted($Documents)) {
+        $Failures += "The current user Documents path is not absolute: $Documents"
+    }
+
+    $TemporaryBase = [IO.Path]::GetTempPath()
+    try {
+        if (-not [IO.Directory]::Exists($TemporaryBase)) {
+            throw "Temporary directory does not exist: $TemporaryBase"
+        }
+        $TemporaryProbe = Join-Path $TemporaryBase ('my-toolbox-prerequisite-' + [Guid]::NewGuid())
+        [IO.Directory]::CreateDirectory($TemporaryProbe) | Out-Null
+        [IO.Directory]::Delete($TemporaryProbe)
+    } catch {
+        if ($null -ne $TemporaryProbe -and [IO.Directory]::Exists($TemporaryProbe)) {
+            [IO.Directory]::Delete($TemporaryProbe, $true)
+        }
+        $Failures += "Cannot create a temporary directory under $TemporaryBase."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($LocalAppData) -and [IO.Path]::IsPathRooted($LocalAppData)) {
+        foreach ($PathState in @(
+            [pscustomobject]@{ Path = $DataRoot; Label = 'Toolbox data path' },
+            [pscustomobject]@{ Path = $VersionsRoot; Label = 'Toolbox versions path' },
+            [pscustomobject]@{ Path = $CompletionRoot; Label = 'Toolbox completion path' },
+            [pscustomobject]@{ Path = $WrapperRoot; Label = 'Toolbox wrapper path' }
+        )) {
+            if (-not (Test-PrerequisitePathWritable -Path $PathState.Path)) {
+                $Failures += "$($PathState.Label) is not writable: $($PathState.Path)"
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Documents) -and [IO.Path]::IsPathRooted($Documents)) {
+        foreach ($ProfileRoot in @($Documents, (Join-Path $Documents 'WindowsPowerShell'), (Join-Path $Documents 'PowerShell'))) {
+            if (-not (Test-PrerequisitePathWritable -Path $ProfileRoot)) {
+                $Failures += "PowerShell profile path is not writable: $ProfileRoot"
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LocalAppData) -and [IO.Path]::IsPathRooted($LocalAppData)) {
+        $ManagedFileFailure = Get-ManagedFilePrerequisiteFailure -Path $CurrentFile -Label 'Toolbox current file'
+        if ($null -ne $ManagedFileFailure) {
+            $Failures += $ManagedFileFailure
+        }
+        $ManagedFileFailure = Get-ManagedFilePrerequisiteFailure -Path $WrapperPath -Label 'Toolbox wrapper' -RejectReparsePoint $false
+        if ($null -ne $ManagedFileFailure) {
+            $Failures += $ManagedFileFailure
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Documents) -and [IO.Path]::IsPathRooted($Documents)) {
+        foreach ($ProfilePath in @((Join-Path $Documents 'WindowsPowerShell\profile.ps1'), (Join-Path $Documents 'PowerShell\profile.ps1'))) {
+            $ManagedFileFailure = Get-ManagedFilePrerequisiteFailure -Path $ProfilePath -Label 'PowerShell profile' -RequireWritable $true
+            if ($null -ne $ManagedFileFailure) {
+                $Failures += $ManagedFileFailure
+            }
+        }
+    }
+    return $Failures
 }
 
 function Get-NormalizedPathEntry {
@@ -439,6 +673,10 @@ function Expand-ToolboxArchive {
 
 try {
     Start-Stage -Number 1 -Name 'prerequisites'
+    $PrerequisiteFailures = @(Get-PrerequisiteFailures)
+    if ($PrerequisiteFailures.Count -gt 0) {
+        throw ($PrerequisiteFailures -join [Environment]::NewLine)
+    }
     if (Test-Path -LiteralPath $CurrentFile) {
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         Write-Status -Kind INFO -Message "my-toolbox $CurrentVersion is already installed. Run tb update to upgrade."
@@ -450,14 +688,6 @@ try {
         Complete-Stage
         $InstallSucceeded = $true
         return
-    }
-    if (-not [Environment]::Is64BitOperatingSystem) {
-        throw 'my-toolbox requires 64-bit Windows on x64.'
-    }
-    foreach ($CommandName in @('Invoke-RestMethod', 'Invoke-WebRequest', 'Get-FileHash')) {
-        if ($null -eq (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
-            throw "$CommandName is required to install my-toolbox."
-        }
     }
     Complete-Stage
 

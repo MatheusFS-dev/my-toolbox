@@ -284,6 +284,71 @@ func TestInteractiveCommandSelectsPlatformInterpreterAndFallbackScript(t *testin
 	}
 }
 
+func TestSelectPythonPrefersSupportedPython3OnLinux(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python interpreters are POSIX shell scripts")
+	}
+	bin := t.TempDir()
+	writePythonProbe(t, bin, "python3", true)
+	writePythonProbe(t, bin, "python2.7", true)
+	t.Setenv("PATH", bin)
+
+	interpreter, scriptIndex, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interpreter[0] != filepath.Join(bin, "python3") || len(interpreter) != 1 || scriptIndex != 1 {
+		t.Fatalf("selectPython() = %v, %d, want supported Python 3", interpreter, scriptIndex)
+	}
+}
+
+func TestSelectPythonFallsBackWhenPython3IsOlderThan311(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python interpreters are POSIX shell scripts")
+	}
+	bin := t.TempDir()
+	writePythonProbe(t, bin, "python3", false)
+	writePythonProbe(t, bin, "python2.7", true)
+	t.Setenv("PATH", bin)
+
+	interpreter, scriptIndex, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interpreter[0] != filepath.Join(bin, "python2.7") || len(interpreter) != 1 || scriptIndex != 2 {
+		t.Fatalf("selectPython() = %v, %d, want Python 2.7 fallback", interpreter, scriptIndex)
+	}
+}
+
+func TestSelectPythonReportsAcceptedLinuxVersions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python interpreter is a POSIX shell script")
+	}
+	bin := t.TempDir()
+	writePythonProbe(t, bin, "python3", false)
+	t.Setenv("PATH", bin)
+
+	_, _, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
+	if err == nil || !strings.Contains(err.Error(), "Python 3.11 or newer, or Python 2.7") {
+		t.Fatalf("selectPython() error = %v, want accepted Linux versions", err)
+	}
+}
+
+func TestSelectPythonRequiresPython311OnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python launchers are POSIX shell scripts")
+	}
+	bin := t.TempDir()
+	writePythonProbe(t, bin, "py", false)
+	writePythonProbe(t, bin, "python", false)
+	t.Setenv("PATH", bin)
+
+	_, _, err := selectPython("windows-amd64", []string{"python-script", "windows.py"})
+	if err == nil || !strings.Contains(err.Error(), "Python 3.11 or newer") {
+		t.Fatalf("selectPython() error = %v, want Windows Python 3.11 requirement", err)
+	}
+}
+
 func testInteractiveCommand(defaultArguments []string) Command {
 	return Command{
 		Name:             "setup",
@@ -301,6 +366,18 @@ func writeInteractiveTestScript(t *testing.T, root string) {
 	t.Helper()
 	script := []byte("import sys\nvalue = input()\nprint('stdin=' + value)\nprint('arguments=' + ' '.join(sys.argv[1:]))\nprint('script stderr', file=sys.stderr)\n")
 	if err := os.WriteFile(filepath.Join(root, "script.py"), script, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writePythonProbe(t *testing.T, bin, name string, supported bool) {
+	t.Helper()
+	exitStatus := "1"
+	if supported {
+		exitStatus = "0"
+	}
+	script := []byte("#!/bin/sh\ncase \"$*\" in *' < (4, 0)'*) exit 1 ;; esac\nexit " + exitStatus + "\n")
+	if err := os.WriteFile(filepath.Join(bin, name), script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

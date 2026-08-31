@@ -9,6 +9,8 @@ $Documents = Join-Path $TestRoot 'Documents'
 $OriginalLocalAppData = $env:LOCALAPPDATA
 $OriginalPath = $env:PATH
 $OriginalPathExt = $env:PATHEXT
+$OriginalProcessorArchitecture = $env:PROCESSOR_ARCHITECTURE
+$OriginalProcessorArchitectureW6432 = $env:PROCESSOR_ARCHITEW6432
 New-Item -ItemType Directory -Path $Payload, $Downloads, $Documents | Out-Null
 $TemporaryBefore = @(
     Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'my-toolbox-*' |
@@ -65,7 +67,80 @@ try {
             [scriptblock]$UserPathWriter
         )
 
-        & $Installer -UserPathReader { $global:ToolboxInstallerTestUserPath } -UserPathWriter $UserPathWriter -DocumentsPathReader { $global:ToolboxInstallerTestDocuments }
+        & $Installer `
+            -UserPathReader { $global:ToolboxInstallerTestUserPath } `
+            -UserPathWriter $UserPathWriter `
+            -DocumentsPathReader { $global:ToolboxInstallerTestDocuments } `
+            -CommandReader {
+                param([string]$Name)
+                if ($Name -in @('py', 'python')) {
+                    return [pscustomobject]@{ Source = 'fixture-python' }
+                }
+                return Get-Command $Name -ErrorAction SilentlyContinue
+            } `
+            -PythonVersionProbe { param([string]$Command, [string[]]$PrefixArguments) return $true }
+    }
+
+    $env:LOCALAPPDATA = ''
+    $env:PROCESSOR_ARCHITECTURE = 'ARM64'
+    $env:PROCESSOR_ARCHITEW6432 = ''
+    $Failure = ''
+    try {
+        & $Installer `
+            -UserPathReader { '' } `
+            -UserPathWriter { param([string]$Value) } `
+            -DocumentsPathReader { '' } `
+            -CommandReader { param([string]$Name) return $null } `
+            -PythonVersionProbe { param([string]$Command, [string[]]$PrefixArguments) return $false }
+    } catch {
+        $Failure = $_.Exception.Message
+    }
+    foreach ($Text in @(
+        '[FAIL] Stage 1/7: prerequisites',
+        'Missing PowerShell capabilities: Invoke-RestMethod, Invoke-WebRequest, Get-FileHash.',
+        'Install Windows PowerShell 5.1 or PowerShell 7 to provide the missing capabilities.',
+        'No supported Python interpreter was found. Install Python 3.11 or newer.',
+        'my-toolbox requires 64-bit Windows on x64.',
+        'LOCALAPPDATA is not set to an absolute path.',
+        'The current user Documents known folder could not be resolved.'
+    )) {
+        if (-not $Failure.Contains($Text)) {
+            throw "Aggregated Windows prerequisite report is missing '$Text'. Error: $Failure"
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $TestRoot 'my-toolbox')) {
+        throw 'Windows Stage 1 failure created toolbox files.'
+    }
+    $env:PROCESSOR_ARCHITECTURE = $OriginalProcessorArchitecture
+    $env:PROCESSOR_ARCHITEW6432 = $OriginalProcessorArchitectureW6432
+
+    $NestedLocalAppData = Join-Path $TestRoot 'nested-localappdata'
+    $NestedDocuments = Join-Path $TestRoot 'nested-documents'
+    New-Item -ItemType Directory -Path (Join-Path $NestedLocalAppData 'my-toolbox'), $NestedDocuments | Out-Null
+    Set-Content -LiteralPath (Join-Path $NestedLocalAppData 'my-toolbox\versions') -Value 'type conflict' -Encoding ascii
+    New-Item -ItemType Directory -Path (Join-Path $NestedDocuments 'PowerShell\profile.ps1') | Out-Null
+    $env:LOCALAPPDATA = $NestedLocalAppData
+    $Failure = ''
+    try {
+        & $Installer `
+            -UserPathReader { '' } `
+            -UserPathWriter { param([string]$Value) } `
+            -DocumentsPathReader { $NestedDocuments } `
+            -CommandReader { param([string]$Name) return [pscustomobject]@{ Source = $Name } } `
+            -PythonVersionProbe { param([string]$Command, [string[]]$PrefixArguments) return $true }
+    } catch {
+        $Failure = $_.Exception.Message
+    }
+    foreach ($Text in @(
+        "Toolbox versions path is not writable: $(Join-Path $NestedLocalAppData 'my-toolbox\versions')",
+        "PowerShell profile has unsupported type: $(Join-Path $NestedDocuments 'PowerShell\profile.ps1')"
+    )) {
+        if (-not $Failure.Contains($Text)) {
+            throw "Nested Windows prerequisite report is missing '$Text'. Error: $Failure"
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $NestedLocalAppData 'my-toolbox\current.txt')) {
+        throw 'Nested Windows Stage 1 failure created activation files.'
     }
 
     $env:LOCALAPPDATA = Join-Path $TestRoot 'localappdata'
@@ -285,6 +360,8 @@ try {
     $env:LOCALAPPDATA = $OriginalLocalAppData
     $env:PATH = $OriginalPath
     $env:PATHEXT = $OriginalPathExt
+    $env:PROCESSOR_ARCHITECTURE = $OriginalProcessorArchitecture
+    $env:PROCESSOR_ARCHITEW6432 = $OriginalProcessorArchitectureW6432
     if (Test-Path -LiteralPath $TestRoot) {
         Remove-Item -LiteralPath $TestRoot -Recurse -Force
     }

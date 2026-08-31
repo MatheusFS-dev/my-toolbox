@@ -63,7 +63,7 @@ or, via cutt.ly:
 curl -fsSL https://cutt.ly/tblinux | sh
 ```
 
-Bash and Zsh must both be installed so the installer can validate their profile changes before publication.
+Bash and Zsh must both be installed so the installer can validate their profile changes before publication. Released `tb` binaries are statically compiled, so Go is not required to install, run, or update my-toolbox.
 
 ### Windows PowerShell
 
@@ -176,7 +176,7 @@ Uninstallation does not remove tools, plugins, agent configurations, or generate
 
 ## Development
 
-Development requires the Go version declared in `go.mod` and Python 3. Run the core test suites and installer test with:
+Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3. Go is a build dependency only; users of released `tb` binaries do not need it. Run the core test suites and installer test with:
 
 ```sh
 go test ./...

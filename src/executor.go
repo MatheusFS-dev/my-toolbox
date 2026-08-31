@@ -257,27 +257,35 @@ func (executor ProcessExecutor) invokeAdapter(command Command, operation string,
 
 func selectPython(platform string, entrypoint []string) ([]string, int, error) {
 	if strings.HasPrefix(platform, "linux-") {
-		if path, err := exec.LookPath("python3"); err == nil {
+		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]") {
 			return []string{path}, 1, nil
 		}
-		if path, err := exec.LookPath("python2.7"); err == nil {
+		if path, err := exec.LookPath("python2.7"); err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] == (2, 7)") {
 			if len(entrypoint) < 3 {
 				return nil, 0, fmt.Errorf("command has no Python 2.7 fallback script")
 			}
 			return []string{path}, 2, nil
 		}
-		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3 or Python 2.7")
+		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3.11 or newer, or Python 2.7")
 	}
 	if platform == "windows-amd64" {
-		if path, err := exec.LookPath("py"); err == nil {
+		if path, err := exec.LookPath("py"); err == nil && supportsPythonVersion(path, []string{"-3"}, "(3, 11) <= sys.version_info[:2]") {
 			return []string{path, "-3"}, 1, nil
 		}
-		if path, err := exec.LookPath("python"); err == nil {
+		if path, err := exec.LookPath("python"); err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]") {
 			return []string{path}, 1, nil
 		}
-		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3")
+		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3.11 or newer")
 	}
 	return nil, 0, fmt.Errorf("unsupported platform %q", platform)
+}
+
+func supportsPythonVersion(path string, prefixArguments []string, condition string) bool {
+	arguments := append([]string(nil), prefixArguments...)
+	arguments = append(arguments, "-c", "import sys; sys.exit(0 if "+condition+" else 1)")
+	command := exec.Command(path, arguments...)
+	configureNonInteractive(command)
+	return command.Run() == nil
 }
 
 // CurrentPlatform returns the catalog key for the running OS and architecture.
