@@ -6,6 +6,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,7 @@ def discover_template(source: Path) -> list[TemplateEntry]:
     return sorted(entries, key=lambda entry: entry.relative_path.as_posix())
 
 
-def path_kind(path: Path) -> str | None:
+def path_kind(path: Path) -> Optional[str]:
     """Return the copy-relevant type for one destination path.
 
     Args:
@@ -82,7 +83,7 @@ def path_kind(path: Path) -> str | None:
             symlinks instead of treated as missing.
 
     Returns:
-        str | None: directory, file, symlink, or None when missing.
+        Optional[str]: directory, file, symlink, or None when missing.
 
     Raises:
         ValueError: If path exists with an unsupported filesystem type.

@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 ALIAS_PATTERN_TEMPLATE = r"^[ \t]*alias[ \t]+{name}=.*$"
 
@@ -245,12 +246,12 @@ def apply_alias_updates(
     return backups
 
 
-def prompt_yes_no(question: str, default: bool | None) -> bool:
+def prompt_yes_no(question: str, default: Optional[bool]) -> bool:
     """Prompt for one explicit yes/no answer.
 
     Args:
         question (str): Prompt text without the answer suffix.
-        default (bool | None): True makes Enter mean yes, False makes Enter mean
+        default (Optional[bool]): True makes Enter mean yes, False makes Enter mean
             no, and None rejects Enter and requires an explicit answer.
 
     Returns:

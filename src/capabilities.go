@@ -24,8 +24,8 @@ func environments(names ...string) map[string]bool {
 var capabilityRegistry = map[string]Capability{
 	"bash":                          {ID: "bash", Label: "Bash", Remediation: "Install Bash and ensure 'bash' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"powershell":                    {ID: "powershell", Label: "Windows PowerShell 5.1 or PowerShell 7", Remediation: "Install Windows PowerShell 5.1 or PowerShell 7.", Environments: environments("windows")},
-	"python-workspace-linux":        {ID: "python-workspace-linux", Label: "Python 3.11+, or Python 2.7 with toml==0.10.2", Remediation: "Install Python 3.11 or newer, or install Python 2.7 and run: python2.7 -m pip install --user toml==0.10.2", Environments: environments("linux-native", "linux-wsl")},
-	"python311":                     {ID: "python311", Label: "Python 3.11+", Remediation: "Install Python 3.11 or newer.", Environments: environments("linux-native", "linux-wsl", "windows")},
+	"python-workspace-linux":        {ID: "python-workspace-linux", Label: "Python 3.9+, or Python 2.7 with toml==0.10.2", Remediation: "Install Python 3.9 or newer, or install Python 2.7 and run: python2.7 -m pip install --user toml==0.10.2", Environments: environments("linux-native", "linux-wsl")},
+	"python39":                      {ID: "python39", Label: "Python 3.9+", Remediation: "Install Python 3.9 or newer.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"python3":                       {ID: "python3", Label: "Python 3", Remediation: "Install Python 3 and ensure 'python3' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"sudo":                          {ID: "sudo", Label: "sudo", Remediation: "Install sudo and ensure 'sudo' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"codex-plugin-management":       {ID: "codex-plugin-management", Label: "Codex with plugin management", Remediation: "Install or update Codex to a version that supports 'codex plugin'.", Environments: environments("linux-native", "linux-wsl", "windows")},
@@ -120,11 +120,11 @@ func derivedRequirementIDs(command Command, environment string) ([]string, error
 	}
 	if command.Protocol == "interactive-python" || command.Protocol == "questionnaire" {
 		if environment == "windows" {
-			ids = append(ids, "python311")
+			ids = append(ids, "python39")
 		} else if hasPythonFallback(command) {
 			ids = append(ids, "python-workspace-linux")
 		} else {
-			ids = append(ids, "python311")
+			ids = append(ids, "python39")
 		}
 	}
 	if command.Elevation == "sudo" {

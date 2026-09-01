@@ -15,8 +15,19 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
-          - runner: ubuntu-24.04-arm
+            python-version: '3.9'
+          - runner: ubuntu-latest
+            python-version: '3.10'
+          - runner: ubuntu-latest
+            python-version: '3.14'
           - runner: windows-latest
+            python-version: '3.9'
+          - runner: windows-latest
+            python-version: '3.10'
+          - runner: windows-latest
+            python-version: '3.14'
+          - runner: ubuntu-24.04-arm
+            python-version: '3.14'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +38,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
       - run: go test ./...
       - run: python -m unittest discover -s packages/agent-workspace-template/source/tests -v
       - if: runner.os == 'Linux'
@@ -86,6 +97,7 @@ jobs:
       - run: sh scripts/build-release_test.sh
       - run: sh scripts/install_test.sh
       - run: sh scripts/completion_test.sh
+      - run: bash scripts/terminal-setup_test.sh
       - run: bash -n completions/tb.bash
       - run: zsh -n completions/_tb
-      - run: shellcheck install.sh completions/tb.bash scripts/build-release.sh scripts/build-release_test.sh scripts/completion_test.sh scripts/install_test.sh scripts/testdata/go
+      - run: shellcheck install.sh completions/tb.bash scripts/build-release.sh scripts/build-release_test.sh scripts/completion_test.sh scripts/install_test.sh scripts/terminal-setup_test.sh scripts/testdata/go

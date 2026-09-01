@@ -57,16 +57,16 @@ func (executor ProcessExecutor) Preflight(command Command) error {
 func (executor ProcessExecutor) supportsCapability(id string) bool {
 	switch id {
 	case "python-workspace-linux":
-		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]") {
+		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 9) <= sys.version_info[:2]") {
 			return true
 		}
 		if path, err := exec.LookPath("python2.7"); err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] == (2, 7)") {
 			return supportsPythonVersion(path, nil, `getattr(__import__("toml"), "__version__", "") == "0.10.2"`)
 		}
 		return false
-	case "python311":
+	case "python39":
 		if executor.Environment == "windows" {
-			if path, err := exec.LookPath("py"); err == nil && supportsPythonVersion(path, []string{"-3"}, "(3, 11) <= sys.version_info[:2]") {
+			if path, err := exec.LookPath("py"); err == nil && supportsPythonVersion(path, []string{"-3"}, "(3, 9) <= sys.version_info[:2]") {
 				return true
 			}
 		}
@@ -74,7 +74,7 @@ func (executor ProcessExecutor) supportsCapability(id string) bool {
 		if executor.Environment == "windows" {
 			path, err = exec.LookPath("python")
 		}
-		return err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]")
+		return err == nil && supportsPythonVersion(path, nil, "(3, 9) <= sys.version_info[:2]")
 	case "python3":
 		path, err := exec.LookPath("python3")
 		return err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] >= (3, 0)")
@@ -423,7 +423,7 @@ func (executor ProcessExecutor) invokeAdapter(command Command, operation string,
 
 func selectPython(platform string, entrypoint []string) ([]string, int, error) {
 	if strings.HasPrefix(platform, "linux-") {
-		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]") {
+		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 9) <= sys.version_info[:2]") {
 			return []string{path}, 1, nil
 		}
 		if path, err := exec.LookPath("python2.7"); err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] == (2, 7)") {
@@ -435,16 +435,16 @@ func selectPython(platform string, entrypoint []string) ([]string, int, error) {
 			}
 			return []string{path}, 2, nil
 		}
-		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3.11 or newer, or Python 2.7")
+		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3.9 or newer, or Python 2.7")
 	}
 	if platform == "windows-amd64" {
-		if path, err := exec.LookPath("py"); err == nil && supportsPythonVersion(path, []string{"-3"}, "(3, 11) <= sys.version_info[:2]") {
+		if path, err := exec.LookPath("py"); err == nil && supportsPythonVersion(path, []string{"-3"}, "(3, 9) <= sys.version_info[:2]") {
 			return []string{path, "-3"}, 1, nil
 		}
-		if path, err := exec.LookPath("python"); err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]") {
+		if path, err := exec.LookPath("python"); err == nil && supportsPythonVersion(path, nil, "(3, 9) <= sys.version_info[:2]") {
 			return []string{path}, 1, nil
 		}
-		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3.11 or newer")
+		return nil, 0, fmt.Errorf("no supported interpreter found; install Python 3.9 or newer")
 	}
 	return nil, 0, fmt.Errorf("unsupported platform %q", platform)
 }

@@ -146,13 +146,13 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 ### Agent Workspace
 
 - `setup-agents-codex`: Set up global Codex instructions, configuration, optional profiles, and packaged skills. Shows every conflict before asking whether to replace or back it up.
-  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
+  Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 - `setup-agents-claude`: Set up global Claude Code instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
-  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
+  Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 - `setup-agents-antigravity`: Set up global Antigravity instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
-  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
+  Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 - `setup-agents-project` (direct only): Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.
-  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
+  Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 
 ### Terminal
 
@@ -181,13 +181,15 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 ### Project Utilities
 
 - `create-env-alias` (Linux or WSL): Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.
-  Requires: Python 3.11+.
+  Requires: Python 3.9+.
 - `bootstrap-python-from-venv` (Linux or WSL): Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.
-  Requires: Python 3.11+.
+  Requires: Python 3.9+.
 - `create-project-template`: Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.
-  Requires: Python 3.11+.
+  Requires: Python 3.9+.
 
-Copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments; optional desktop integrations also require the corresponding upstream GNOME or Nautilus tools. The toolbox preserves those scripts and their exit behavior byte-for-byte.
+On Python 3.9 and 3.10, project TOML parsing uses bundled Tomli 2.2.1 and requires no package installation.
+
+Copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments. Alacritty and Kitty setup skip their optional file-manager integration when Nautilus is unavailable, and optional-step failures do not stop the remaining setup.
 
 ## Uninstallation
 
@@ -197,13 +199,14 @@ Uninstallation does not remove tools, plugins, agent configurations, or generate
 
 ## Development
 
-Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3. Both are development-only dependencies; released users need neither globally. Run the core test suites and installer test with:
+Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3.9 or newer. Both are development-only dependencies; released users need neither globally. Run the core test suites and installer test with:
 
 ```sh
 go test ./...
 python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
 python3 -m unittest discover -s packages/others/tests -v
 sh scripts/install_test.sh
+bash scripts/terminal-setup_test.sh
 ```
 
 Create release archives by passing a canonical three-part version and an output directory:

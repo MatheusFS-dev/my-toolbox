@@ -1,6 +1,7 @@
 """Bootstrap unpinned Python project metadata from source imports and a venv."""
 
 import ast
+import importlib.util
 import json
 import os
 import platform
@@ -12,13 +13,22 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 try:
     import tomllib
-except ImportError as error:
-    raise RuntimeError(
-        "bootstrap-python-from-venv requires Python 3.11 or newer"
-    ) from error
+except ImportError:
+    _TOMLI_PATH = Path(__file__).resolve().parent / "_vendor" / "tomli"
+    _TOMLI_SPEC = importlib.util.spec_from_file_location(
+        "_toolbox_tomli",
+        _TOMLI_PATH / "__init__.py",
+        submodule_search_locations=[str(_TOMLI_PATH)],
+    )
+    if _TOMLI_SPEC is None or _TOMLI_SPEC.loader is None:
+        raise ImportError(f"Could not load bundled Tomli from {_TOMLI_PATH}")
+    tomllib = importlib.util.module_from_spec(_TOMLI_SPEC)
+    sys.modules[_TOMLI_SPEC.name] = tomllib
+    _TOMLI_SPEC.loader.exec_module(tomllib)
 
 
 SKIP_DIRECTORY_NAMES = {
@@ -128,7 +138,9 @@ def query_venv_metadata(venv: Path) -> dict:
 import importlib.metadata as metadata
 import json
 import pathlib
+import pkgutil
 import sys
+import sysconfig
 
 distributions = []
 for distribution in metadata.distributions():
@@ -156,6 +168,16 @@ for distribution in metadata.distributions():
 
 stdlib = set(getattr(sys, "stdlib_module_names", set()))
 stdlib.update(sys.builtin_module_names)
+if not hasattr(sys, "stdlib_module_names"):
+    stdlib_paths = {
+        sysconfig.get_path("stdlib"),
+        sysconfig.get_path("platstdlib"),
+        sysconfig.get_config_var("DESTSHARED"),
+    }
+    for module in pkgutil.iter_modules(
+        sorted(path for path in stdlib_paths if path)
+    ):
+        stdlib.add(module.name)
 print(json.dumps({
     "python": [sys.version_info.major, sys.version_info.minor],
     "stdlib": sorted(stdlib),
@@ -428,7 +450,7 @@ def format_dependencies(dependencies: list[str]) -> str:
     return "\n".join(lines)
 
 
-def find_table_span(text: str, header: str) -> tuple[int, int] | None:
+def find_table_span(text: str, header: str) -> Optional[tuple[int, int]]:
     """Find one top-level TOML table text span.
 
     Args:
@@ -436,7 +458,7 @@ def find_table_span(text: str, header: str) -> tuple[int, int] | None:
         header (str): Exact header such as [project] or [tool.uv].
 
     Returns:
-        tuple[int, int] | None: Start and end offsets, or None when absent.
+        Optional[tuple[int, int]]: Start and end offsets, or None when absent.
 
     Raises:
         ValueError: If header is not a simple TOML table header.
@@ -559,7 +581,7 @@ def mask_toml_strings_and_comments(text: str) -> str:
     return "".join(masked)
 
 
-def find_assignment_span(table: str, key: str) -> tuple[int, int] | None:
+def find_assignment_span(table: str, key: str) -> Optional[tuple[int, int]]:
     """Find a complete bare-key assignment outside TOML strings and comments.
 
     Args:
@@ -567,7 +589,7 @@ def find_assignment_span(table: str, key: str) -> tuple[int, int] | None:
         key (str): Valid bare key whose assignment should be located.
 
     Returns:
-        tuple[int, int] | None: Start and end offsets covering the entire
+        Optional[tuple[int, int]]: Start and end offsets covering the entire
         assignment, including a trailing newline when present, or None.
 
     Raises:
@@ -886,12 +908,12 @@ def write_bootstrap_files(
     return backups
 
 
-def prompt_yes_no(question: str, default: bool | None) -> bool:
+def prompt_yes_no(question: str, default: Optional[bool]) -> bool:
     """Prompt for a yes/no answer with an explicit documented default.
 
     Args:
         question (str): Prompt text without the answer suffix.
-        default (bool | None): True makes Enter yes, False makes Enter no, and
+        default (Optional[bool]): True makes Enter yes, False makes Enter no, and
             None rejects Enter.
 
     Returns:

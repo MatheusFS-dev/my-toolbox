@@ -47,8 +47,14 @@ func TestResolveRequirementsUsesEnvironmentSpecificPythonAlternatives(t *testing
 	if got := capabilityIDs(linux); !reflect.DeepEqual(got, []string{"python-workspace-linux"}) {
 		t.Fatalf("Linux requirements = %v", got)
 	}
-	if got := capabilityIDs(windows); !reflect.DeepEqual(got, []string{"python311"}) {
+	if got := capabilityIDs(windows); !reflect.DeepEqual(got, []string{"python39"}) {
 		t.Fatalf("Windows requirements = %v", got)
+	}
+	if windows[0].Label != "Python 3.9+" {
+		t.Fatalf("Windows Python capability label = %q, want Python 3.9+", windows[0].Label)
+	}
+	if linux[0].Label != "Python 3.9+, or Python 2.7 with toml==0.10.2" {
+		t.Fatalf("Linux Python capability label = %q", linux[0].Label)
 	}
 }
 

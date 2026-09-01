@@ -4,6 +4,11 @@ MODULE_DIR="$(dirname "${BASH_SOURCE[0]}")"
 source "$MODULE_DIR/shared.sh"
 
 nautilus_integration() {
+    if ! command -v nautilus >/dev/null 2>&1; then
+        echo "Warning: Nautilus is not installed; skipping integration." >&2
+        return 0
+    fi
+
     echo "Configuring Nautilus integration with Alacritty."
 
     apt install -y python3-nautilus gir1.2-gtk-4.0 python3-pip

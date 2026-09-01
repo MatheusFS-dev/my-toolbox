@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -77,7 +79,7 @@ func TestPreflightRequiresExactPython27TomlFallback(t *testing.T) {
 	}
 	executor := ProcessExecutor{Platform: "linux-amd64", Environment: "linux-native", Builtins: unusedBuiltins{}}
 	err := executor.Preflight(command)
-	if err == nil || !strings.Contains(err.Error(), "Python 3.11+, or Python 2.7 with toml==0.10.2") {
+	if err == nil || !strings.Contains(err.Error(), "Python 3.9+, or Python 2.7 with toml==0.10.2") {
 		t.Fatalf("Preflight() error = %v", err)
 	}
 }
@@ -332,8 +334,8 @@ func TestSelectPythonPrefersSupportedPython3OnLinux(t *testing.T) {
 		t.Skip("the fake Python interpreters are POSIX shell scripts")
 	}
 	bin := t.TempDir()
-	writePythonProbe(t, bin, "python3", true)
-	writePythonProbe(t, bin, "python2.7", true)
+	writePythonProbe(t, bin, "python3", 3, 9)
+	writePythonProbe(t, bin, "python2.7", 2, 7)
 	t.Setenv("PATH", bin)
 
 	interpreter, scriptIndex, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
@@ -345,21 +347,17 @@ func TestSelectPythonPrefersSupportedPython3OnLinux(t *testing.T) {
 	}
 }
 
-func TestSelectPythonFallsBackWhenPython3IsOlderThan311(t *testing.T) {
+func TestSelectPythonRejectsPython38(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake Python interpreters are POSIX shell scripts")
 	}
 	bin := t.TempDir()
-	writePythonProbe(t, bin, "python3", false)
-	writePythonProbe(t, bin, "python2.7", true)
+	writePythonProbe(t, bin, "python3", 3, 8)
 	t.Setenv("PATH", bin)
 
-	interpreter, scriptIndex, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if interpreter[0] != filepath.Join(bin, "python2.7") || len(interpreter) != 1 || scriptIndex != 2 {
-		t.Fatalf("selectPython() = %v, %d, want Python 2.7 fallback", interpreter, scriptIndex)
+	_, _, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
+	if err == nil || !strings.Contains(err.Error(), "Python 3.9 or newer, or Python 2.7") {
+		t.Fatalf("selectPython() error = %v, want Python 3.8 rejected", err)
 	}
 }
 
@@ -368,27 +366,44 @@ func TestSelectPythonReportsAcceptedLinuxVersions(t *testing.T) {
 		t.Skip("the fake Python interpreter is a POSIX shell script")
 	}
 	bin := t.TempDir()
-	writePythonProbe(t, bin, "python3", false)
+	writePythonProbe(t, bin, "python3", 3, 8)
 	t.Setenv("PATH", bin)
 
 	_, _, err := selectPython("linux-amd64", []string{"python-script", "python3.py", "python2.py"})
-	if err == nil || !strings.Contains(err.Error(), "Python 3.11 or newer, or Python 2.7") {
+	if err == nil || !strings.Contains(err.Error(), "Python 3.9 or newer, or Python 2.7") {
 		t.Fatalf("selectPython() error = %v, want accepted Linux versions", err)
 	}
 }
 
-func TestSelectPythonRequiresPython311OnWindows(t *testing.T) {
+func TestSelectPythonAcceptsPython39OnWindows(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake Python launchers are POSIX shell scripts")
 	}
 	bin := t.TempDir()
-	writePythonProbe(t, bin, "py", false)
-	writePythonProbe(t, bin, "python", false)
+	writePythonProbe(t, bin, "py", 3, 9)
+	t.Setenv("PATH", bin)
+
+	interpreter, scriptIndex, err := selectPython("windows-amd64", []string{"python-script", "windows.py"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interpreter[0] != filepath.Join(bin, "py") || !reflect.DeepEqual(interpreter[1:], []string{"-3"}) || scriptIndex != 1 {
+		t.Fatalf("selectPython() = %v, %d, want Windows Python 3.9", interpreter, scriptIndex)
+	}
+}
+
+func TestSelectPythonReportsPython39RequirementOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python launchers are POSIX shell scripts")
+	}
+	bin := t.TempDir()
+	writePythonProbe(t, bin, "py", 3, 8)
+	writePythonProbe(t, bin, "python", 3, 8)
 	t.Setenv("PATH", bin)
 
 	_, _, err := selectPython("windows-amd64", []string{"python-script", "windows.py"})
-	if err == nil || !strings.Contains(err.Error(), "Python 3.11 or newer") {
-		t.Fatalf("selectPython() error = %v, want Windows Python 3.11 requirement", err)
+	if err == nil || !strings.Contains(err.Error(), "Python 3.9 or newer") {
+		t.Fatalf("selectPython() error = %v, want Windows Python 3.9 requirement", err)
 	}
 }
 
@@ -413,13 +428,17 @@ func writeInteractiveTestScript(t *testing.T, root string) {
 	}
 }
 
-func writePythonProbe(t *testing.T, bin, name string, supported bool) {
+func writePythonProbe(t *testing.T, bin, name string, major, minor int) {
 	t.Helper()
-	exitStatus := "1"
-	if supported {
-		exitStatus = "0"
-	}
-	script := []byte("#!/bin/sh\ncase \"$*\" in *' < (4, 0)'*) exit 1 ;; esac\nexit " + exitStatus + "\n")
+	script := []byte(fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  *"(3, 11)"*) [ %d -gt 3 ] || { [ %d -eq 3 ] && [ %d -ge 11 ]; } ;;
+  *"(3, 9)"*) [ %d -gt 3 ] || { [ %d -eq 3 ] && [ %d -ge 9 ]; } ;;
+  *"(2, 7)"*) [ %d -eq 2 ] && [ %d -eq 7 ] ;;
+  *toml*) exit 0 ;;
+  *) exit 1 ;;
+esac
+`, major, major, minor, major, major, minor, major, minor))
 	if err := os.WriteFile(filepath.Join(bin, name), script, 0o755); err != nil {
 		t.Fatal(err)
 	}

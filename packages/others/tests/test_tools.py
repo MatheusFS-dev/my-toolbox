@@ -1,4 +1,5 @@
 import importlib.util
+import builtins
 import os
 import subprocess
 import sys
@@ -7,9 +8,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import tomllib
-
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+
+try:
+    import tomllib
+except ImportError:
+    sys.path.insert(0, str(PACKAGE_ROOT / "_vendor"))
+    import tomli as tomllib
 
 
 def load_tool(module_name: str):
@@ -31,6 +36,52 @@ def load_tool(module_name: str):
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def load_tool_without_tomllib(module_name: str):
+    """Load one toolbox script while making stdlib tomllib unavailable.
+
+    Args:
+        module_name (str): Script basename without the Python suffix.
+
+    Returns:
+        module: Loaded Python module using its bundled TOML fallback.
+
+    Raises:
+        ImportError: If Python cannot create or execute the module specification.
+    """
+    original_import = builtins.__import__
+
+    def import_without_tomllib(name, globals=None, locals=None, fromlist=(), level=0):
+        """Delegate imports except for the deliberately unavailable tomllib.
+
+        Args:
+            name (str): Module name requested by the import statement.
+            globals (dict | None): Importing module globals.
+            locals (dict | None): Importing module locals.
+            fromlist (tuple[str, ...]): Requested imported attributes.
+            level (int): Relative import level.
+
+        Returns:
+            module: Imported module returned by the real import implementation.
+
+        Raises:
+            ImportError: When stdlib tomllib is requested or an import fails.
+        """
+        if name == "tomllib":
+            raise ImportError("tomllib deliberately unavailable in fallback test")
+        return original_import(name, globals, locals, fromlist, level)
+
+    loaded_name = f"{module_name}_fallback"
+    path = PACKAGE_ROOT / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(loaded_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loaded_name] = module
+    with mock.patch("builtins.__import__", side_effect=import_without_tomllib):
+        spec.loader.exec_module(module)
     return module
 
 
@@ -184,9 +235,8 @@ class EnvironmentAliasTest(unittest.TestCase):
 
     def test_blank_path_and_symlink_configuration_are_rejected(self) -> None:
         """Require an explicit venv path and refuse to replace a shell symlink."""
-        with (
-            mock.patch("builtins.input", return_value=""),
-            self.assertRaisesRegex(ValueError, "explicit"),
+        with mock.patch("builtins.input", return_value=""), self.assertRaisesRegex(
+            ValueError, "explicit"
         ):
             self.tool.run_interactive()
         with tempfile.TemporaryDirectory() as directory:
@@ -224,6 +274,15 @@ class PythonBootstrapTest(unittest.TestCase):
             ImportError: If the module cannot be loaded.
         """
         cls.tool = load_tool("bootstrap_python_from_venv")
+        try:
+            cls.fallback_tool = load_tool_without_tomllib(
+                "bootstrap_python_from_venv"
+            )
+        except RuntimeError as error:
+            cls.fallback_tool = None
+            cls.fallback_error = error
+        else:
+            cls.fallback_error = None
 
     def make_venv(self, root: Path, distributions: dict[str, list[str]]) -> Path:
         """Create a real venv with controlled distribution metadata.
@@ -258,6 +317,54 @@ class PythonBootstrapTest(unittest.TestCase):
                 encoding="utf-8",
             )
         return venv
+
+    def test_bundled_tomli_fallback_has_expected_version(self) -> None:
+        """Load the bundled parser as Tomli 2.2.1 when tomllib is unavailable."""
+        self.assertIsNone(self.fallback_error, str(self.fallback_error))
+        self.assertEqual(self.fallback_tool.tomllib.__version__, "2.2.1")
+
+    def test_bundled_tomli_fallback_preserves_valid_project_toml(self) -> None:
+        """Preserve unrelated TOML while updating project metadata via fallback."""
+        self.assertIsNone(self.fallback_error, str(self.fallback_error))
+        text = "[tool.ruff]\nline-length = 100\n"
+
+        updated = self.fallback_tool.update_pyproject(
+            text,
+            Path("/tmp/project"),
+            ["Requests"],
+            (3, 9),
+            False,
+        )
+
+        parsed = self.fallback_tool.tomllib.loads(updated)
+        self.assertEqual(parsed["tool"]["ruff"]["line-length"], 100)
+        self.assertEqual(parsed["project"]["dependencies"], ["Requests"])
+        self.assertEqual(parsed["project"]["requires-python"], ">=3.9,<3.10")
+
+    def test_bundled_tomli_fallback_rejects_malformed_toml_without_writes(
+        self,
+    ) -> None:
+        """Reject malformed project TOML before any generated file is written."""
+        self.assertIsNone(self.fallback_error, str(self.fallback_error))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            pyproject = project / "pyproject.toml"
+            pyproject.write_text("[project\n", encoding="utf-8")
+            (project / "app.py").write_text("import requests\n", encoding="utf-8")
+            venv = self.make_venv(root, {"Requests": ["requests"]})
+
+            with self.assertRaises(ValueError):
+                self.fallback_tool.prepare_bootstrap(project, venv, True, True)
+
+            self.assertEqual(pyproject.read_text(encoding="utf-8"), "[project\n")
+            for filename in (
+                "requirements.inferred.txt",
+                "requirements.txt",
+                ".python-version",
+            ):
+                self.assertFalse((project / filename).exists(), filename)
 
     def test_generates_all_files_and_preserves_unrelated_toml(self) -> None:
         """Infer Python and notebook imports as unpinned distribution names."""

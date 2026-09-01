@@ -9,6 +9,24 @@ cleanup() {
     rm -rf "$temporary_root"
 }
 trap cleanup EXIT HUP INT TERM
+tomli_assets='packages/others/_vendor/tomli/LICENSE
+packages/others/_vendor/tomli/__init__.py
+packages/others/_vendor/tomli/_parser.py
+packages/others/_vendor/tomli/_re.py
+packages/others/_vendor/tomli/_types.py
+packages/others/_vendor/tomli/py.typed
+packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/LICENSE
+packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/__init__.py
+packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/_parser.py
+packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/_re.py
+packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/_types.py
+packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/py.typed
+packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/LICENSE
+packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/__init__.py
+packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/_parser.py
+packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/_re.py
+packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/_types.py
+packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/py.typed'
 if [ -e "$test_symlink" ] || [ -L "$test_symlink" ]; then
     printf 'Release symlink fixture path already exists: %s\n' "$test_symlink" >&2
     exit 1
@@ -53,6 +71,13 @@ for platform in linux-amd64 linux-arm64; do
             exit 1
         fi
     done
+    for tomli_asset in $tomli_assets; do
+        if ! printf '%s\n' "$entries" | grep -Fx "$tomli_asset" >/dev/null; then
+            printf '%s is missing required Tomli asset %s.\n' \
+                "$archive" "$tomli_asset" >&2
+            exit 1
+        fi
+    done
 
     find "$repository_root/packages" \
         \( -type d \( -name .git -o -name __pycache__ \) -prune \) -o \
@@ -80,6 +105,13 @@ fi
 for required_entry in tb.exe commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ version.txt; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$required_entry" >/dev/null; then
         printf '%s is missing %s.\n' "$windows_archive" "$required_entry" >&2
+        exit 1
+    fi
+done
+for tomli_asset in $tomli_assets; do
+    if ! printf '%s\n' "$windows_entries" | grep -Fx "$tomli_asset" >/dev/null; then
+        printf '%s is missing required Tomli asset %s.\n' \
+            "$windows_archive" "$tomli_asset" >&2
         exit 1
     fi
 done
