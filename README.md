@@ -1,16 +1,11 @@
 ![my-toolbox header](https://capsule-render.vercel.app/api?height=190&type=blur&color=7f5af0&section=header&text=my-toolbox&fontColor=fffffe&fontSize=42)
 
-<div align="center">
-
-```text
- __  __ __   __      _____ ___   ___  _     ____   _____  __
+<pre align="center"> __  __ __   __      _____ ___   ___  _     ____   _____  __
 |  \/  |\ \ / /     |_   _/ _ \ / _ \| |   | __ ) / _ \ \ \/ /
 | |\/| | \ V /        | || | | | | | | |   |  _ \| | | | \  /
 | |  | |  | |         | || |_| | |_| | |___| |_) | |_| | /  \
 |_|  |_|  |_|         |_| \___/ \___/|_____|____/ \___/ /_/\_\
-```
-
-</div>
+</pre>
 
 <p align="center">
   <a href="https://github.com/DenverCoder1/readme-typing-svg"><img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&color=%237F5AF0&size=22&center=true&vCenter=true&width=760&height=32&lines=Portable+terminal+tools+for+Linux+and+Windows" alt="Portable terminal tools for Linux and Windows" /></a>
