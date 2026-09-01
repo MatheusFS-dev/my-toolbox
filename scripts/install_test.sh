@@ -497,7 +497,8 @@ if grep -Ei 'Missing.*Python|apt-get install.*python|Install missing packages.*(
     exit 1
 fi
 no_python_wrapper="$no_python_home/.local/bin/tb"
-if grep -F sed "$no_python_wrapper" >/dev/null || ! PATH="$test_root/empty-path" "$no_python_wrapper" version >/dev/null; then
+if grep -F sed "$no_python_wrapper" >/dev/null ||
+    ! HOME="$no_python_home" XDG_DATA_HOME='' PATH="$test_root/empty-path" "$no_python_wrapper" version >/dev/null; then
     printf 'Installed Linux wrapper retained a sed dependency or failed without PATH utilities.\n' >&2
     exit 1
 fi

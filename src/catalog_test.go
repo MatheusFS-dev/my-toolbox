@@ -31,17 +31,11 @@ func TestREADMERequirementLinesMatchResolvedRepositoryCatalog(t *testing.T) {
 		if lineIndex < 0 {
 			t.Fatalf("README is missing catalog entry %s", command.Name)
 		}
-		labels := map[string]bool{}
-		for _, environment := range command.Environments {
-			capabilities, err := ResolveRequirements(command, environment)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, capability := range capabilities {
-				labels[capability.Label] = true
-			}
+		expected, err := expectedREADMERequirementLine(command)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if len(labels) == 0 {
+		if expected == "" {
 			if lineIndex+1 < len(lines) && strings.HasPrefix(lines[lineIndex+1], "  Requires:") {
 				t.Fatalf("README gives %s a requirement line, want none", command.Name)
 			}
@@ -51,12 +45,87 @@ func TestREADMERequirementLinesMatchResolvedRepositoryCatalog(t *testing.T) {
 			t.Fatalf("README is missing requirement line after %s", command.Name)
 		}
 		documented := strings.ReplaceAll(lines[lineIndex+1], "`", "")
-		for label := range labels {
-			if !strings.Contains(documented, label) {
-				t.Fatalf("README requirement for %s = %q, missing %q", command.Name, documented, label)
-			}
+		if documented != expected {
+			t.Fatalf("README requirement for %s = %q, want %q", command.Name, documented, expected)
 		}
 	}
+}
+
+func TestExpectedREADMERequirementLineKeepsLaterEnvironmentRequirements(t *testing.T) {
+	command := Command{
+		Name:         "windows-optional",
+		Protocol:     "builtin",
+		Environments: []string{"linux-native", "windows"},
+		Requirements: map[string][]string{"windows": {"winget"}},
+	}
+	got, err := expectedREADMERequirementLine(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "  Requires: WinGet (Windows)."
+	if got != want {
+		t.Fatalf("expectedREADMERequirementLine() = %q, want %q", got, want)
+	}
+}
+
+func expectedREADMERequirementLine(command Command) (string, error) {
+	type requirementGroup struct {
+		text         string
+		environments []string
+	}
+	groups := []requirementGroup{}
+	for _, environment := range command.Environments {
+		capabilities, err := ResolveRequirements(command, environment)
+		if err != nil {
+			return "", err
+		}
+		labels := make([]string, len(capabilities))
+		for index, capability := range capabilities {
+			labels[index] = capability.Label
+		}
+		text := strings.Join(labels, "; ")
+		if text == "" {
+			continue
+		}
+		groupIndex := -1
+		for index := range groups {
+			if groups[index].text == text {
+				groupIndex = index
+				break
+			}
+		}
+		if groupIndex < 0 {
+			groups = append(groups, requirementGroup{text: text, environments: []string{environment}})
+		} else {
+			groups[groupIndex].environments = append(groups[groupIndex].environments, environment)
+		}
+	}
+	if len(groups) == 0 {
+		return "", nil
+	}
+	parts := make([]string, len(groups))
+	for index, group := range groups {
+		parts[index] = group.text
+		if len(groups) > 1 || len(group.environments) != len(command.Environments) {
+			parts[index] += " (" + readmeEnvironmentName(group.environments) + ")"
+		}
+	}
+	return "  Requires: " + strings.Join(parts, "; ") + ".", nil
+}
+
+func readmeEnvironmentName(environments []string) string {
+	if reflect.DeepEqual(environments, []string{"linux-native", "linux-wsl"}) {
+		return "Linux/WSL"
+	}
+	names := make([]string, len(environments))
+	for index, environment := range environments {
+		names[index] = map[string]string{
+			"linux-native": "Linux",
+			"linux-wsl":    "WSL",
+			"windows":      "Windows",
+		}[environment]
+	}
+	return strings.Join(names, "/")
 }
 
 func TestLoadCatalogRejectsInvalidCommands(t *testing.T) {

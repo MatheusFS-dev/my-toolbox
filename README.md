@@ -1,10 +1,16 @@
 ![my-toolbox header](https://capsule-render.vercel.app/api?height=190&type=blur&color=7f5af0&section=header&text=my-toolbox&fontColor=fffffe&fontSize=42)
 
-<pre align="center"> __  __ __   __      _____ ___   ___  _     ____   _____  __
-|  \/  |\ \ / /     |_   _/ _ \ / _ \| |   | __ ) / _ \ \ \/ /
-| |\/| | \ V /        | || | | | | | | |   |  _ \| | | | \  /
-| |  | |  | |         | || |_| | |_| | |___| |_) | |_| | /  \
-|_|  |_|  |_|         |_| \___/ \___/|_____|____/ \___/ /_/\_\
+<pre align="center">
+                                 ░██                          ░██ ░██
+                                 ░██                          ░██ ░██
+░█████████████  ░██    ░██    ░████████  ░███████   ░███████  ░██ ░████████   ░███████  ░██    ░██
+░██   ░██   ░██ ░██    ░██       ░██    ░██    ░██ ░██    ░██ ░██ ░██    ░██ ░██    ░██  ░██  ░██
+░██   ░██   ░██ ░██    ░██       ░██    ░██    ░██ ░██    ░██ ░██ ░██    ░██ ░██    ░██   ░█████
+░██   ░██   ░██ ░██   ░███       ░██    ░██    ░██ ░██    ░██ ░██ ░███   ░██ ░██    ░██  ░██  ░██
+░██   ░██   ░██  ░█████░██        ░████  ░███████   ░███████  ░██ ░██░█████   ░███████  ░██    ░██
+                       ░██
+                 ░███████
+
 </pre>
 
 <p align="center">
@@ -58,7 +64,7 @@ or, via cutt.ly:
 curl -fsSL https://cutt.ly/tblinux | sh
 ```
 
-Bash and Zsh must both be installed so the installer can validate their profile changes before publication. Released `tb` binaries are statically compiled, so Go is not required to install, run, or update my-toolbox.
+Bash, Zsh, and Python are not universal installation requirements. Bash and Zsh are independent, optional completion integrations: completion assets are always installed, while profile changes are made only for detected shell executables. Released `tb` binaries are statically compiled, so Go is not required to install, run, or update my-toolbox.
 
 ### Windows PowerShell
 
@@ -74,7 +80,7 @@ irm https://cutt.ly/tbwin | iex
 
 On Windows, the installer adds `%LOCALAPPDATA%\my-toolbox\bin` to the user `PATH` and activates it in the current PowerShell session, making `tb` available immediately. Running the installer again repairs the managed `PATH` entry without duplicating equivalent entries.
 
-The installers automatically register top-level `tb` completion for Bash, Zsh, Windows PowerShell 5.1, and PowerShell 7. They add marked source blocks to `$HOME/.bashrc`, `${ZDOTDIR:-$HOME}/.zshrc`, and both PowerShell `CurrentUserAllHosts` profiles. Open a new shell session after installation to activate completion.
+The installers publish top-level `tb` completion assets for Bash, Zsh, Windows PowerShell 5.1, and PowerShell 7. On Linux, marked source blocks are added only for detected Bash or Zsh executables; a missing shell is left untouched. On Windows, both PowerShell `CurrentUserAllHosts` profiles are updated. Open a new shell session after installation to activate completion.
 
 Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` downloads the bootstrap installer, removes the managed toolbox installation, and runs the installer again. If installation fails after removal, rerun the installation command for your platform to restore `tb`.
 
@@ -98,6 +104,7 @@ SELECT TOOLS
 › ◯ install-codex
     Install Codex for the current user on Linux or Windows. Skips
     installation when `codex` is already available.
+    Requires: Bash
   ◉ install-claude
     Install Claude Code for the current user on Linux or Windows. Skips
     installation when `claude` is already available.
@@ -119,47 +126,70 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 ### Agents
 
 - `install-codex`: Install Codex for the current user on Linux or Windows. Skips installation when `codex` is already available.
+  Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
 - `install-claude`: Install Claude Code for the current user on Linux or Windows. Skips installation when `claude` is already available.
+  Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
 - `install-antigravity`: Install Antigravity for the current user on Linux or Windows. Skips installation when `agy` is already available.
+  Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
 
 ### Base Tools
 
 - `install-uv`: Install uv for the current user on Linux or Windows without changing shell `PATH` configuration. Skips installation when `uv` is already available.
+  Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
 - `install-gh`: Download, verify, and install the latest GitHub CLI for the current user. Shows `PATH` guidance when needed.
 
 ### Agent Plugins
 
 - `install-superpowers-codex`: Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.
+  Requires: Codex with plugin management.
 - `install-superpowers-claude`: Add the Superpowers plugin to Claude Code for the current user. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
+  Requires: Claude Code with plugin management.
 - `install-superpowers-antigravity`: Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
+  Requires: Antigravity with plugin management.
 
 ### Agent Workspace
 
 - `setup-agents-codex`: Set up global Codex instructions, configuration, optional profiles, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
 - `setup-agents-claude`: Set up global Claude Code instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
 - `setup-agents-antigravity`: Set up global Antigravity instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
 - `setup-agents-project` (direct only): Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.
+  Requires: Python 3.11+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.11+ (Windows).
 
 ### Terminal
 
 - `setup-alacritty` (native Linux): Build an Alacritty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Alacritty configuration is replaced without a backup.
+  Requires: Bash; sudo; Debian or Ubuntu; apt-get; `chown`; `cut`; `dirname`; `getent`.
 - `setup-kitty` (native Linux): Build a Kitty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Kitty configuration is backed up before replacement.
+  Requires: Bash; sudo; Debian or Ubuntu; apt-get; `chown`; `cut`; `dirname`; `getent`; `install`.
 - `setup-windows` (Windows): Set up Windows Terminal, PowerShell 7, selected fonts, and terminal tools with WinGet. Backs up managed configuration when possible and reports each result.
+  Requires: Windows PowerShell 5.1 or PowerShell 7; Windows 10 build 17763+ or Windows 11; WinGet.
 - `setup-wsl` (WSL): Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. Uses `sudo` for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.
+  Requires: Bash; sudo; WSL Ubuntu 22.04 or 24.04; apt-get; `cut`; `dirname`; `env`; `getent`; `grep`; `sort`.
 - `set-vscode-wsl-cwd` (Windows): Open a chosen WSL directory in VS Code and use it as the working directory of a managed terminal profile. Preserves JSONC comments, backs up changed settings, and supports `-Undo`.
+  Requires: Windows PowerShell 5.1 or PowerShell 7; WSL; VS Code with WSL support.
 - `set-default-cwd` (WSL): Make Bash and Zsh start in a chosen WSL directory when opened from home. Preserves unrelated shell configuration and backs up changed files.
+  Requires: Bash; `awk`; `chmod`; `cmp`; `cp`; `date`; `grep`; `mktemp`; `mv`; `od`; `rm`; `tail`; `tr`.
 
 ### System Utilities
 
 - `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
+  Requires: Bash; sudo; Python 3; GRUB configuration files; GRUB utilities; `awk`; `cat`; `cp`; `date`; `grep`.
 - `setup-venv` (Linux or WSL): Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.
+  Requires: Bash; `awk`; `cat`; `dirname`; `grep`; `mktemp`; `rm`.
 - `toggle-nopasswd-sudo` (Linux or WSL): Enable or disable passwordless `sudo` for one Linux or WSL user. Validates enabling changes and manages only the toolbox-owned sudoers file.
+  Requires: Bash; sudo; visudo; `cat`; `chmod`; `grep`; `id`; `install`; `mktemp`; `rm`.
 
 ### Project Utilities
 
 - `create-env-alias` (Linux or WSL): Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.
+  Requires: Python 3.11+.
 - `bootstrap-python-from-venv` (Linux or WSL): Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.
+  Requires: Python 3.11+.
 - `create-project-template`: Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.
+  Requires: Python 3.11+.
 
 Copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments; optional desktop integrations also require the corresponding upstream GNOME or Nautilus tools. The toolbox preserves those scripts and their exit behavior byte-for-byte.
 
@@ -171,7 +201,7 @@ Uninstallation does not remove tools, plugins, agent configurations, or generate
 
 ## Development
 
-Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3. Go is a build dependency only; users of released `tb` binaries do not need it. Run the core test suites and installer test with:
+Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3. Both are development-only dependencies; released users need neither globally. Run the core test suites and installer test with:
 
 ```sh
 go test ./...

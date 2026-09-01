@@ -687,8 +687,8 @@ temporary_wrapper=$(mktemp "$wrapper_root/.tb.XXXXXX")
     # Wrapper variables must remain literal until the installed wrapper runs.
     # shellcheck disable=SC2016
     printf '%s\n' 'data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"'
-    # shellcheck disable=SC2016
     printf '%s\n' 'current='
+    # shellcheck disable=SC2016
     printf '%s\n' 'IFS= read -r current < "$data_root/current.txt"'
     # shellcheck disable=SC2016
     printf '%s\n' 'exec "$data_root/versions/$current/tb" "$@"'
