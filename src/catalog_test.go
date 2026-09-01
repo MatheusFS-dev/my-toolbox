@@ -44,10 +44,22 @@ func TestREADMERequirementLinesMatchResolvedRepositoryCatalog(t *testing.T) {
 		if lineIndex+1 >= len(lines) || !strings.HasPrefix(lines[lineIndex+1], "  Requires:") {
 			t.Fatalf("README is missing requirement line after %s", command.Name)
 		}
-		documented := strings.ReplaceAll(lines[lineIndex+1], "`", "")
+		documented := documentedREADMERequirement(lines[lineIndex+1])
 		if documented != expected {
 			t.Fatalf("README requirement for %s = %q, want %q", command.Name, documented, expected)
 		}
+	}
+}
+
+func documentedREADMERequirement(line string) string {
+	return strings.ReplaceAll(strings.TrimSuffix(line, "\r"), "`", "")
+}
+
+func TestDocumentedREADMERequirementAcceptsWindowsLineEnding(t *testing.T) {
+	got := documentedREADMERequirement("  Requires: `Bash`.\r")
+	const want = "  Requires: Bash."
+	if got != want {
+		t.Fatalf("documentedREADMERequirement() = %q, want %q", got, want)
 	}
 }
 
