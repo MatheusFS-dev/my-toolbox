@@ -351,6 +351,11 @@ func (model selectorModel) commandLines(command Command, index int) []string {
 	for _, line := range wrapText(command.Description, max(1, model.width-4)) {
 		lines = append(lines, "    "+presentationStyle(line, ansiGray, true))
 	}
+	if requirements := command.requirementText(); requirements != "" {
+		for _, line := range wrapText(requirements, max(1, model.width-4)) {
+			lines = append(lines, "    "+presentationStyle(line, ansiBrightRed, true))
+		}
+	}
 	return lines
 }
 

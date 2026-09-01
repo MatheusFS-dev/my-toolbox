@@ -11,7 +11,8 @@ import (
 const linuxToolboxWrapper = `#!/bin/sh
 set -eu
 data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"
-current=$(sed -n "1p" "$data_root/current.txt")
+current=
+IFS= read -r current < "$data_root/current.txt"
 exec "$data_root/versions/$current/tb" "$@"
 `
 

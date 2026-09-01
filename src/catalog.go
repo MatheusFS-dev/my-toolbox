@@ -23,16 +23,33 @@ var supportedPlatforms = []string{"linux-amd64", "linux-arm64", "windows-amd64"}
 
 // Command describes one editable catalog tool and its platform entrypoints.
 type Command struct {
-	Name             string              `json:"name"`
-	Category         string              `json:"category"`
-	Description      string              `json:"description"`
-	Package          string              `json:"package"`
-	Visibility       string              `json:"visibility"`
-	Protocol         string              `json:"protocol"`
-	Environments     []string            `json:"environments"`
-	Elevation        string              `json:"elevation,omitempty"`
-	DefaultArguments []string            `json:"default_arguments,omitempty"`
-	Entrypoints      map[string][]string `json:"entrypoints"`
+	Name                    string              `json:"name"`
+	Category                string              `json:"category"`
+	Description             string              `json:"description"`
+	Package                 string              `json:"package"`
+	Visibility              string              `json:"visibility"`
+	Protocol                string              `json:"protocol"`
+	Environments            []string            `json:"environments"`
+	Elevation               string              `json:"elevation,omitempty"`
+	DefaultArguments        []string            `json:"default_arguments,omitempty"`
+	Requirements            map[string][]string `json:"requirements,omitempty"`
+	Entrypoints             map[string][]string `json:"entrypoints"`
+	presentationEnvironment string
+}
+
+func (command Command) requirementText() string {
+	if command.presentationEnvironment == "" {
+		return ""
+	}
+	capabilities, err := ResolveRequirements(command, command.presentationEnvironment)
+	if err != nil || len(capabilities) == 0 {
+		return ""
+	}
+	labels := make([]string, len(capabilities))
+	for index, capability := range capabilities {
+		labels[index] = capability.Label
+	}
+	return "Requires: " + strings.Join(labels, "; ")
 }
 
 // Catalog preserves the user-visible command order from commands.json.
@@ -100,6 +117,9 @@ func LoadCatalog(reader io.Reader) (Catalog, error) {
 		}
 		if command.Elevation == "sudo" && (command.Protocol != "interactive-script" || environments["windows"]) {
 			return Catalog{}, fmt.Errorf("command %q has invalid sudo elevation", command.Name)
+		}
+		if err := validateRequirements(command, environments); err != nil {
+			return Catalog{}, err
 		}
 		for _, platform := range supportedPlatforms {
 			required := environments["windows"]

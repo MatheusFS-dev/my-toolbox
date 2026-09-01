@@ -17,6 +17,7 @@ const (
 	ansiGreen     = "32"
 	ansiGray      = "90"
 	ansiBoldWhite = "1;37"
+	ansiBrightRed = "91"
 )
 
 type commandGroup struct {
@@ -46,6 +47,7 @@ func filteredCommands(catalog Catalog, environment string, includeDirect bool) [
 		if !includeDirect && command.Visibility != "list" {
 			continue
 		}
+		command.presentationEnvironment = environment
 		commands = append(commands, command)
 	}
 	return commands
@@ -144,6 +146,9 @@ func renderHelp(commands []Command, version string, terminalWidth int, styled bo
 		for _, command := range group.Commands {
 			writeWrapped(command.Name, 4, ansiWhite)
 			writeWrapped(command.Description, 6, ansiGray)
+			if requirements := command.requirementText(); requirements != "" {
+				writeWrapped(requirements, 6, ansiBrightRed)
+			}
 		}
 	}
 	return output.String()

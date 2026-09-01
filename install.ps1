@@ -6,17 +6,7 @@ param(
     [Parameter(DontShow = $true)]
     [scriptblock]$DocumentsPathReader = { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) },
     [Parameter(DontShow = $true)]
-    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue },
-    [Parameter(DontShow = $true)]
-    [scriptblock]$PythonVersionProbe = {
-        param([string]$Command, [string[]]$PrefixArguments)
-        try {
-            & $Command @PrefixArguments -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] else 1)' *> $null
-            return $LASTEXITCODE -eq 0
-        } catch {
-            return $false
-        }
-    }
+    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue }
 )
 
 $ErrorActionPreference = 'Stop'
@@ -252,20 +242,6 @@ function Get-PrerequisiteFailures {
         $Failures += 'my-toolbox requires 64-bit Windows on x64.'
     }
 
-    $PythonCommand = $null
-    $PyLauncher = Get-PrerequisiteCommandPath -Name 'py'
-    if (-not [string]::IsNullOrWhiteSpace($PyLauncher) -and (& $PythonVersionProbe $PyLauncher @('-3'))) {
-        $PythonCommand = $PyLauncher
-    }
-    if ($null -eq $PythonCommand) {
-        $Python = Get-PrerequisiteCommandPath -Name 'python'
-        if (-not [string]::IsNullOrWhiteSpace($Python) -and (& $PythonVersionProbe $Python @())) {
-            $PythonCommand = $Python
-        }
-    }
-    if ($null -eq $PythonCommand) {
-        $Failures += 'No supported Python interpreter was found. Install Python 3.11 or newer.'
-    }
     if ([string]::IsNullOrWhiteSpace($LocalAppData) -or -not [IO.Path]::IsPathRooted($LocalAppData)) {
         $Failures += 'LOCALAPPDATA is not set to an absolute path.'
     }

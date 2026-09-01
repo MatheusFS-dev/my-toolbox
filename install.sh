@@ -40,6 +40,8 @@ bash_profile_backup=
 zsh_profile_backup=
 temporary_bash_profile=
 temporary_zsh_profile=
+bash_available=0
+zsh_available=0
 
 if [ -t 1 ]; then
     color_info='\033[36m'
@@ -78,16 +80,22 @@ complete_stage() {
 inventory_required_commands() {
     missing_commands=
     missing_packages=
-    for required_command in \
-        bash zsh curl tar \
-        sha256sum cp mv rm mkdir rmdir dirname mktemp head chmod uname id \
-        sed grep cmp sudo; do
+    if command -v bash >/dev/null 2>&1; then bash_available=1; else bash_available=0; fi
+    if command -v zsh >/dev/null 2>&1; then zsh_available=1; else zsh_available=0; fi
+    required_commands='curl tar sha256sum cp mv rm mkdir dirname mktemp head chmod uname sed cmp'
+    if [ "$bash_available" -eq 1 ] || [ "$zsh_available" -eq 1 ]; then
+        required_commands="$required_commands grep"
+    fi
+    if [ "$zsh_available" -eq 1 ]; then
+        required_commands="$required_commands rmdir"
+    fi
+    for required_command in $required_commands; do
         if command -v "$required_command" >/dev/null 2>&1; then
             continue
         fi
         missing_commands="${missing_commands}${missing_commands:+ }$required_command"
         case "$required_command" in
-            bash|zsh|curl|tar|sed|grep|sudo) required_package=$required_command ;;
+            curl|tar|sed|grep) required_package=$required_command ;;
             cmp) required_package=diffutils ;;
             *) required_package=coreutils ;;
         esac
@@ -166,6 +174,26 @@ ensure_required_commands() {
         return 1
     fi
 
+    if [ "$allow_package_install" -ne 1 ]; then
+        package_install_command ""
+        printf 'Install manually as root: %s\n' "$package_command" >&2
+        return 1
+    fi
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        package_install_command ""
+        printf 'Install manually as root: %s\n' "$package_command" >&2
+        return 1
+    fi
+    printf 'Install missing packages? [y/N] '
+    IFS= read -r package_reply || package_reply=
+    case "$package_reply" in
+        y|Y|yes|YES|Yes) ;;
+        *)
+            package_install_command ""
+            printf 'Install manually as root: %s\n' "$package_command" >&2
+            return 1
+            ;;
+    esac
     elevation=
     if ! command -v id >/dev/null 2>&1 || [ "$(id -u)" -ne 0 ]; then
         if ! command -v sudo >/dev/null 2>&1; then
@@ -176,24 +204,6 @@ ensure_required_commands() {
         elevation=sudo
     fi
     package_install_command "$elevation"
-
-    if [ "$allow_package_install" -ne 1 ]; then
-        printf 'Install manually: %s\n' "$package_command" >&2
-        return 1
-    fi
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
-        printf 'Install manually: %s\n' "$package_command" >&2
-        return 1
-    fi
-    printf 'Install missing packages? [y/N] '
-    IFS= read -r package_reply || package_reply=
-    case "$package_reply" in
-        y|Y|yes|YES|Yes) ;;
-        *)
-            printf 'Install manually: %s\n' "$package_command" >&2
-            return 1
-            ;;
-    esac
     if ! install_missing_packages; then
         printf 'Package installation failed. Retry manually: %s\n' "$package_command" >&2
         return 1
@@ -251,7 +261,7 @@ inventory_environment() {
             *) report_environment_problem "XDG_DATA_HOME must be an absolute path: $XDG_DATA_HOME" ;;
         esac
     fi
-    if [ -n "${ZDOTDIR:-}" ]; then
+    if [ "$zsh_available" -eq 1 ] && [ -n "${ZDOTDIR:-}" ]; then
         case "$ZDOTDIR" in
             /*) ;;
             *) report_environment_problem "ZDOTDIR must be an absolute path: $ZDOTDIR" ;;
@@ -286,9 +296,11 @@ inventory_environment() {
                         ;;
                 esac
                 validate_writable_path "$wrapper_root" 'Toolbox wrapper path'
-                case "${ZDOTDIR:-}" in
-                    ''|/*) validate_writable_path "$zsh_profile_root" 'Zsh profile path' ;;
-                esac
+                if [ "$zsh_available" -eq 1 ]; then
+                    case "${ZDOTDIR:-}" in
+                        ''|/*) validate_writable_path "$zsh_profile_root" 'Zsh profile path' ;;
+                    esac
+                fi
                 ;;
         esac
     fi
@@ -298,31 +310,17 @@ inventory_environment() {
                 ''|/*) validate_managed_file "$current_file" 'Toolbox current file' 0 1 ;;
             esac
             validate_managed_file "$wrapper_path" 'Toolbox wrapper' 1 0
-            validate_writable_path "$home_root" 'Bash profile path'
-            validate_managed_file "$bash_profile" 'Bash profile' 0 1
-            case "${ZDOTDIR:-}" in
-                ''|/*) validate_managed_file "$zsh_profile" 'Zsh profile' 0 1 ;;
-            esac
+            if [ "$bash_available" -eq 1 ]; then
+                validate_writable_path "$home_root" 'Bash profile path'
+                validate_managed_file "$bash_profile" 'Bash profile' 0 1
+            fi
+            if [ "$zsh_available" -eq 1 ]; then
+                case "${ZDOTDIR:-}" in
+                    ''|/*) validate_managed_file "$zsh_profile" 'Zsh profile' 0 1 ;;
+                esac
+            fi
             ;;
     esac
-}
-
-inventory_python() {
-    python_problem=0
-    if command -v python3 >/dev/null 2>&1 &&
-        python3 -c 'import sys; sys.exit(0 if (3, 11) <= sys.version_info[:2] else 1)' >/dev/null 2>&1; then
-        return
-    fi
-    if command -v python2.7 >/dev/null 2>&1 &&
-        python2.7 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (2, 7) else 1)' >/dev/null 2>&1; then
-        if ! python2.7 -c 'import sys, toml; sys.exit(0 if getattr(toml, "__version__", "") == "0.10.2" else 1)' >/dev/null 2>&1; then
-            printf 'Python 2.7 requires toml==0.10.2. Run: python2.7 -m pip install --user toml==0.10.2\n' >&2
-            python_problem=1
-        fi
-        return
-    fi
-    printf 'No supported Python interpreter was found. Install Python 3.11 or newer, or Python 2.7.\n' >&2
-    python_problem=1
 }
 
 verify_prerequisites() {
@@ -331,14 +329,13 @@ verify_prerequisites() {
         packages_installed=0
         inventory_required_commands
         inventory_environment
-        inventory_python
 
         if [ "$package_install_attempted" -eq 1 ] && [ -n "$missing_commands" ]; then
             printf 'Missing required commands after package installation: %s\n' "$missing_commands" >&2
             ensure_required_commands 0 || true
             return 1
         fi
-        if [ "$environment_problems" -ne 0 ] || [ "$python_problem" -ne 0 ]; then
+        if [ "$environment_problems" -ne 0 ]; then
             if [ -n "$missing_commands" ]; then
                 ensure_required_commands 0 || true
             fi
@@ -437,31 +434,31 @@ activate_completions() {
         }
     done
 
-    quoted_completion_root=$(printf '%s' "$completion_root" | sed "s/'/'\\\\''/g")
-    bash_source_line=". '$quoted_completion_root/tb.bash'"
-    zsh_source_line="source '$quoted_completion_root/_tb'"
-    bash_profile_backup="$temporary_root/bashrc.original"
-    zsh_profile_backup="$temporary_root/zshrc.original"
-    temporary_bash_profile="$temporary_root/bashrc.candidate"
-    temporary_zsh_profile="$temporary_root/zshrc.candidate"
-    if [ -f "$bash_profile" ]; then
-        bash_profile_existed=1
+    if [ "$bash_available" -eq 1 ] || [ "$zsh_available" -eq 1 ]; then
+        quoted_completion_root=$(printf '%s' "$completion_root" | sed "s/'/'\\\\''/g")
     fi
-    if [ -f "$zsh_profile" ]; then
-        zsh_profile_existed=1
+    if [ "$bash_available" -eq 1 ]; then
+        bash_source_line=". '$quoted_completion_root/tb.bash'"
+        bash_profile_backup="$temporary_root/bashrc.original"
+        temporary_bash_profile="$temporary_root/bashrc.candidate"
+        if [ -f "$bash_profile" ]; then bash_profile_existed=1; fi
+        prepare_profile "$bash_profile" "$temporary_bash_profile" "$bash_profile_backup" "$bash_source_line" bash
     fi
-    if [ -d "$zsh_profile_root" ]; then
-        zsh_profile_root_existed=1
-    else
-        # Record the nearest existing ancestor so rollback removes only directory
-        # levels that this activation had to create.
-        zsh_profile_existing_ancestor=$zsh_profile_root
-        while [ ! -d "$zsh_profile_existing_ancestor" ]; do
-            zsh_profile_existing_ancestor=$(dirname "$zsh_profile_existing_ancestor")
-        done
+    if [ "$zsh_available" -eq 1 ]; then
+        zsh_source_line="source '$quoted_completion_root/_tb'"
+        zsh_profile_backup="$temporary_root/zshrc.original"
+        temporary_zsh_profile="$temporary_root/zshrc.candidate"
+        if [ -f "$zsh_profile" ]; then zsh_profile_existed=1; fi
+        if [ -d "$zsh_profile_root" ]; then
+            zsh_profile_root_existed=1
+        else
+            zsh_profile_existing_ancestor=$zsh_profile_root
+            while [ ! -d "$zsh_profile_existing_ancestor" ]; do
+                zsh_profile_existing_ancestor=$(dirname "$zsh_profile_existing_ancestor")
+            done
+        fi
+        prepare_profile "$zsh_profile" "$temporary_zsh_profile" "$zsh_profile_backup" "$zsh_source_line" zsh
     fi
-    prepare_profile "$bash_profile" "$temporary_bash_profile" "$bash_profile_backup" "$bash_source_line" bash
-    prepare_profile "$zsh_profile" "$temporary_zsh_profile" "$zsh_profile_backup" "$zsh_source_line" zsh
 
     completion_assets_match=1
     if [ -d "$completion_root" ]; then
@@ -491,21 +488,21 @@ activate_completions() {
         cp -R "$version_root/completions" "$completion_root"
     fi
 
-    mkdir -p "$zsh_profile_root"
-    if [ "$bash_profile_existed" -eq 0 ] || ! cmp -s "$temporary_bash_profile" "$bash_profile"; then
+    if [ "$bash_available" -eq 1 ] && { [ "$bash_profile_existed" -eq 0 ] || ! cmp -s "$temporary_bash_profile" "$bash_profile"; }; then
         bash_profile_published=1
         mv "$temporary_bash_profile" "$bash_profile"
-    else
+    elif [ "$bash_available" -eq 1 ]; then
         rm -f "$temporary_bash_profile"
     fi
-    temporary_bash_profile=
-    if [ "$zsh_profile_existed" -eq 0 ] || ! cmp -s "$temporary_zsh_profile" "$zsh_profile"; then
+    if [ "$bash_available" -eq 1 ]; then temporary_bash_profile=; fi
+    if [ "$zsh_available" -eq 1 ]; then mkdir -p "$zsh_profile_root"; fi
+    if [ "$zsh_available" -eq 1 ] && { [ "$zsh_profile_existed" -eq 0 ] || ! cmp -s "$temporary_zsh_profile" "$zsh_profile"; }; then
         zsh_profile_published=1
         mv "$temporary_zsh_profile" "$zsh_profile"
-    else
+    elif [ "$zsh_available" -eq 1 ]; then
         rm -f "$temporary_zsh_profile"
     fi
-    temporary_zsh_profile=
+    if [ "$zsh_available" -eq 1 ]; then temporary_zsh_profile=; fi
 }
 
 on_exit() {
@@ -691,7 +688,8 @@ temporary_wrapper=$(mktemp "$wrapper_root/.tb.XXXXXX")
     # shellcheck disable=SC2016
     printf '%s\n' 'data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"'
     # shellcheck disable=SC2016
-    printf '%s\n' 'current=$(sed -n "1p" "$data_root/current.txt")'
+    printf '%s\n' 'current='
+    printf '%s\n' 'IFS= read -r current < "$data_root/current.txt"'
     # shellcheck disable=SC2016
     printf '%s\n' 'exec "$data_root/versions/$current/tb" "$@"'
 } > "$temporary_wrapper"

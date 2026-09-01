@@ -39,6 +39,49 @@ func TestInteractiveCatalogCommandIsReadyWithoutDefaultArguments(t *testing.T) {
 	}
 }
 
+func TestPreflightAggregatesMissingCapabilitiesWithExactRemediation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the test controls a POSIX PATH")
+	}
+	t.Setenv("PATH", t.TempDir())
+	command := Command{
+		Name: "setup", Protocol: "interactive-script", Elevation: "sudo",
+		Environments: []string{"linux-native"},
+	}
+	executor := ProcessExecutor{Platform: "linux-amd64", Environment: "linux-native", Builtins: unusedBuiltins{}}
+	err := executor.Preflight(command)
+	if err == nil {
+		t.Fatal("Preflight() succeeded")
+	}
+	for _, text := range []string{"- Bash", "Install Bash and ensure 'bash' is on PATH.", "- sudo", "Install sudo and ensure 'sudo' is on PATH."} {
+		if !strings.Contains(err.Error(), text) {
+			t.Fatalf("Preflight() error = %q, want containing %q", err, text)
+		}
+	}
+}
+
+func TestPreflightRequiresExactPython27TomlFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Python executable is a POSIX shell script")
+	}
+	bin := t.TempDir()
+	python := filepath.Join(bin, "python2.7")
+	script := "#!/bin/sh\ncase \"$*\" in *toml*) exit 1;; *) exit 0;; esac\n"
+	if err := os.WriteFile(python, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	command := Command{
+		Name: "workspace", Protocol: "interactive-python", Environments: []string{"linux-native"},
+		Entrypoints: map[string][]string{"linux-amd64": {"python-script", "python3.py", "python2.py"}},
+	}
+	executor := ProcessExecutor{Platform: "linux-amd64", Environment: "linux-native", Builtins: unusedBuiltins{}}
+	err := executor.Preflight(command)
+	if err == nil || !strings.Contains(err.Error(), "Python 3.11+, or Python 2.7 with toml==0.10.2") {
+		t.Fatalf("Preflight() error = %v", err)
+	}
+}
+
 func TestInteractiveCommandRejectsDirectUserArguments(t *testing.T) {
 	command := testInteractiveCommand(nil)
 	executor := ProcessExecutor{Builtins: unusedBuiltins{}}

@@ -28,10 +28,21 @@ func (ui *fakeUI) Ask(question Question) (any, error) {
 }
 
 type fakeExecutor struct {
-	responses map[string][]ProtocolResponse
-	runs      []string
-	arguments map[string][]string
-	fail      string
+	responses         map[string][]ProtocolResponse
+	runs              []string
+	preflights        []string
+	arguments         map[string][]string
+	fail              string
+	preflightFailures map[string]error
+	installed         map[string]bool
+}
+
+func (executor *fakeExecutor) Preflight(command Command) error {
+	executor.preflights = append(executor.preflights, command.Name)
+	if command.Name == "plugin" && !executor.installed["agent"] {
+		return errors.New("missing agent plugin management")
+	}
+	return executor.preflightFailures[command.Name]
 }
 
 func (executor *fakeExecutor) Questions(command Command, _ map[string]any, _ []string) (ProtocolResponse, error) {
@@ -49,6 +60,9 @@ func (executor *fakeExecutor) Run(command Command, _ map[string]any, arguments [
 	executor.arguments[command.Name] = append([]string(nil), arguments...)
 	if command.Name == executor.fail {
 		return errors.New("planned failure")
+	}
+	if command.Name == "agent" {
+		executor.installed["agent"] = true
 	}
 	return nil
 }
@@ -305,6 +319,54 @@ func TestFailureStopsBatchAndPrintsSummary(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(output.String()), "rollback") {
 		t.Fatalf("summary makes an unsupported rollback claim: %q", output.String())
+	}
+}
+
+func TestPreflightFailureRunsNoPartOfToolAndStopsRemainder(t *testing.T) {
+	output := &bytes.Buffer{}
+	executor := &fakeExecutor{
+		responses:         map[string][]ProtocolResponse{},
+		arguments:         map[string][]string{},
+		preflightFailures: map[string]error{"second": errors.New("missing requirements:\n- Bash\n  Install Bash")},
+	}
+	app := App{Catalog: testCatalog("first", "second", "third"), Environment: "linux-native", UI: &fakeUI{selected: []string{"first", "second", "third"}}, Executor: executor, Output: output}
+	err := app.Execute([]string{"list"})
+	if err == nil || !strings.Contains(err.Error(), "missing requirements") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !reflect.DeepEqual(executor.preflights, []string{"first", "second"}) {
+		t.Fatalf("preflights = %v", executor.preflights)
+	}
+	if !reflect.DeepEqual(executor.runs, []string{"first"}) {
+		t.Fatalf("runs = %v, failing tool must not run", executor.runs)
+	}
+	for _, text := range []string{"executed: first", "failed: second", "not run: third"} {
+		if !strings.Contains(output.String(), text) {
+			t.Fatalf("summary %q missing %q", output.String(), text)
+		}
+	}
+}
+
+func TestEarlierInstallerCanSatisfyLaterToolPreflight(t *testing.T) {
+	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}, installed: map[string]bool{}}
+	app := App{Catalog: testCatalog("agent", "plugin"), Environment: "linux-native", UI: &fakeUI{selected: []string{"agent", "plugin"}}, Executor: executor}
+	if err := app.Execute([]string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(executor.runs, []string{"agent", "plugin"}) {
+		t.Fatalf("runs = %v", executor.runs)
+	}
+}
+
+func TestLinuxUpdatePreflightsBashBeforeRunningBuiltin(t *testing.T) {
+	executor := &fakeExecutor{arguments: map[string][]string{}, preflightFailures: map[string]error{"update": errors.New("Bash is unavailable")}}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", Executor: executor}
+	err := app.Execute([]string{"update"})
+	if err == nil || !strings.Contains(err.Error(), "Bash is unavailable") {
+		t.Fatalf("Execute(update) error = %v", err)
+	}
+	if !reflect.DeepEqual(executor.preflights, []string{"update"}) || len(executor.runs) != 0 {
+		t.Fatalf("preflights = %v, runs = %v", executor.preflights, executor.runs)
 	}
 }
 

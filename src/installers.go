@@ -87,7 +87,10 @@ func (builtins *ToolboxBuiltins) SkipReason(name string) (string, error) {
 	}
 	output, err := exec.Command(path, "plugin", "list").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("installed %s lacks the required plugin-management command: %s", agent, strings.TrimSpace(string(output)))
+		// Requirement validation belongs to the just-in-time execution preflight.
+		// Configuration must remain valid when an earlier selected installer can
+		// replace or update the agent before this tool runs.
+		return "", nil
 	}
 	if strings.Contains(strings.ToLower(string(output)), "superpowers") {
 		return fmt.Sprintf("Superpowers is already installed for %s", agent), nil
@@ -150,7 +153,11 @@ func (builtins *ToolboxBuiltins) runOfficialInstaller(linuxURL, windowsURL strin
 	}
 	defer os.Remove(path)
 	if builtins.platform == "windows-amd64" {
-		return runClosedInput("powershell", []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path}, environment, builtins.output)
+		powershell, exists := supportedPowerShellPath()
+		if !exists {
+			return fmt.Errorf("required Windows PowerShell 5.1 or PowerShell 7 is unavailable")
+		}
+		return runClosedPath(powershell, "PowerShell", []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path}, environment, builtins.output)
 	}
 	return runClosedInput("bash", []string{path}, environment, builtins.output)
 }

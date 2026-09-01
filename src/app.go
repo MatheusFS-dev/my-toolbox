@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 )
 
 // ErrCancelled identifies selection or configuration cancellation.
@@ -18,6 +19,7 @@ type UI interface {
 
 // Executor discovers questions and runs fully configured commands.
 type Executor interface {
+	Preflight(command Command) error
 	Questions(command Command, answers map[string]any, arguments []string) (ProtocolResponse, error)
 	Run(command Command, answers map[string]any, arguments []string) error
 }
@@ -115,7 +117,13 @@ func (app App) Execute(arguments []string) error {
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb update does not accept arguments")
 		}
-		command := Command{Name: "update", Description: "Update toolbox", Package: "toolbox", Protocol: "builtin"}
+		command := Command{Name: "update", Description: "Update toolbox", Package: "toolbox", Protocol: "builtin", Environments: []string{app.Environment}}
+		if strings.HasPrefix(app.Environment, "linux-") {
+			command.Requirements = map[string][]string{app.Environment: {"bash"}}
+		}
+		if err := app.Executor.Preflight(command); err != nil {
+			return fmt.Errorf("preflight update: %w", err)
+		}
 		return app.Executor.Run(command, map[string]any{}, nil)
 	case "uninstall":
 		if len(arguments) != 1 {
@@ -178,6 +186,19 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 		if configuredTool.skipped != "" {
 			skipped = append(skipped, fmt.Sprintf("%s (%s)", configuredTool.command.Name, configuredTool.skipped))
 			continue
+		}
+		if err := app.Executor.Preflight(configuredTool.command); err != nil {
+			notRun := make([]string, 0, len(configured)-index-1)
+			allSkipped := append([]string(nil), skipped...)
+			for _, remaining := range configured[index+1:] {
+				if remaining.skipped != "" {
+					allSkipped = append(allSkipped, fmt.Sprintf("%s (%s)", remaining.command.Name, remaining.skipped))
+				} else {
+					notRun = append(notRun, remaining.command.Name)
+				}
+			}
+			printSummary(output, executed, configuredTool.command.Name, allSkipped, notRun)
+			return fmt.Errorf("preflight %s: %w", configuredTool.command.Name, err)
 		}
 		if err := app.Executor.Run(configuredTool.command, configuredTool.answers, configuredTool.arguments); err != nil {
 			notRun := make([]string, 0, len(configured)-index-1)

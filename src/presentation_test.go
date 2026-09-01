@@ -107,6 +107,35 @@ func TestTTYHelpStylesHeadingsWithoutBackgrounds(t *testing.T) {
 	}
 }
 
+func TestHelpRendersRequirementsBrightRedOrPlainAndWrapsThem(t *testing.T) {
+	catalog := Catalog{Commands: []Command{{
+		Name: "setup", Category: "Tools", Description: "Description.", Visibility: "list",
+		Protocol: "interactive-script", Environments: []string{"linux-native"},
+		Requirements: map[string][]string{"linux-native": {"apt-get", "debian-ubuntu"}},
+	}}}
+	commands := filteredCommands(catalog, "linux-native", true)
+	plain := renderHelp(commands, "1.2.3", 38, false)
+	want := "      Requires: Bash; apt-get; Debian\n      or Ubuntu\n"
+	if !strings.Contains(plain, want) {
+		t.Fatalf("plain help = %q, want containing %q", plain, want)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain help contains ANSI: %q", plain)
+	}
+	styled := renderHelp(commands, "1.2.3", 72, true)
+	if !strings.Contains(styled, "\x1b[91mRequires: Bash; apt-get; Debian or Ubuntu") {
+		t.Fatalf("styled help lacks bright-red requirement: %q", styled)
+	}
+}
+
+func TestHelpOmitsRequiresLineForCommandWithoutRequirements(t *testing.T) {
+	catalog := Catalog{Commands: []Command{{Name: "install-gh", Category: "Tools", Description: "Description.", Visibility: "list", Protocol: "builtin", Environments: []string{"linux-native"}}}}
+	help := renderHelp(filteredCommands(catalog, "linux-native", true), "1.2.3", 72, false)
+	if strings.Contains(help, "Requires:") {
+		t.Fatalf("help = %q", help)
+	}
+}
+
 func TestHelpCapsWideTerminalsAndUsesNarrowLiveWidth(t *testing.T) {
 	command := Command{Name: "tool", Category: "Tools", Description: "A description with enough words to wrap across multiple lines in a narrow terminal."}
 	for _, test := range []struct {

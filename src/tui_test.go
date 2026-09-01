@@ -78,6 +78,21 @@ func TestSelectorRendersRequiredStylesWithoutBordersOrBackgrounds(t *testing.T) 
 	}
 }
 
+func TestSelectorRendersBrightRedRequirementInsideCommandRow(t *testing.T) {
+	catalog := Catalog{Commands: []Command{{
+		Name: "setup", Category: "Tools", Description: "Description.", Visibility: "list",
+		Protocol: "interactive-script", Environments: []string{"linux-native"},
+	}}}
+	model := newSelectorModel(filteredCommands(catalog, "linux-native", false), 30, 8)
+	view := model.View().Content
+	if !strings.Contains(view, "\x1b[91mRequires: Bash") {
+		t.Fatalf("selector lacks bright-red requirement: %q", view)
+	}
+	if model.rowEnds[0]-model.rowStarts[0]+1 != 3 {
+		t.Fatalf("row height = %d, want name, description, requirement", model.rowEnds[0]-model.rowStarts[0]+1)
+	}
+}
+
 func TestSelectorWrapsToContentWidthAndKeepsFocusVisible(t *testing.T) {
 	commands := []Command{}
 	for index := 0; index < 6; index++ {

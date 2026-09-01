@@ -43,7 +43,7 @@ func main() {
 		Catalog:     catalog,
 		Environment: environment,
 		UI:          HuhUI{},
-		Executor:    ProcessExecutor{Root: root, Platform: platform, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
+		Executor:    ProcessExecutor{Root: root, Platform: platform, Environment: environment, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
 		Output:      os.Stdout,
 		Version:     version,
 	}

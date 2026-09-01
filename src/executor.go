@@ -22,12 +22,174 @@ const defaultArgumentsQuestionID = "use-default-arguments"
 
 // ProcessExecutor invokes questionnaire adapters and interactive Python scripts.
 type ProcessExecutor struct {
-	Root     string
-	Platform string
-	Builtins BuiltinExecutor
-	Input    io.Reader
-	Output   io.Writer
-	Error    io.Writer
+	Root        string
+	Platform    string
+	Environment string
+	Builtins    BuiltinExecutor
+	Input       io.Reader
+	Output      io.Writer
+	Error       io.Writer
+}
+
+// Preflight validates every hard requirement without changing tool state.
+func (executor ProcessExecutor) Preflight(command Command) error {
+	capabilities, err := ResolveRequirements(command, executor.Environment)
+	if err != nil {
+		return err
+	}
+	failures := []Capability{}
+	for _, capability := range capabilities {
+		if !executor.supportsCapability(capability.ID) {
+			failures = append(failures, capability)
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	var message strings.Builder
+	message.WriteString("missing requirements:")
+	for _, failure := range failures {
+		fmt.Fprintf(&message, "\n- %s\n  %s", failure.Label, failure.Remediation)
+	}
+	return fmt.Errorf("%s", message.String())
+}
+
+func (executor ProcessExecutor) supportsCapability(id string) bool {
+	switch id {
+	case "python-workspace-linux":
+		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]") {
+			return true
+		}
+		if path, err := exec.LookPath("python2.7"); err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] == (2, 7)") {
+			return supportsPythonVersion(path, nil, `getattr(__import__("toml"), "__version__", "") == "0.10.2"`)
+		}
+		return false
+	case "python311":
+		if executor.Environment == "windows" {
+			if path, err := exec.LookPath("py"); err == nil && supportsPythonVersion(path, []string{"-3"}, "(3, 11) <= sys.version_info[:2]") {
+				return true
+			}
+		}
+		path, err := exec.LookPath("python3")
+		if executor.Environment == "windows" {
+			path, err = exec.LookPath("python")
+		}
+		return err == nil && supportsPythonVersion(path, nil, "(3, 11) <= sys.version_info[:2]")
+	case "python3":
+		path, err := exec.LookPath("python3")
+		return err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] >= (3, 0)")
+	case "codex-plugin-management":
+		return executor.supportsPluginManagement("codex")
+	case "claude-plugin-management":
+		return executor.supportsPluginManagement("claude")
+	case "antigravity-plugin-management":
+		return executor.supportsPluginManagement("agy")
+	case "debian-ubuntu":
+		content, err := os.ReadFile("/etc/os-release")
+		return err == nil && osReleaseIs(content, "debian", "ubuntu")
+	case "wsl-ubuntu-supported":
+		content, err := os.ReadFile("/etc/os-release")
+		return err == nil && osReleaseVersionIs(content, "ubuntu", "22.04", "24.04")
+	case "windows-build-supported":
+		path, exists := supportedPowerShellPath()
+		return exists && runCapabilityPath(path, "-NoProfile", "-NonInteractive", "-Command", "if ([Environment]::OSVersion.Version.Build -ge 17763) { exit 0 } else { exit 1 }")
+	case "wsl":
+		return runCapabilityCommand("wsl.exe", "-l", "-q")
+	case "vscode-wsl":
+		path, err := exec.LookPath("code")
+		if err != nil {
+			path, err = exec.LookPath("code.exe")
+		}
+		if err != nil {
+			return false
+		}
+		output, err := exec.Command(path, "--list-extensions").Output()
+		return err == nil && strings.Contains(strings.ToLower(string(output)), "ms-vscode-remote.remote-wsl")
+	case "grub-files":
+		return regularFile("/etc/default/grub") && regularFile("/boot/grub/grub.cfg")
+	case "grub-utilities":
+		_, err := exec.LookPath("update-grub")
+		return err == nil
+	case "powershell":
+		_, exists := supportedPowerShellPath()
+		return exists
+	default:
+		_, err := exec.LookPath(id)
+		return err == nil
+	}
+}
+
+func (executor ProcessExecutor) supportsPluginManagement(name string) bool {
+	path, err := resolveUserCommand(name, executor.Platform)
+	if err != nil {
+		return false
+	}
+	command := exec.Command(path, "plugin", "list")
+	configureNonInteractive(command)
+	return command.Run() == nil
+}
+
+func runCapabilityCommand(name string, arguments ...string) bool {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return false
+	}
+	return runCapabilityPath(path, arguments...)
+}
+
+func runCapabilityPath(path string, arguments ...string) bool {
+	command := exec.Command(path, arguments...)
+	configureNonInteractive(command)
+	return command.Run() == nil
+}
+
+func supportedPowerShellPath() (string, bool) {
+	for _, name := range []string{"powershell.exe", "powershell", "pwsh"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		if runCapabilityPath(path, "-NoProfile", "-NonInteractive", "-Command", "if ($PSVersionTable.PSVersion -ge [Version]'5.1') { exit 0 } else { exit 1 }") {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func regularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func osReleaseIs(content []byte, identifiers ...string) bool {
+	return osReleaseVersionIs(content, "", identifiers...)
+}
+
+func osReleaseVersionIs(content []byte, identifier string, versions ...string) bool {
+	values := map[string]string{}
+	for _, line := range strings.Split(string(content), "\n") {
+		key, value, found := strings.Cut(line, "=")
+		if found {
+			values[key] = strings.Trim(strings.TrimSpace(value), `"'`)
+		}
+	}
+	if identifier == "" {
+		for _, candidate := range versions {
+			if values["ID"] == candidate {
+				return true
+			}
+		}
+		return false
+	}
+	if values["ID"] != identifier {
+		return false
+	}
+	for _, version := range versions {
+		if values["VERSION_ID"] == version {
+			return true
+		}
+	}
+	return false
 }
 
 // Questions discovers the next configuration question or builtin preflight skip.
@@ -157,9 +319,13 @@ func (executor ProcessExecutor) runInteractiveScript(command Command, arguments 
 			process = exec.Command("bash", processArguments...)
 		}
 	case "powershell-script":
+		powershell, exists := supportedPowerShellPath()
+		if !exists {
+			return fmt.Errorf("command %s requires Windows PowerShell 5.1 or PowerShell 7", command.Name)
+		}
 		processArguments := []string{"-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script}
 		processArguments = append(processArguments, arguments...)
-		process = exec.Command("powershell.exe", processArguments...)
+		process = exec.Command(powershell, processArguments...)
 	default:
 		return fmt.Errorf("command %s has unsupported script entrypoint type %q", command.Name, entrypoint[0])
 	}
@@ -261,6 +427,9 @@ func selectPython(platform string, entrypoint []string) ([]string, int, error) {
 			return []string{path}, 1, nil
 		}
 		if path, err := exec.LookPath("python2.7"); err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] == (2, 7)") {
+			if !supportsPythonVersion(path, nil, `getattr(__import__("toml"), "__version__", "") == "0.10.2"`) {
+				return nil, 0, fmt.Errorf("Python 2.7 requires toml==0.10.2; run: python2.7 -m pip install --user toml==0.10.2")
+			}
 			if len(entrypoint) < 3 {
 				return nil, 0, fmt.Errorf("command has no Python 2.7 fallback script")
 			}

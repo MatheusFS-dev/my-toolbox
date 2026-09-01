@@ -124,14 +124,14 @@ for package_manager in apt-get dnf yum pacman zypper apk; do
         fi
     done
     case "$package_manager" in
-        apt-get) manual_command='sudo apt-get update && sudo apt-get install -y curl coreutils diffutils' ;;
-        dnf) manual_command='sudo dnf install -y curl coreutils diffutils' ;;
-        yum) manual_command='sudo yum install -y curl coreutils diffutils' ;;
-        pacman) manual_command='sudo pacman -Sy --needed --noconfirm curl coreutils diffutils' ;;
-        zypper) manual_command='sudo zypper --non-interactive install curl coreutils diffutils' ;;
-        apk) manual_command='sudo apk add curl coreutils diffutils' ;;
+        apt-get) manual_command='apt-get update && apt-get install -y curl coreutils diffutils' ;;
+        dnf) manual_command='dnf install -y curl coreutils diffutils' ;;
+        yum) manual_command='yum install -y curl coreutils diffutils' ;;
+        pacman) manual_command='pacman -Sy --needed --noconfirm curl coreutils diffutils' ;;
+        zypper) manual_command='zypper --non-interactive install curl coreutils diffutils' ;;
+        apk) manual_command='apk add curl coreutils diffutils' ;;
     esac
-    if ! printf '%s\n' "$prerequisite_output" | grep -F "Install manually: $manual_command" >/dev/null; then
+    if ! printf '%s\n' "$prerequisite_output" | grep -F "Install manually as root: $manual_command" >/dev/null; then
         printf '%s prerequisite report has the wrong manual command.\n%s\n' "$package_manager" "$prerequisite_output" >&2
         exit 1
     fi
@@ -199,7 +199,7 @@ if printf '\n' | script -qefc "env HOME='$decline_home' PACKAGE_LOG='$decline_lo
     exit 1
 fi
 if ! grep -F 'Install missing packages? [y/N]' "$test_root/decline.out" >/dev/null ||
-    ! grep -F 'Install manually: sudo apt-get update && sudo apt-get install -y diffutils' "$test_root/decline.out" >/dev/null; then
+    ! grep -F 'Install manually as root: apt-get update && apt-get install -y diffutils' "$test_root/decline.out" >/dev/null; then
     printf 'Declined prerequisite installation did not provide exact remediation.\n' >&2
     cat "$test_root/decline.out" >&2
     exit 1
@@ -270,7 +270,7 @@ if HOME="$missing_elevation_home" PATH="$missing_elevation_bin" /bin/sh "$reposi
     printf 'Installer continued without required elevation.\n' >&2
     exit 1
 fi
-if ! grep -F 'Run as root: apt-get update && apt-get install -y diffutils sudo' "$test_root/missing-elevation.out" >/dev/null; then
+if ! grep -F 'Install manually as root: apt-get update && apt-get install -y diffutils' "$test_root/missing-elevation.out" >/dev/null; then
     printf 'Missing elevation did not provide the root command.\n' >&2
     cat "$test_root/missing-elevation.out" >&2
     exit 1
@@ -346,7 +346,7 @@ for expected in \
     'Missing required commands: cmp' \
     'Missing Linux packages: diffutils' \
     'Unsupported Linux architecture: i686' \
-    'Install manually: sudo apt-get update && sudo apt-get install -y diffutils'; do
+    'Install manually as root: apt-get update && apt-get install -y diffutils'; do
     if ! grep -F "$expected" "$test_root/combined.out" >/dev/null; then
         printf 'Combined Stage 1 report is missing %s.\n' "$expected" >&2
         cat "$test_root/combined.out" >&2
@@ -478,128 +478,56 @@ for expected in \
     fi
 done
 
-python3_preferred_home="$test_root/python3-preferred-home"
-python3_preferred_bin="$test_root/python3-preferred-bin"
-python3_preferred_trace="$test_root/python3-preferred.trace"
-mkdir -p "$python3_preferred_home"
-make_prerequisite_bin "$python3_preferred_bin" python3
-cat > "$python3_preferred_bin/python3" <<'SH'
-#!/bin/sh
-printf 'python3\n' >> "$PYTHON_TRACE"
-case "$*" in
-    *' < (4, 0)'*) exit 1 ;;
-    *) exit 0 ;;
-esac
-SH
-cat > "$python3_preferred_bin/python2.7" <<'SH'
-#!/bin/sh
-printf 'python2.7\n' >> "$PYTHON_TRACE"
-exit 0
-SH
-chmod 755 "$python3_preferred_bin/python3" "$python3_preferred_bin/python2.7"
-if ! HOME="$python3_preferred_home" ZDOTDIR="$python3_preferred_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PYTHON_TRACE="$python3_preferred_trace" PATH="$python3_preferred_bin:$test_root/bin" /bin/sh "$repository_root/install.sh" >/dev/null; then
-    printf 'Installer rejected supported Python 3.\n' >&2
+no_python_home="$test_root/no-python-home"
+no_python_bin="$test_root/no-python-bin"
+mkdir -p "$no_python_home"
+make_prerequisite_bin "$no_python_bin" python3
+rm -f "$no_python_bin/curl" "$no_python_bin/uname" "$no_python_bin/mv"
+ln -s "$test_root/bin/curl" "$no_python_bin/curl"
+ln -s "$test_root/bin/uname" "$no_python_bin/uname"
+ln -s "$test_root/bin/mv" "$no_python_bin/mv"
+if ! HOME="$no_python_home" ZDOTDIR="$no_python_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$no_python_bin" /bin/sh "$repository_root/install.sh" >"$test_root/no-python.out" 2>&1; then
+    printf 'Installer rejected an environment without Python.\n' >&2
+    cat "$test_root/no-python.out" >&2
     exit 1
 fi
-if [ "$(cat "$python3_preferred_trace")" != python3 ]; then
-    printf 'Installer did not prefer supported Python 3.\n%s\n' "$(cat "$python3_preferred_trace")" >&2
+if grep -Ei 'Missing.*Python|apt-get install.*python|Install missing packages.*(bash|zsh|sudo)' "$test_root/no-python.out" >/dev/null; then
+    printf 'Bootstrap proposed a tool-specific or optional dependency.\n' >&2
+    cat "$test_root/no-python.out" >&2
+    exit 1
+fi
+no_python_wrapper="$no_python_home/.local/bin/tb"
+if grep -F sed "$no_python_wrapper" >/dev/null || ! PATH="$test_root/empty-path" "$no_python_wrapper" version >/dev/null; then
+    printf 'Installed Linux wrapper retained a sed dependency or failed without PATH utilities.\n' >&2
     exit 1
 fi
 
-python2_fallback_home="$test_root/python2-fallback-home"
-python2_fallback_bin="$test_root/python2-fallback-bin"
-python2_fallback_trace="$test_root/python2-fallback.trace"
-mkdir -p "$python2_fallback_home"
-make_prerequisite_bin "$python2_fallback_bin" python3
-cat > "$python2_fallback_bin/python3" <<'SH'
-#!/bin/sh
-printf 'python3\n' >> "$PYTHON_TRACE"
-exit 1
-SH
-cat > "$python2_fallback_bin/python2.7" <<'SH'
-#!/bin/sh
-printf 'python2.7\n' >> "$PYTHON_TRACE"
-exit 0
-SH
-chmod 755 "$python2_fallback_bin/python3" "$python2_fallback_bin/python2.7"
-if ! HOME="$python2_fallback_home" ZDOTDIR="$python2_fallback_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PYTHON_TRACE="$python2_fallback_trace" PATH="$python2_fallback_bin:$test_root/bin" /bin/sh "$repository_root/install.sh" >/dev/null; then
-    printf 'Installer rejected Python 2.7 after unsupported Python 3.\n' >&2
-    exit 1
-fi
-if [ "$(cat "$python2_fallback_trace")" != "python3
-python2.7
-python2.7" ]; then
-    printf 'Installer did not probe the Python 2.7 fallback and TOML support.\n%s\n' "$(cat "$python2_fallback_trace")" >&2
-    exit 1
-fi
-
-missing_python_home="$test_root/missing-python-home"
-missing_python_bin="$test_root/missing-python-bin"
-mkdir -p "$missing_python_home"
-make_prerequisite_bin "$missing_python_bin" python3
-if HOME="$missing_python_home" PATH="$missing_python_bin" /bin/sh "$repository_root/install.sh" >"$test_root/missing-python.out" 2>&1; then
-    printf 'Installer accepted a missing supported Python interpreter.\n' >&2
-    exit 1
-fi
-if ! grep -F 'No supported Python interpreter was found. Install Python 3.11 or newer, or Python 2.7.' "$test_root/missing-python.out" >/dev/null; then
-    printf 'Missing Python guidance did not list the accepted versions.\n' >&2
-    cat "$test_root/missing-python.out" >&2
-    exit 1
-fi
-if grep -F 'python3' "$test_root/missing-python.out" | grep -F 'apt-get install' >/dev/null; then
-    printf 'Missing Python incorrectly offered automatic Python 3 installation.\n' >&2
-    exit 1
-fi
-assert_no_toolbox_files "$missing_python_home"
-
-missing_toml_home="$test_root/missing-toml-home"
-missing_toml_bin="$test_root/missing-toml-bin"
-mkdir -p "$missing_toml_home"
-make_prerequisite_bin "$missing_toml_bin" python3
-cat > "$missing_toml_bin/python3" <<'SH'
-#!/bin/sh
-exit 1
-SH
-cat > "$missing_toml_bin/python2.7" <<'SH'
-#!/bin/sh
-case "$*" in
-    *toml*) exit 1 ;;
-    *) exit 0 ;;
-esac
-SH
-chmod 755 "$missing_toml_bin/python3" "$missing_toml_bin/python2.7"
-if HOME="$missing_toml_home" PATH="$missing_toml_bin" /bin/sh "$repository_root/install.sh" >"$test_root/missing-toml.out" 2>&1; then
-    printf 'Installer accepted Python 2.7 without pinned TOML support.\n' >&2
-    exit 1
-fi
-if ! grep -F 'Python 2.7 requires toml==0.10.2. Run: python2.7 -m pip install --user toml==0.10.2' "$test_root/missing-toml.out" >/dev/null; then
-    printf 'Missing Python 2 TOML guidance was not exact.\n' >&2
-    cat "$test_root/missing-toml.out" >&2
-    exit 1
-fi
-if grep -F 'Install missing packages?' "$test_root/missing-toml.out" >/dev/null ||
-    grep -F 'python3' "$test_root/missing-toml.out" | grep -F 'install' >/dev/null; then
-    printf 'Missing Python 2 TOML support incorrectly offered Python 3 installation.\n' >&2
-    exit 1
-fi
-assert_no_toolbox_files "$missing_toml_home"
-
-mkdir -p "$test_root/no-zsh-bin" "$test_root/no-zsh-home"
-ln -s /bin/bash "$test_root/no-zsh-bin/bash"
-ln -s /bin/cat "$test_root/no-zsh-bin/cat"
-if HOME="$test_root/no-zsh-home" PATH="$test_root/no-zsh-bin" /bin/sh "$repository_root/install.sh" >"$test_root/no-zsh.out" 2>&1; then
-    printf 'Installer accepted activation without Zsh validation.\n' >&2
-    exit 1
-fi
-if ! grep -F 'Missing required commands:' "$test_root/no-zsh.out" >/dev/null ||
-    ! grep -F 'zsh' "$test_root/no-zsh.out" >/dev/null; then
-    printf 'Missing Zsh did not fail explicitly.\n' >&2
-    exit 1
-fi
-if [ -e "$test_root/no-zsh-home/.bashrc" ] || [ -e "$test_root/no-zsh-home/.local/share/my-toolbox" ]; then
-    printf 'Missing-Zsh failure changed the target home.\n' >&2
-    exit 1
-fi
+for shell_case in bash-only zsh-only neither; do
+    shell_home="$test_root/$shell_case-home"
+    shell_bin="$test_root/$shell_case-bin"
+    mkdir -p "$shell_home"
+    case "$shell_case" in
+        bash-only) make_prerequisite_bin "$shell_bin" zsh python3 ;;
+        zsh-only) make_prerequisite_bin "$shell_bin" bash python3 ;;
+        neither) make_prerequisite_bin "$shell_bin" bash zsh python3 ;;
+    esac
+    rm -f "$shell_bin/curl" "$shell_bin/uname" "$shell_bin/mv"
+    ln -s "$test_root/bin/curl" "$shell_bin/curl"
+    ln -s "$test_root/bin/uname" "$shell_bin/uname"
+    ln -s "$test_root/bin/mv" "$shell_bin/mv"
+    if ! HOME="$shell_home" ZDOTDIR="$shell_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$shell_bin" /bin/sh "$repository_root/install.sh" >"$test_root/$shell_case.out" 2>&1; then
+        printf 'Installer rejected %s shell availability.\n' "$shell_case" >&2
+        cat "$test_root/$shell_case.out" >&2
+        exit 1
+    fi
+    [ -f "$shell_home/.local/share/my-toolbox/current.txt" ] || { printf '%s did not install toolbox.\n' "$shell_case" >&2; exit 1; }
+    [ -f "$shell_home/.local/share/my-toolbox/completions/tb.bash" ] || { printf '%s did not publish completions.\n' "$shell_case" >&2; exit 1; }
+    case "$shell_case" in
+        bash-only) [ -f "$shell_home/.bashrc" ] && [ ! -e "$shell_home/.zshrc" ] ;;
+        zsh-only) [ ! -e "$shell_home/.bashrc" ] && [ -f "$shell_home/.zshrc" ] ;;
+        neither) [ ! -e "$shell_home/.bashrc" ] && [ ! -e "$shell_home/.zshrc" ] ;;
+    esac || { printf '%s modified the wrong shell profiles.\n' "$shell_case" >&2; exit 1; }
+done
 
 mkdir -p "$test_root/home/zsh"
 printf '%s' 'bash unrelated' > "$test_root/home/.bashrc"

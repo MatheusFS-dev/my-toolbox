@@ -3,10 +3,61 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestREADMERequirementLinesMatchResolvedRepositoryCatalog(t *testing.T) {
+	catalog, err := LoadCatalogFile("../commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(content), "\n")
+	for _, command := range catalog.Commands {
+		bullet := "- `" + command.Name + "`"
+		lineIndex := -1
+		for index, line := range lines {
+			if strings.HasPrefix(line, bullet) {
+				lineIndex = index
+				break
+			}
+		}
+		if lineIndex < 0 {
+			t.Fatalf("README is missing catalog entry %s", command.Name)
+		}
+		labels := map[string]bool{}
+		for _, environment := range command.Environments {
+			capabilities, err := ResolveRequirements(command, environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, capability := range capabilities {
+				labels[capability.Label] = true
+			}
+		}
+		if len(labels) == 0 {
+			if lineIndex+1 < len(lines) && strings.HasPrefix(lines[lineIndex+1], "  Requires:") {
+				t.Fatalf("README gives %s a requirement line, want none", command.Name)
+			}
+			continue
+		}
+		if lineIndex+1 >= len(lines) || !strings.HasPrefix(lines[lineIndex+1], "  Requires:") {
+			t.Fatalf("README is missing requirement line after %s", command.Name)
+		}
+		documented := strings.ReplaceAll(lines[lineIndex+1], "`", "")
+		for label := range labels {
+			if !strings.Contains(documented, label) {
+				t.Fatalf("README requirement for %s = %q, missing %q", command.Name, documented, label)
+			}
+		}
+	}
+}
 
 func TestLoadCatalogRejectsInvalidCommands(t *testing.T) {
 	// A broken validator could expose reserved names or platform-incomplete
@@ -35,7 +86,7 @@ func TestLoadCatalogRejectsInvalidCommands(t *testing.T) {
 	}
 }
 
-func TestRepositoryCatalogPreservesV016ExecutionMetadata(t *testing.T) {
+func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 	catalog, err := LoadCatalogFile("../commands.json")
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +94,12 @@ func TestRepositoryCatalogPreservesV016ExecutionMetadata(t *testing.T) {
 	signatures := []string{}
 	for _, command := range catalog.Commands {
 		entrypoints := []string{}
+		requirements := []string{}
+		for _, environment := range []string{"linux-native", "linux-wsl", "windows"} {
+			if ids, exists := command.Requirements[environment]; exists {
+				requirements = append(requirements, environment+"="+strings.Join(ids, ","))
+			}
+		}
 		for _, platform := range supportedPlatforms {
 			if entrypoint, exists := command.Entrypoints[platform]; exists {
 				entrypoints = append(entrypoints, platform+"="+strings.Join(entrypoint, ","))
@@ -56,13 +113,14 @@ func TestRepositoryCatalogPreservesV016ExecutionMetadata(t *testing.T) {
 			strings.Join(command.Environments, ","),
 			command.Elevation,
 			strings.Join(command.DefaultArguments, ","),
+			strings.Join(requirements, ";"),
 			strings.Join(entrypoints, ";"),
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "d575a8f3cd6e00b5c2f38e6592875faba97866560c97427768e282752dccfd1f"
+	const want = "14229cddf628a051e12e73fcd394e2221bc894d780748af58bf504d6843a4e59"
 	if digest != want {
-		t.Fatalf("execution metadata digest = %s, want v0.1.6 digest %s", digest, want)
+		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
 }
 

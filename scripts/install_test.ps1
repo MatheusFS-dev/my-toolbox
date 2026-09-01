@@ -74,11 +74,10 @@ try {
             -CommandReader {
                 param([string]$Name)
                 if ($Name -in @('py', 'python')) {
-                    return [pscustomobject]@{ Source = 'fixture-python' }
+                    throw "Windows bootstrap unexpectedly probed $Name."
                 }
                 return Get-Command $Name -ErrorAction SilentlyContinue
-            } `
-            -PythonVersionProbe { param([string]$Command, [string[]]$PrefixArguments) return $true }
+            }
     }
 
     $env:LOCALAPPDATA = ''
@@ -90,8 +89,7 @@ try {
             -UserPathReader { '' } `
             -UserPathWriter { param([string]$Value) } `
             -DocumentsPathReader { '' } `
-            -CommandReader { param([string]$Name) return $null } `
-            -PythonVersionProbe { param([string]$Command, [string[]]$PrefixArguments) return $false }
+            -CommandReader { param([string]$Name) return $null }
     } catch {
         $Failure = $_.Exception.Message
     }
@@ -99,7 +97,6 @@ try {
         '[FAIL] Stage 1/7: prerequisites',
         'Missing PowerShell capabilities: Invoke-RestMethod, Invoke-WebRequest, Get-FileHash.',
         'Install Windows PowerShell 5.1 or PowerShell 7 to provide the missing capabilities.',
-        'No supported Python interpreter was found. Install Python 3.11 or newer.',
         'my-toolbox requires 64-bit Windows on x64.',
         'LOCALAPPDATA is not set to an absolute path.',
         'The current user Documents known folder could not be resolved.'
@@ -126,8 +123,7 @@ try {
             -UserPathReader { '' } `
             -UserPathWriter { param([string]$Value) } `
             -DocumentsPathReader { $NestedDocuments } `
-            -CommandReader { param([string]$Name) return [pscustomobject]@{ Source = $Name } } `
-            -PythonVersionProbe { param([string]$Command, [string[]]$PrefixArguments) return $true }
+            -CommandReader { param([string]$Name) return [pscustomobject]@{ Source = $Name } }
     } catch {
         $Failure = $_.Exception.Message
     }

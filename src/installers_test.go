@@ -21,7 +21,7 @@ func TestPluginPreflightAllowsPrecedingFreshAgentInstallation(t *testing.T) {
 	}
 }
 
-func TestPluginPreflightRejectsInstalledAgentWithoutPluginManagement(t *testing.T) {
+func TestPluginConfigurationDefersMissingPluginManagementToExecutionPreflight(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake Codex executable is a POSIX shell script")
 	}
@@ -32,9 +32,9 @@ func TestPluginPreflightRejectsInstalledAgentWithoutPluginManagement(t *testing.
 	}
 	t.Setenv("PATH", bin)
 	builtins := NewToolboxBuiltins("", "linux-amd64", "0.1.1", io.Discard)
-	_, err := builtins.SkipReason("install-superpowers-codex")
-	if err == nil || !strings.Contains(err.Error(), "plugin-management") {
-		t.Fatalf("SkipReason() error = %v", err)
+	reason, err := builtins.SkipReason("install-superpowers-codex")
+	if err != nil || reason != "" {
+		t.Fatalf("SkipReason() = %q, %v; requirement checks belong to execution preflight", reason, err)
 	}
 }
 
