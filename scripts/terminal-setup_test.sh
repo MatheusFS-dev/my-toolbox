@@ -40,6 +40,7 @@ SH
 
     ln -s "$(command -v bash)" "$fixture_root/bin/bash"
     ln -s "$(command -v dirname)" "$fixture_root/bin/dirname"
+    # shellcheck disable=SC2016 -- variables expand when the generated stub runs.
     printf '%s\n' '#!/bin/sh' 'printf "unexpected command: %s\n" "$0" >> "$COMMAND_LOG"' 'exit 91' \
         > "$fixture_root/bin/apt"
     cp "$fixture_root/bin/apt" "$fixture_root/bin/apt-get"
