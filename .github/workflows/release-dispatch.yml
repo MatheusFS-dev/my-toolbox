@@ -23,4 +23,8 @@ jobs:
             printf 'Skipping superseded commit %s; main is %s.\n' "$TOOLBOX_SHA" "$MAIN_SHA"
             exit 0
           fi
+          if gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].target_commitish' | grep -Fx "$TOOLBOX_SHA"; then
+            printf 'Commit %s already has a release; skipping automatic dispatch.\n' "$TOOLBOX_SHA"
+            exit 0
+          fi
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f toolbox_sha="$TOOLBOX_SHA"

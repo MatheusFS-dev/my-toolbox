@@ -534,8 +534,21 @@ mkdir -p "$test_root/home/zsh"
 printf '%s' 'bash unrelated' > "$test_root/home/.bashrc"
 printf '%s\n' 'zsh unrelated' > "$test_root/home/zsh/.zshrc"
 output=$(HOME="$test_root/home" ZDOTDIR="$test_root/home/zsh" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh")
+expected_banner=$(cat <<'EOF'
+███╗   ███╗██╗   ██╗    ████████╗ ██████╗  ██████╗ ██╗     ██████╗  ██████╗ ██╗  ██╗
+████╗ ████║╚██╗ ██╔╝    ╚══██╔══╝██╔═══██╗██╔═══██╗██║     ██╔══██╗██╔═══██╗╚██╗██╔╝
+██╔████╔██║ ╚████╔╝        ██║   ██║   ██║██║   ██║██║     ██████╔╝██║   ██║ ╚███╔╝
+██║╚██╔╝██║  ╚██╔╝         ██║   ██║   ██║██║   ██║██║     ██╔══██╗██║   ██║ ██╔██╗
+██║ ╚═╝ ██║   ██║          ██║   ╚██████╔╝╚██████╔╝███████╗██████╔╝╚██████╔╝██╔╝ ██╗
+╚═╝     ╚═╝   ╚═╝          ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝
+EOF
+)
+actual_banner=$(printf '%s\n' "$output" | sed -n '1,6p')
+if [ "$actual_banner" != "$expected_banner" ]; then
+    printf 'Installer output has the wrong banner.\nExpected:\n%s\nActual:\n%s\n' "$expected_banner" "$actual_banner" >&2
+    exit 1
+fi
 for text in \
-    ' __  __ __   __  _____ ___   ___  _     ____   _____  __' \
     '[INFO] Stage 1/7: prerequisites' \
     '[INFO] Stage 2/7: release lookup' \
     '[INFO] Stage 3/7: download' \

@@ -154,8 +154,19 @@ try {
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\One;;C:\Persisted\Two'
     $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
     $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
-    foreach ($Text in @(
-        ' __  __ __   __  _____ ___   ___  _     ____   _____  __',
+    $ExpectedBannerLines = @(
+        '###>   ###>##>   ##>    ########> ######>  ######> ##>     ######>  ######> ##>  ##>',
+        '####> ####|<##> ##+]    <==##+==]##+===##>##+===##>##|     ##+==##>##+===##><##>##+]',
+        '##+####+##| <####+]        ##|   ##|   ##|##|   ##|##|     ######+]##|   ##| <###+]',
+        '##|<##+]##|  <##+]         ##|   ##|   ##|##|   ##|##|     ##+==##>##|   ##| ##+##>',
+        '##| <=] ##|   ##|          ##|   <######+]<######+]#######>######+]<######+]##+] ##>',
+        '<=]     <=]   <=]          <=]    <=====]  <=====] <======]<=====]  <=====] <=]  <=]'
+    ) | ForEach-Object {
+        $_.Replace('#', [char]0x2588).Replace('>', [char]0x2557).Replace('<', [char]0x255A).
+            Replace('|', [char]0x2551).Replace('+', [char]0x2554).Replace(']', [char]0x255D).
+            Replace('=', [char]0x2550)
+    }
+    foreach ($Text in $ExpectedBannerLines + @(
         '[INFO] Stage 1/7: prerequisites',
         '[INFO] Stage 2/7: release lookup',
         '[INFO] Stage 3/7: download',
