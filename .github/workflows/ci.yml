@@ -52,7 +52,7 @@ jobs:
         run: |
           $PowerShellFiles = @(
             Get-ChildItem packages/scripts -Recurse -Filter *.ps1
-            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1
+            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1, scripts/terminal-hotkey_test.ps1
           )
           $PowerShellFiles | ForEach-Object {
             $Errors = $null
@@ -63,10 +63,11 @@ jobs:
           }
           & ./scripts/completion_test.ps1
           & ./scripts/install_test.ps1
+          & ./scripts/terminal-hotkey_test.ps1
       - if: runner.os == 'Windows'
         shell: powershell
         run: |
-          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1')) {
+          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1', 'scripts/terminal-hotkey_test.ps1')) {
             $Errors = $null
             [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $Path), [ref]$null, [ref]$Errors)
             if ($Errors.Count -gt 0) {
@@ -75,6 +76,7 @@ jobs:
           }
           & ./scripts/completion_test.ps1
           & ./scripts/install_test.ps1
+          & ./scripts/terminal-hotkey_test.ps1
 
   python2-syntax:
     runs-on: ubuntu-latest

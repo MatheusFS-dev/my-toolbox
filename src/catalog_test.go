@@ -199,7 +199,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "14229cddf628a051e12e73fcd394e2221bc894d780748af58bf504d6843a4e59"
+	const want = "cbc1ee40401c802cbbdc636f8133bddac561c10f3d2fba9bee0c7a5d0a381fb8"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -263,6 +263,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"setup-alacritty":                 "Build an Alacritty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Alacritty configuration is replaced without a backup.",
 		"setup-kitty":                     "Build a Kitty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Kitty configuration is backed up before replacement.",
 		"setup-windows":                   "Set up Windows Terminal, PowerShell 7, selected fonts, and terminal tools with WinGet. Backs up managed configuration when possible and reports each result.",
+		"set-terminal-hotkey":             "Make Ctrl+Alt+T open the Windows default terminal application for the current user. Persists across sign-ins and supports `-Undo`.",
 		"setup-wsl":                       "Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. Uses sudo for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.",
 		"set-vscode-wsl-cwd":              "Open a chosen WSL directory in VS Code and use it as the working directory of a managed terminal profile. Preserves JSONC comments, backs up changed settings, and supports `-Undo`.",
 		"set-default-cwd":                 "Make Bash and Zsh start in a chosen WSL directory when opened from home. Preserves unrelated shell configuration and backs up changed files.",
@@ -272,6 +273,9 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"create-env-alias":                "Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
 		"create-project-template":         "Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.",
+	}
+	if len(catalog.Commands) != len(wantDescriptions) {
+		t.Fatalf("catalog command count = %d, want %d", len(catalog.Commands), len(wantDescriptions))
 	}
 	gotCategories := []string{}
 	seenCategories := map[string]bool{}
@@ -320,7 +324,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-codex", "install-claude", "install-antigravity", "install-uv", "install-gh",
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
-		"setup-alacritty", "setup-kitty", "setup-windows", "setup-wsl", "set-vscode-wsl-cwd",
+		"setup-alacritty", "setup-kitty", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
 		"set-default-cwd", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo",
 		"create-env-alias", "bootstrap-python-from-venv", "create-project-template",
 	}

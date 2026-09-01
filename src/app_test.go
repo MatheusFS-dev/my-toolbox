@@ -133,7 +133,7 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 		},
 		{
 			environment: "windows",
-			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
+			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
 		},
 	}
 	for _, test := range tests {

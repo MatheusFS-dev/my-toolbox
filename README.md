@@ -162,6 +162,8 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Bash; sudo; Debian or Ubuntu; apt-get; `chown`; `cut`; `dirname`; `getent`; `install`.
 - `setup-windows` (Windows): Set up Windows Terminal, PowerShell 7, selected fonts, and terminal tools with WinGet. Backs up managed configuration when possible and reports each result.
   Requires: Windows PowerShell 5.1 or PowerShell 7; Windows 10 build 17763+ or Windows 11; WinGet.
+- `set-terminal-hotkey` (Windows): Make `Ctrl+Alt+T` open the Windows default terminal application for the current user. The Start Menu shortcut persists across sign-ins and reboots; run with `-Undo` to remove it.
+  Requires: Windows PowerShell 5.1 or PowerShell 7.
 - `setup-wsl` (WSL): Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. Uses `sudo` for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.
   Requires: Bash; sudo; WSL Ubuntu 22.04 or 24.04; apt-get; `cut`; `dirname`; `env`; `getent`; `grep`; `sort`.
 - `set-vscode-wsl-cwd` (Windows): Open a chosen WSL directory in VS Code and use it as the working directory of a managed terminal profile. Preserves JSONC comments, backs up changed settings, and supports `-Undo`.
