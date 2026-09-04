@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -347,7 +346,7 @@ func TestMonitorDashboardShowsConfigurationAndGraphicalResources(t *testing.T) {
 	leak["warmup_seconds"] = 420
 	dashboard := newMonitorDashboard([]string{"/work/job.py"}, monitorInterpreter{Path: "/venv/bin/python3", Environment: "venv"}, config)
 	dashboard.Width = 120
-	dashboard.Height = 42
+	dashboard.Height = 50
 	dashboard.apply(monitorEvent{Type: "run_created", Script: "/work/job.py", RunDirectory: "/work/runs/one"})
 	dashboard.apply(monitorEvent{Type: "attempt_started", PID: 42, Attempt: 1})
 	dashboard.apply(monitorEvent{Type: "resource_sample", Elapsed: 30, CPUPercent: 25, RAMBytes: 453_500_000, RAMMiB: 432.5, SystemRAMTotalBytes: 32_000_000_000, GPUPercent: 50.0, GPUMemoryMiB: 256, GPUMemoryTotalMiB: 8192, GPUScope: "system-wide"})
@@ -383,82 +382,76 @@ func TestMonitorDashboardShowsConfigurationAndGraphicalResources(t *testing.T) {
 	}
 }
 
-func TestMonitorRobotDancesInsideRestartPolicyPanel(t *testing.T) {
-	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
-	first := strings.Join(sanitizeMonitorLines(dashboard.restartPanel(), -1), "\n")
-	if strings.Contains(first, "MONITOR BOT") {
-		t.Fatalf("restart panel still labels the pet:\n%s", first)
-	}
-	if monitorPetFrameInterval < 600*time.Millisecond {
-		t.Fatalf("robot animation interval = %s, want a slower dance", monitorPetFrameInterval)
-	}
-	if dashboard.Init() == nil {
-		t.Fatal("dashboard did not schedule the robot animation")
-	}
-	firstWidth, firstHeight := lipgloss.Width(first), lipgloss.Height(first)
-	frames := map[string]bool{first: true}
-	for index := 1; index < 8; index++ {
-		model, command := dashboard.Update(monitorPetTick{})
-		if command == nil {
-			t.Fatal("robot animation did not schedule its next frame")
+func TestMonitorCatAnimatesInsideRestartPolicyPanel(t *testing.T) {
+	for animation, bounds := range [][2]int{{0, 4}, {4, 8}, {8, 13}} {
+		dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+		first := dashboard.restartPanel()
+		if dashboard.petTickInterval() != 2*time.Second || dashboard.Init() == nil {
+			t.Fatal("resting cat must schedule an animation after two seconds")
 		}
-		dashboard = model.(*monitorDashboard)
-		frame := strings.Join(sanitizeMonitorLines(dashboard.restartPanel(), -1), "\n")
-		frames[frame] = true
-		if lipgloss.Width(frame) != firstWidth || lipgloss.Height(frame) != firstHeight {
-			t.Fatalf("robot dance changed panel content geometry from %dx%d to %dx%d", firstWidth, firstHeight, lipgloss.Width(frame), lipgloss.Height(frame))
+		for frame := bounds[0]; frame < bounds[1]; frame++ {
+			_, command := dashboard.Update(monitorPetTick{animation: animation})
+			if command == nil || dashboard.petFrame != frame {
+				t.Fatalf("animation %d: frame = %d, want %d with next tick", animation, dashboard.petFrame, frame)
+			}
+			if interval := dashboard.petTickInterval(); interval < 500*time.Millisecond || interval > 2*time.Second {
+				t.Fatalf("active frame interval = %s, want 500ms..2s", interval)
+			}
+			panel := dashboard.restartPanel()
+			if lipgloss.Width(panel) != lipgloss.Width(first) || lipgloss.Height(panel) != lipgloss.Height(first) {
+				t.Fatal("cat animation changed panel geometry")
+			}
 		}
-	}
-	if len(frames) != 8 {
-		t.Fatalf("robot dance exposed %d distinct poses, want 8", len(frames))
+		_, command := dashboard.Update(monitorPetTick{})
+		if command == nil || dashboard.restartPanel() != first || dashboard.petTickInterval() != 2*time.Second {
+			t.Fatal("completed animation must rest for two seconds")
+		}
+		next := (animation + 1) % 3
+		dashboard.Update(monitorPetTick{animation: next})
+		if dashboard.petFrame != next*4 {
+			t.Fatal("next cycle did not use the newly selected animation")
+		}
 	}
 }
 
-func TestMonitorRobotKeepsACompactConnectedSilhouette(t *testing.T) {
-	if len(monitorRobotFrames) != 8 {
-		t.Fatalf("robot dance has %d frames, want 8", len(monitorRobotFrames))
+func TestMonitorCatFrameTimingVariesWithinRequestedRange(t *testing.T) {
+	dashboard := &monitorDashboard{petEnd: 4}
+	intervals := make(map[time.Duration]bool)
+	for range 100 {
+		interval := dashboard.petTickInterval()
+		if interval < 500*time.Millisecond || interval > 2*time.Second {
+			t.Fatalf("frame interval = %s, want 500ms..2s", interval)
+		}
+		intervals[interval] = true
 	}
-	var head []string
-	anchor := -1
-	for index, frame := range monitorRobotFrames {
-		lines := strings.Split(frame, "\n")
-		if len(lines) != 7 {
-			t.Fatalf("robot frame %d has %d lines, want 7:\n%s", index, len(lines), frame)
-		}
-		if index == 0 {
-			head = append([]string(nil), lines[:3]...)
-		} else if !slices.Equal(lines[:3], head) {
-			t.Fatalf("robot frame %d moved or disconnected its head:\n%s", index, frame)
-		}
+	if len(intervals) < 2 {
+		t.Fatal("frame timing did not vary")
+	}
+}
 
-		neckByte := strings.Index(lines[2], "┬")
-		bodyByte := strings.Index(lines[3], "▣")
-		if neckByte < 0 || bodyByte < 0 {
-			t.Fatalf("robot frame %d is missing its neck or body:\n%s", index, frame)
+func TestMonitorCatFramesMatchRequestedSequences(t *testing.T) {
+	neutral := "      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)"
+	open := strings.Replace(neutral, "_　_", "o　o", 1)
+	tailMiddle := strings.Replace(neutral, "＼二)", " ＼二＿)", 1)
+	tailFar := strings.Replace(neutral, "＼二)", "  ＼＿＿二)", 1)
+	earsLifting := strings.Replace(neutral, "／＞　 フ", "／〉　 /〉", 1)
+	earsPerked := strings.Replace(neutral, "／＞　 フ", "/∧　 /∧", 1)
+	want := []string{
+		neutral, open, neutral, open,
+		neutral, tailMiddle, tailFar, tailMiddle,
+		neutral, earsLifting, earsPerked, earsLifting, neutral,
+	}
+	if len(monitorCatFrames) != len(want) {
+		t.Fatalf("cat has %d frames, want %d", len(monitorCatFrames), len(want))
+	}
+	for index, expected := range want {
+		if monitorCatFrames[index] != expected {
+			t.Fatalf("cat frame %d = %q, want %q", index, monitorCatFrames[index], expected)
 		}
-		neck := lipgloss.Width(lines[2][:neckByte])
-		body := lipgloss.Width(lines[3][:bodyByte])
-		if neck != body {
-			t.Fatalf("robot frame %d has neck at %d and body at %d:\n%s", index, neck, body, frame)
-		}
-		if anchor < 0 {
-			anchor = neck
-		} else if neck != anchor {
-			t.Fatalf("robot frame %d shifted its center from %d to %d:\n%s", index, anchor, neck, frame)
-		}
-
-		shoulders := strings.TrimRight(lines[3], " ")
-		first := len(lines[3]) - len(strings.TrimLeft(lines[3], " "))
-		last := lipgloss.Width(shoulders) - 1
-		if first < body-4 || last > body+4 {
-			t.Fatalf("robot frame %d has oversized arms spanning columns %d..%d around body %d:\n%s", index, first, last, body, frame)
-		}
-
-		legRunes := []rune(lines[5])
-		leftLegConnected := legRunes[6] == '╱' || legRunes[7] == '│'
-		rightLegConnected := (len(legRunes) > 10 && legRunes[10] == '╲') || legRunes[9] == '│'
-		if !leftLegConnected || !rightLegConnected {
-			t.Fatalf("robot frame %d has a disconnected leg pose:\n%s", index, frame)
+		for lineIndex, line := range strings.Split(padMonitorPetFrame(monitorCatFrames[index]), "\n") {
+			if width := lipgloss.Width(line); width != 22 {
+				t.Fatalf("frame %d line %d width = %d, want 22", index, lineIndex, width)
+			}
 		}
 	}
 }

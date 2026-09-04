@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"path/filepath"
 	"strings"
 	"time"
@@ -73,19 +74,28 @@ type monitorNotificationState struct {
 	Enabled bool
 }
 
-type monitorPetTick struct{}
+type monitorPetTick struct{ animation int }
 
-const monitorPetFrameInterval = 700 * time.Millisecond
+const monitorPetFrameInterval = 500 * time.Millisecond
 
-var monitorRobotFrames = []string{
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ──┤▣├──\n       │ │\n      ╱   ╲\n     ┴     ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ╲─┤▣├──\n       │ │\n      ╱  │\n     ┴   ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ╲─┤▣├─╱\n       │ │\n       │ │\n       ┴ ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ──┤▣├─╱\n       │ │\n       │  ╲\n       ┴   ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ─╲┤▣├╱─\n       │ │\n      ╱   ╲\n     ┴     ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ╱─┤▣├──\n       │ │\n       │  ╲\n       ┴   ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ╱─┤▣├─╲\n       │ │\n       │ │\n       ┴ ┴",
-	"     ╭─────╮\n     │ ◉ ◉ │\n     ╰──┬──╯\n     ──┤▣├─╲\n       │ │\n      ╱  │\n     ┴   ┴",
+// Frame ranges for the independently selected eye, tail, and ear animations.
+var monitorCatFrames = []string{
+	// Eyes: 1 → 2 → 3 → 2.
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／＞　 フ\n      | 　o　o|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／＞　 フ\n      | 　o　o|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	// Tail: 1 → 2 → 3 → 2.
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n ＼二＿)",
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n  ＼＿＿二)",
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n ＼二＿)",
+	// Ears: 1 → 2 → 3 → 2 → 1.
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／〉　 /〉\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      /∧　 /∧\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／〉　 /〉\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
+	"      ／＞　 フ\n      | 　_　_|\n    ／` ミ＿xノ\n   /　　　　 |\n  /　 ヽ　　 ﾉ\n  │　　|　|　|\n／￣|　　 |　|\n(￣ヽ＿_ヽ_)__)\n＼二)",
 }
 
 type monitorDashboard struct {
@@ -109,6 +119,7 @@ type monitorDashboard struct {
 	emailSuccess  bool
 	emailSeen     bool
 	petFrame      int
+	petEnd        int
 	viewport      viewport.Model
 }
 
@@ -158,10 +169,21 @@ func monitorDashboardSettingsFromConfig(config map[string]any) monitorDashboardS
 	}
 }
 
-func (dashboard *monitorDashboard) Init() tea.Cmd { return monitorPetTickCommand() }
+func (dashboard *monitorDashboard) Init() tea.Cmd {
+	return monitorPetTickCommand(dashboard.petTickInterval())
+}
 
-func monitorPetTickCommand() tea.Cmd {
-	return tea.Tick(monitorPetFrameInterval, func(time.Time) tea.Msg { return monitorPetTick{} })
+func (dashboard *monitorDashboard) petTickInterval() time.Duration {
+	if dashboard.petEnd == 0 {
+		return 2 * time.Second
+	}
+	return monitorPetFrameInterval + time.Duration(rand.Int64N(int64(2*time.Second-monitorPetFrameInterval)+1))
+}
+
+func monitorPetTickCommand(interval time.Duration) tea.Cmd {
+	return tea.Tick(interval, func(time.Time) tea.Msg {
+		return monitorPetTick{animation: rand.IntN(3)}
+	})
 }
 
 func (dashboard *monitorDashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -181,9 +203,17 @@ func (dashboard *monitorDashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 			return dashboard, nil
 		}
 	case monitorPetTick:
-		dashboard.petFrame = (dashboard.petFrame + 1) % len(monitorRobotFrames)
+		if dashboard.petEnd == 0 {
+			bounds := [3][2]int{{0, 4}, {4, 8}, {8, 13}}[message.animation]
+			dashboard.petFrame, dashboard.petEnd = bounds[0], bounds[1]
+		} else {
+			dashboard.petFrame++
+			if dashboard.petFrame == dashboard.petEnd {
+				dashboard.petFrame, dashboard.petEnd = 0, 0
+			}
+		}
 		dashboard.rebuildViewport()
-		return dashboard, monitorPetTickCommand()
+		return dashboard, monitorPetTickCommand(dashboard.petTickInterval())
 	case monitorEvent:
 		dashboard.apply(message)
 		if message.Type == "final_outcome" && (message.Outcome != "success" || message.QueueIndex >= message.QueueTotal) {
@@ -411,12 +441,12 @@ func (dashboard *monitorDashboard) restartPanel(widths ...int) string {
 		dashboard.Current.CrashCount, dashboard.Settings.CrashRetries, dashboard.Settings.RapidCrashSeconds, dashboard.Settings.BaseDelaySeconds,
 		dashboard.Settings.BackoffMultiplier, dashboard.Settings.MaxDelaySeconds, automatic,
 		dashboard.Current.CrashCount, dashboard.Current.ScheduledCount, dashboard.Current.MemoryCount, latest)
-	robot := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Width(width).Align(lipgloss.Center).Render(padMonitorRobotFrame(monitorRobotFrames[dashboard.petFrame%len(monitorRobotFrames)]))
-	return details + "\n\n" + robot
+	cat := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Width(width).Align(lipgloss.Center).Render(padMonitorPetFrame(monitorCatFrames[dashboard.petFrame%len(monitorCatFrames)]))
+	return details + "\n\n" + cat
 }
 
-func padMonitorRobotFrame(frame string) string {
-	const canvasWidth = 17
+func padMonitorPetFrame(frame string) string {
+	const canvasWidth = 22
 	lines := strings.Split(frame, "\n")
 	for index, line := range lines {
 		lines[index] = line + strings.Repeat(" ", max(0, canvasWidth-lipgloss.Width(line)))
