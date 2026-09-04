@@ -28,6 +28,7 @@
 - [Installation](#installation)
 - [Usage](#usage)
 - [Tool Catalog](#tool-catalog)
+- [Monitor](#monitor)
 - [Uninstallation](#uninstallation)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -164,7 +165,7 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Windows PowerShell 5.1 or PowerShell 7; Windows 10 build 17763+ or Windows 11; WinGet.
 - `set-terminal-hotkey` (Windows): Make `Ctrl+Alt+T` open the Windows default terminal application for the current user. The Start Menu shortcut persists across sign-ins and reboots; run with `-Undo` to remove it.
   Requires: Windows PowerShell 5.1 or PowerShell 7.
-- `setup-wsl` (WSL): Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. Uses `sudo` for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.
+- `setup-wsl` (WSL): Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. It can also configure Shift+Enter to insert line breaks in Windows Terminal and VS Code terminals. Uses `sudo` for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.
   Requires: Bash; sudo; WSL Ubuntu 22.04 or 24.04; apt-get; `cut`; `dirname`; `env`; `getent`; `grep`; `sort`.
 - `set-vscode-wsl-cwd` (Windows): Open a chosen WSL directory in VS Code and use it as the working directory of a managed terminal profile. Preserves JSONC comments, backs up changed settings, and supports `-Undo`.
   Requires: Windows PowerShell 5.1 or PowerShell 7; WSL; VS Code with WSL support.
@@ -198,6 +199,31 @@ On Python 3.9 and 3.10, project TOML parsing uses bundled Tomli 2.2.1 and requir
 
 Copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments. Alacritty and Kitty setup skip their optional file-manager integration when Nautilus is unavailable, and optional-step failures do not stop the remaining setup.
 
+## Monitor
+
+Install Monitor from `tb list` or directly:
+
+```sh
+tb install-monitor
+```
+
+Monitor supervises one or more non-interactive Python scripts on Linux or WSL. It validates the targets, lets you review the queue and Python 3 interpreter, assigns a shared or per-script run title, and then executes the scripts sequentially:
+
+```sh
+monitor script.py
+monitor first.py second.py
+```
+
+During a run, the terminal dashboard shows queue progress, elapsed time, recent output, resource usage, restart activity, and email-delivery results. Monitor samples CPU and process-tree memory, detects NVIDIA GPU usage when available, writes logs and optional charts below each script's `runs/monitor_logs/` directory, and stops the active target and remaining queue when you press Ctrl+C.
+
+Runtime safeguards include configurable crash retries with backoff, rapid-crash detection for possible code errors, memory-leak detection, and either memory-aware or time-scheduled restarts. Email notifications can report heartbeats, recovery, scheduled restarts, final failures, completion, possible leaks, and possible code errors. SMTP credentials and defaults are configured interactively and stored with current-user-only permissions under `~/.monitor`:
+
+```sh
+monitor config
+```
+
+Before launch, choose **Edit this run** to override the interpreter, sampling, restart, notification, report, and viewer settings without changing the saved defaults. Run `monitor --help` for the command summary and `monitor --version` for the installed version.
+
 ## Uninstallation
 
 Run `tb uninstall` and confirm removal. The command removes the toolbox wrapper and all installed toolbox versions. On Windows, it also removes each exact managed wrapper-directory entry from the user `PATH` while preserving unrelated entries.
@@ -210,11 +236,15 @@ Development and release builds require Go 1.25.8, as declared in `go.mod`, and P
 
 ```sh
 go test ./...
+python3 -m pip install -r packages/monitor_runtime/requirements.txt
+PYTHONPATH=packages/monitor_runtime python3 -m unittest discover -s packages/monitor_runtime/tests -v
 python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
 python3 -m unittest discover -s packages/others/tests -v
 sh scripts/install_test.sh
 bash scripts/terminal-setup_test.sh
 ```
+
+CI additionally validates release/version scripts, shell completion, PowerShell 5.1 and 7 installers, the Windows terminal hotkey, WSL Shift+Enter bindings, shell syntax, ShellCheck, race detection, and cross-platform builds.
 
 Create release archives by passing a canonical three-part version and an output directory:
 
