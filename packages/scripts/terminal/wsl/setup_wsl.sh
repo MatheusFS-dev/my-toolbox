@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULES_DIR="$SCRIPT_DIR/modules"
 
 FEATURES=(
-    zsh rust zellij starship zellij_copy path word_navigation zi eza
+    zsh rust zellij starship zellij_copy path word_navigation shift_enter zi eza
     fzf_tab extract sudo_shortcut git_wrapper update_alias venv default_shell
 )
 
@@ -17,6 +17,7 @@ declare -gA FEATURE_LABELS=(
     [zellij_copy]='Zellij OSC52 clipboard behavior'
     [path]='user-local PATH entries'
     [word_navigation]='word navigation bindings'
+    [shift_enter]='Shift+Enter line breaks in Windows Terminal and VS Code'
     [zi]='Zi plugin manager'
     [eza]='eza and its Zi integration'
     [fzf_tab]='fzf-tab completion'
@@ -52,6 +53,7 @@ Options:
   --skip-zellij-copy        Skip Zellij clipboard setup
   --skip-path               Skip PATH configuration
   --skip-word-navigation    Skip word navigation bindings
+  --skip-shift-enter        Skip Windows Terminal and VS Code Shift+Enter bindings
   --skip-zi                 Skip Zi and eza integration
   --skip-eza                Skip eza
   --skip-fzf-tab            Skip fzf-tab
@@ -104,6 +106,7 @@ parse_args() {
             --skip-zellij-copy) SKIP[zellij_copy]=true ;;
             --skip-path) SKIP[path]=true ;;
             --skip-word-navigation) SKIP[word_navigation]=true ;;
+            --skip-shift-enter) SKIP[shift_enter]=true ;;
             --skip-zi) SKIP[zi]=true ;;
             --skip-eza) SKIP[eza]=true ;;
             --skip-fzf-tab) SKIP[fzf_tab]=true ;;
@@ -268,6 +271,7 @@ run_feature() {
         zellij_copy) run_as_target bash "$MODULES_DIR/configure_zellij_copy.sh" ;;
         path) run_as_target bash "$MODULES_DIR/configure_path.sh" ;;
         word_navigation) run_as_target bash "$MODULES_DIR/configure_word_navigation.sh" ;;
+        shift_enter) run_as_target bash "$MODULES_DIR/configure_shift_enter.sh" ;;
         zi) run_as_target bash "$MODULES_DIR/install_zi.sh" ;;
         eza) run_as_target bash "$MODULES_DIR/install_eza.sh" "$EZA_VIEW" ;;
         fzf_tab) run_as_target bash "$MODULES_DIR/install_fzf_tab.sh" ;;

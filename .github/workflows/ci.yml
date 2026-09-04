@@ -39,11 +39,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - if: runner.os == 'Linux'
+        run: python -m pip install -r packages/monitor_runtime/requirements.txt
       - run: go test ./...
       - run: python -m unittest discover -s packages/agent-workspace-template/source/tests -v
       - if: runner.os == 'Linux'
         run: python -m unittest discover -s packages/others/tests -v
+      - if: runner.os == 'Linux'
+        env:
+          PYTHONPATH: packages/monitor_runtime
+        run: python -m unittest discover -s packages/monitor_runtime/tests -v
       - run: python -m compileall -q packages/others
+      - run: python -m compileall -q packages/monitor_runtime/monitor_runtime packages/monitor_runtime/tests
+      - if: runner.os == 'Linux' && runner.arch == 'X64' && matrix.python-version == '3.14'
+        run: go test -race ./src
       - run: go build -o "${{ runner.temp }}/tb" ./src
       - if: runner.os == 'Linux'
         run: find packages/scripts -type f -name '*.sh' -exec bash -n {} +
@@ -52,7 +61,7 @@ jobs:
         run: |
           $PowerShellFiles = @(
             Get-ChildItem packages/scripts -Recurse -Filter *.ps1
-            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1, scripts/terminal-hotkey_test.ps1
+            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1, scripts/terminal-hotkey_test.ps1, scripts/wsl-shift-enter_test.ps1
           )
           $PowerShellFiles | ForEach-Object {
             $Errors = $null
@@ -64,10 +73,11 @@ jobs:
           & ./scripts/completion_test.ps1
           & ./scripts/install_test.ps1
           & ./scripts/terminal-hotkey_test.ps1
+          & ./scripts/wsl-shift-enter_test.ps1
       - if: runner.os == 'Windows'
         shell: powershell
         run: |
-          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1', 'scripts/terminal-hotkey_test.ps1')) {
+          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1', 'scripts/terminal-hotkey_test.ps1', 'scripts/wsl-shift-enter_test.ps1')) {
             $Errors = $null
             [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $Path), [ref]$null, [ref]$Errors)
             if ($Errors.Count -gt 0) {
@@ -77,6 +87,7 @@ jobs:
           & ./scripts/completion_test.ps1
           & ./scripts/install_test.ps1
           & ./scripts/terminal-hotkey_test.ps1
+          & ./scripts/wsl-shift-enter_test.ps1
 
   python2-syntax:
     runs-on: ubuntu-latest

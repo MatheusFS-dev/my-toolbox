@@ -121,6 +121,8 @@ func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
 		return builtins.runOfficialInstaller("https://astral.sh/uv/install.sh", "https://astral.sh/uv/install.ps1", []string{"UV_NO_MODIFY_PATH=1"})
 	case "install-gh":
 		return builtins.installGH()
+	case "install-monitor":
+		return builtins.installMonitor()
 	case "install-superpowers-codex":
 		return runAgentPlugin("codex", []string{"plugin", "add", "superpowers@openai-curated"}, builtins.platform, builtins.output)
 	case "install-superpowers-claude":

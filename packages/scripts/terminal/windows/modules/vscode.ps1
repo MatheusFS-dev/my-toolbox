@@ -121,7 +121,8 @@ function Set-VSCodeShiftEnterBinding {
             }
         }
         if ($matching) {
-            $updated = $text.Remove($matching.Start, $matching.Length).Insert($matching.Start, $binding.TrimEnd("`r", "`n"))
+            $replacement = $binding.TrimStart("`r", "`n", ' ', "`t").TrimEnd("`r", "`n")
+            $updated = $text.Remove($matching.Start, $matching.Length).Insert($matching.Start, $replacement)
         }
         else {
             $newline = if ($text -match "`r`n") { "`r`n" } else { "`n" }

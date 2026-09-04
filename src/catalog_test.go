@@ -199,7 +199,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "cbc1ee40401c802cbbdc636f8133bddac561c10f3d2fba9bee0c7a5d0a381fb8"
+	const want = "4c4015c7e173649f7e450c2b5e258ca20b634efb3bd019879d1ae91d1668f955"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -253,6 +253,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"install-antigravity":             "Install Antigravity for the current user on Linux or Windows. Skips installation when `agy` is already available.",
 		"install-uv":                      "Install uv for the current user on Linux or Windows without changing shell PATH configuration. Skips installation when `uv` is already available.",
 		"install-gh":                      "Download, verify, and install the latest GitHub CLI for the current user. Shows PATH guidance when needed.",
+		"install-monitor":                 "Install or repair Monitor for the current Linux or WSL user with an isolated supervisor runtime.",
 		"install-superpowers-codex":       "Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-claude":      "Add the Superpowers plugin to Claude Code for the current user. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-antigravity": "Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
@@ -325,7 +326,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
-		"set-default-cwd", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo",
+		"set-default-cwd", "install-monitor", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo",
 		"create-env-alias", "bootstrap-python-from-venv", "create-project-template",
 	}
 	if len(catalog.Commands) != len(want) {

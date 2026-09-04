@@ -173,6 +173,11 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 
 ### System Utilities
 
+- `install-monitor` (Linux or WSL): Install or repair Monitor for the current Linux or WSL user with an isolated supervisor runtime.
+  Requires: Python 3.9+.
+
+  Run `monitor <script.py> [more.py ...]` after installation. Monitor keeps private state in `~/.monitor`, executes targets with the selected Python 3 interpreter, and writes run artifacts below each script's `runs/monitor_logs/` directory. Use `monitor config`, `monitor --help`, and `monitor --version` for configuration and command details.
+
 - `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
   Requires: Bash; sudo; Python 3; GRUB configuration files; GRUB utilities; `awk`; `cat`; `cp`; `date`; `grep`.
 - `setup-venv` (Linux or WSL): Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.

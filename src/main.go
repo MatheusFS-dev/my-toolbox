@@ -23,6 +23,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "__monitor" {
+		os.Exit(runMonitorCLI(root, version, os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	catalog, err := LoadCatalogFile(filepath.Join(root, "commands.json"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

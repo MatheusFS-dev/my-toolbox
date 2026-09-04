@@ -88,4 +88,40 @@ for terminal_name in alacritty kitty; do
     assert_missing_nautilus_is_skipped "$terminal_name"
 done
 
-printf '%s\n' 'Terminal setup Nautilus checks passed.'
+assert_wsl_shift_enter_selection() {
+    local output normalized_setup
+    normalized_setup="$test_root/setup_wsl.sh"
+    tr -d '\r' < "$repository_root/packages/scripts/terminal/wsl/setup_wsl.sh" > "$normalized_setup"
+    output="$({
+        # shellcheck source=/dev/null
+        source "$normalized_setup"
+        reset_options
+        parse_args --yes --skip-shift-enter
+        select_features
+        [[ "${SELECTED[shift_enter]}" == false ]]
+
+        reset_options
+        parse_args --yes
+        select_features
+        [[ "${SELECTED[shift_enter]}" == true ]]
+
+        run_as_target() {
+            # shellcheck disable=SC2317
+            printf '%s\n' "$*"
+        }
+        run_feature shift_enter
+    } 2>&1)" || {
+        printf '%s\n' 'WSL Shift+Enter selection checks failed.' >&2
+        printf '%s\n' "$output" >&2
+        exit 1
+    }
+    if ! grep -F 'configure_shift_enter.sh' <<< "$output" >/dev/null; then
+        printf '%s\n' 'WSL setup did not dispatch the Shift+Enter configurator.' >&2
+        printf '%s\n' "$output" >&2
+        exit 1
+    fi
+}
+
+assert_wsl_shift_enter_selection
+
+printf '%s\n' 'Terminal setup checks passed.'
