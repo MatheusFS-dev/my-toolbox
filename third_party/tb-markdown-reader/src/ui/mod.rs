@@ -1,0 +1,221 @@
+pub mod config_popup;
+pub mod copy_menu;
+pub mod doc_search_bar;
+pub mod editor;
+pub mod file_tree;
+pub mod goto_line_bar;
+pub mod help;
+pub mod hybrid_editor;
+pub mod layout;
+pub mod link_picker;
+pub mod markdown_view;
+pub mod mermaid_modal;
+pub mod outline_picker;
+pub mod search_modal;
+pub mod status_bar;
+pub mod tab_bar;
+pub mod tab_picker;
+pub mod table_modal;
+pub mod table_render;
+pub mod tabs;
+
+use crate::app::{App, Focus};
+use crate::config::TreePosition;
+use crate::theme::Spacing;
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout},
+    style::Style,
+    widgets::Block,
+};
+
+/// Render the full application UI for one frame.
+#[allow(clippy::too_many_lines)]
+pub fn draw(f: &mut Frame, app: &mut App) {
+    let area = f.area();
+
+    // Paint every cell with the theme background before any widget renders.
+    // Without this, cells not covered by a widget keep the terminal's default
+    // background, making light themes unreadable on dark terminals.
+    f.render_widget(
+        Block::default().style(Style::default().bg(app.palette.background)),
+        area,
+    );
+
+    // Clear stale rects at the start of each draw so hit-tests against the
+    // previous frame's layout never fire.
+    app.tree_area_rect = None;
+    app.viewer_area_rect = None;
+    app.tab_bar_rects.clear();
+    app.tab_close_rects.clear();
+    app.tab_picker_rects.clear();
+    app.search_result_rects.clear();
+
+    // The search modal is a full-screen overlay rendered after all other panels,
+    // so it gets no dedicated layout slot.  The outer layout has only two rows:
+    // the main content area and the status bar.
+    let outer_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Spacing::Xs.into()])
+        .split(area);
+
+    let has_tabs = !app.tabs.is_empty();
+    let tab_bar_height: u16 = u16::from(has_tabs);
+
+    let viewer_area;
+
+    if app.tree_hidden {
+        // No tree panel — tab bar spans the full content width.
+        let content_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(tab_bar_height), Constraint::Min(1)])
+            .split(outer_chunks[0]);
+
+        if has_tabs {
+            tab_bar::draw(f, app, content_chunks[0]);
+        }
+
+        viewer_area = content_chunks[1];
+        app.viewer_area_rect = Some(viewer_area);
+
+        // Hybrid mode draws the formatted viewer (not the fullscreen editor).
+        if app.focus != Focus::HybridEditor
+            && app.tabs.active_tab().is_some_and(|t| t.editor.is_some())
+        {
+            editor::draw(f, app, viewer_area);
+        } else {
+            markdown_view::draw(f, app, viewer_area, is_viewer_focused(app.focus));
+        }
+    } else {
+        let (first_pct, second_pct) = match app.tree_position {
+            TreePosition::Left => (app.tree_width_pct, 100 - app.tree_width_pct),
+            TreePosition::Right => (100 - app.tree_width_pct, app.tree_width_pct),
+        };
+
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(first_pct),
+                Constraint::Percentage(second_pct),
+            ])
+            .split(outer_chunks[0]);
+
+        let (tree_idx, viewer_idx) = match app.tree_position {
+            TreePosition::Left => (0, 1),
+            TreePosition::Right => (1, 0),
+        };
+
+        let tree_area = main_chunks[tree_idx];
+        let viewer_col = main_chunks[viewer_idx];
+
+        file_tree::draw(f, app, tree_area, app.focus == Focus::Tree);
+        app.tree_area_rect = Some(tree_area);
+
+        // Tab bar sits above the viewer within the viewer column.
+        let viewer_col_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(tab_bar_height), Constraint::Min(1)])
+            .split(viewer_col);
+
+        if has_tabs {
+            tab_bar::draw(f, app, viewer_col_chunks[0]);
+        }
+
+        viewer_area = viewer_col_chunks[1];
+        app.viewer_area_rect = Some(viewer_area);
+
+        // Hybrid mode draws the formatted viewer (not the fullscreen editor),
+        // so we check `focus` rather than `editor.is_some()` here.
+        if app.focus != Focus::HybridEditor
+            && app.tabs.active_tab().is_some_and(|t| t.editor.is_some())
+        {
+            editor::draw(f, app, viewer_area);
+        } else {
+            markdown_view::draw(f, app, viewer_area, is_viewer_focused(app.focus));
+        }
+    }
+
+    status_bar::draw(f, app, outer_chunks[1]);
+
+    let doc_search_active = app.doc_search().is_some_and(|ds| ds.active);
+    if doc_search_active {
+        doc_search_bar::draw(f, app, viewer_area);
+    }
+
+    if app.goto_line.active {
+        goto_line_bar::draw(f, app, viewer_area);
+    }
+
+    if app.show_help {
+        help::draw(f, app);
+    }
+
+    if app.tab_picker.is_some() {
+        tab_picker::draw(f, app);
+    }
+
+    if app.link_picker.is_some() {
+        link_picker::draw(f, app);
+    }
+
+    if app.outline_picker.is_some() {
+        outline_picker::draw(f, app);
+    }
+
+    if app.table_modal.is_some() {
+        table_modal::draw(f, app);
+    }
+
+    if app.mermaid_modal.is_some() {
+        mermaid_modal::draw(f, app);
+    }
+
+    if let Some(popup_state) = &app.config_popup {
+        let params = config_popup::ConfigPopupParams {
+            state: popup_state,
+            theme: app.theme,
+            show_line_numbers: app.show_line_numbers,
+            file_tree_visible: !app.tree_hidden,
+            tree_position: app.tree_position,
+            search_preview: app.search_preview,
+            mermaid_mode: app.mermaid_mode,
+            mermaid_text_backend: app.mermaid_text_backend,
+            math_mode: app.math_mode,
+            palette: &app.palette,
+        };
+        config_popup::render_config_popup(f, &params);
+    }
+
+    if let Some(state) = &app.copy_menu {
+        let state = state.clone();
+        copy_menu::draw(f, &state, &app.palette);
+    }
+
+    // Search modal is drawn last so it floats above all other panels.
+    if app.search.active {
+        search_modal::draw(f, app);
+    }
+}
+
+/// Returns `true` when the viewer panel should render as focused.
+///
+/// Both [`Focus::Editor`] and [`Focus::HybridEditor`] return `true` because the
+/// viewer panel is what draws in both cases (hybrid mode overlays a cursor on
+/// the formatted view; the fullscreen editor replaces the view entirely).
+fn is_viewer_focused(focus: Focus) -> bool {
+    matches!(
+        focus,
+        Focus::Viewer
+            | Focus::DocSearch
+            | Focus::Config
+            | Focus::GotoLine
+            | Focus::TabPicker
+            | Focus::TableModal
+            | Focus::MermaidModal
+            | Focus::CopyMenu
+            | Focus::LinkPicker
+            | Focus::OutlinePicker
+            | Focus::Editor
+            | Focus::HybridEditor
+    )
+}

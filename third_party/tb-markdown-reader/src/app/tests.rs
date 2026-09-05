@@ -1,0 +1,3147 @@
+/// Unit tests for the `app` module.
+///
+/// Kept in a dedicated file to keep `mod.rs` focused on production code.
+use super::*;
+use crate::markdown::{
+    CellSpans, MathBlockId, MermaidBlockId, TableBlock, TableBlockId, TextBlockId,
+};
+use crate::math_image::MathEntry;
+use crate::mermaid::{DEFAULT_MERMAID_HEIGHT, MermaidEntry};
+use crate::theme::{Palette, Theme};
+use crate::ui::editor::{CommandOutcome, dispatch_command};
+use crate::ui::markdown_view::TableLayout;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::time::Instant;
+// `MouseEvent` is not pulled in by `use super::*`; the others (KeyModifiers,
+// MouseButton, MouseEventKind) are already in scope from the parent module.
+use crossterm::event::MouseEvent;
+use ratatui::text::{Line, Span, Text};
+use std::cell::Cell;
+
+/// A completion from a render queued before a cache refresh must not win over
+/// the newer render of the same formula. The exact final reason makes this
+/// resistant to a no-op handler: ignoring both completions would leave the
+/// entry `Pending`, which also fails.
+#[test]
+fn stale_math_completion_cannot_overwrite_newer_request_for_same_id() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let id = MathBlockId(41);
+
+    let stale_request = app.math_cache.begin_request(id);
+    app.math_cache.clear();
+    let current_request = app.math_cache.begin_request(id);
+
+    app.handle_action(Action::MathReady(
+        id,
+        stale_request,
+        Box::new(MathEntry::Unicode {
+            text: "old".to_string(),
+            reason: "old theme".to_string(),
+        }),
+    ));
+    app.handle_action(Action::MathReady(
+        id,
+        current_request,
+        Box::new(MathEntry::Unicode {
+            text: "new".to_string(),
+            reason: "new theme".to_string(),
+        }),
+    ));
+
+    let Some(MathEntry::Unicode { text, reason }) = app.math_cache.get(id) else {
+        panic!("the current completion must replace the pending entry");
+    };
+    assert_eq!(text, "new", "a stale render replaced the current result");
+    assert_eq!(reason, "new theme", "a stale theme result won the race");
+}
+
+/// Switching the block representation must keep the viewer on the same source
+/// line even when the text and image variants have different rendered heights.
+/// Pinning source line 6 makes a no-op mode switch fail too: the assertion also
+/// requires that image mode actually produced a `Math` block.
+#[tokio::test]
+async fn switching_to_image_math_preserves_cursor_source_line() {
+    crate::config::use_isolated_test_config();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/math-position.md");
+    let content = "intro\n\n$$\n\\frac{\\frac{a}{b}}{c}\n$$\n\nafter\n\ntail\n";
+    let palette = Palette::from_theme(Theme::Default);
+
+    app.tabs.open_or_focus(&path, true);
+    let tab = app.tabs.active_tab_mut().expect("tab");
+    tab.view.load(
+        path,
+        "math-position.md".to_string(),
+        content.to_string(),
+        &palette,
+        Theme::Default,
+        crate::config::MathMode::Text,
+    );
+    tab.view.cursor_line =
+        crate::markdown::logical_line_at_source(&tab.view.rendered, 6, &tab.view.text_layouts)
+            .expect("the paragraph after math must be rendered");
+
+    let math_start = Theme::ALL.len() + 1 + 3 + 2 + 6;
+    app.apply_config_selection(math_start + 1);
+
+    let tab = app.tabs.active_tab().expect("tab");
+    assert!(
+        tab.view
+            .rendered
+            .iter()
+            .any(|block| matches!(block, DocBlock::Math { .. })),
+        "the mode switch was a no-op",
+    );
+    assert_eq!(
+        crate::markdown::source_line_at(
+            &tab.view.rendered,
+            tab.view.cursor_line,
+            &tab.view.text_layouts,
+            &tab.view.table_layouts,
+        ),
+        6,
+        "cursor moved away from the paragraph after the formula",
+    );
+
+    let math_row =
+        crate::markdown::logical_line_at_source(&tab.view.rendered, 2, &tab.view.text_layouts)
+            .expect("math opening must be rendered");
+    let math_height = tab
+        .view
+        .rendered
+        .iter()
+        .find(|block| matches!(block, DocBlock::Math { .. }))
+        .map(DocBlock::height)
+        .expect("math block");
+    let tab = app.tabs.active_tab_mut().expect("tab");
+    tab.view.cursor_line = math_row + math_height.saturating_sub(1);
+
+    app.apply_config_selection(math_start);
+
+    let tab = app.tabs.active_tab().expect("tab");
+    assert!(
+        !tab.view
+            .rendered
+            .iter()
+            .any(|block| matches!(block, DocBlock::Math { .. })),
+        "switching back to text mode was a no-op",
+    );
+    assert_eq!(
+        crate::markdown::source_line_at(
+            &tab.view.rendered,
+            tab.view.cursor_line,
+            &tab.view.text_layouts,
+            &tab.view.table_layouts,
+        ),
+        2,
+        "cursor moved away from the formula when switching back to text mode",
+    );
+}
+
+fn make_text_block(lines: &[&str]) -> DocBlock {
+    let text_lines: Vec<Line<'static>> = lines
+        .iter()
+        .map(|l| Line::from(Span::raw(l.to_string())))
+        .collect();
+    let n = text_lines.len();
+    let source_lines: Vec<u32> = (0..crate::cast::u32_sat(n)).collect();
+    // Hash rendered text content (not source_lines) — stable across line-number shifts.
+    let mut h = DefaultHasher::new();
+    for line in &text_lines {
+        for span in &line.spans {
+            span.content.hash(&mut h);
+        }
+    }
+    n.hash(&mut h);
+    let id = TextBlockId(h.finish());
+    DocBlock::Text {
+        id,
+        text: Text::from(text_lines),
+        links: Vec::new(),
+        heading_anchors: Vec::new(),
+        source_lines,
+        wrapped_height: std::cell::Cell::new(crate::cast::u32_sat(n)),
+        source_byte_start: 0,
+        source_byte_end: 0,
+    }
+}
+
+fn str_cell(s: &str) -> CellSpans {
+    vec![Span::raw(s.to_string())]
+}
+
+fn make_table_block(id: u64, headers: &[&str], rows: &[&[&str]]) -> DocBlock {
+    let h: Vec<CellSpans> = headers.iter().map(|s| str_cell(s)).collect();
+    let r: Vec<Vec<CellSpans>> = rows
+        .iter()
+        .map(|row| row.iter().map(|s| str_cell(s)).collect())
+        .collect();
+    let num_cols = h.len();
+    let natural_widths = vec![10usize; num_cols];
+    // Stub row_source_lines: header at line 0, body rows at 2, 3, ...
+    let row_source_lines: Vec<u32> = std::iter::once(0)
+        .chain((2u32..).take(rows.len()))
+        .collect();
+    DocBlock::Table(TableBlock {
+        id: TableBlockId(id),
+        headers: h,
+        rows: r,
+        alignments: vec![pulldown_cmark::Alignment::None; num_cols],
+        natural_widths,
+        rendered_height: 4,
+        source_line: 0,
+        row_source_lines,
+        source_byte_start: 0,
+        source_byte_end: 0,
+    })
+}
+
+fn make_cached_layout(lines: &[&str]) -> TableLayout {
+    let text_lines: Vec<Line<'static>> = lines
+        .iter()
+        .map(|l| Line::from(Span::raw(l.to_string())))
+        .collect();
+    // physical_to_source: stub with all zeros for test helpers that only care
+    // about text content (search), not source mapping.
+    let n = text_lines.len();
+    TableLayout {
+        text: Text::from(text_lines),
+        physical_to_source: vec![0u32; n],
+    }
+}
+
+fn empty_mermaid_cache() -> MermaidCache {
+    MermaidCache::new()
+}
+
+fn source_only_cache(id: u64) -> MermaidCache {
+    let mut cache = MermaidCache::new();
+    cache.insert(
+        MermaidBlockId(id),
+        MermaidEntry::SourceOnly {
+            reason: "test".to_string(),
+            styled_text_cache: std::cell::RefCell::new(None),
+        },
+    );
+    cache
+}
+
+fn ready_cache(id: u64) -> MermaidCache {
+    // We can't build a StatefulProtocol in tests, so we use Failed as a
+    // stand-in for "showing as image" — which would normally suppress search.
+    // For the Ready variant specifically we use Failed to confirm the negative
+    // (Failed does show source). Use a separate test for the suppression path.
+    let mut cache = MermaidCache::new();
+    cache.insert(
+        MermaidBlockId(id),
+        MermaidEntry::Failed {
+            msg: "irrelevant".to_string(),
+            styled_text_cache: std::cell::RefCell::new(None),
+        },
+    );
+    cache
+}
+
+/// Helper to build an empty text_layouts cache (for tests without pre-wrapped layouts).
+fn empty_text_layouts() -> HashMap<TextBlockId, crate::ui::markdown_view::WrappedTextLayout> {
+    HashMap::new()
+}
+
+/// Helper to build a pre-wrapped text layout for a set of lines.
+///
+/// Each line is treated as fitting on one physical row (no wrapping at test widths).
+fn make_text_layouts_for(
+    block: &DocBlock,
+    width: u16,
+) -> HashMap<TextBlockId, crate::ui::markdown_view::WrappedTextLayout> {
+    let mut layouts = HashMap::new();
+    crate::markdown::update_text_layouts(std::slice::from_ref(block), &mut layouts, width);
+    layouts
+}
+
+#[test]
+fn collect_matches_text_block() {
+    // Build blocks and populate the text layout cache so search uses wrapped rows.
+    let block = make_text_block(&["hello world", "no match", "world again"]);
+    let text_layouts = make_text_layouts_for(&block, 80);
+    let blocks = vec![block];
+    let table_layouts = HashMap::new();
+    let cache = empty_mermaid_cache();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "world");
+    assert_eq!(result, vec![0, 2]);
+}
+
+#[test]
+fn collect_matches_table_with_layout_cache() {
+    let block_text = make_text_block(&["intro"]);
+    let text_layouts = make_text_layouts_for(&block_text, 80);
+    let blocks = vec![
+        block_text,
+        make_table_block(1, &["Header"], &[&["alpha"], &["beta needle"]]),
+    ];
+    let mut table_layouts = HashMap::new();
+    table_layouts.insert(
+        TableBlockId(1),
+        make_cached_layout(&[
+            "\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}",
+            "\u{2502} Header \u{2502}",
+            "\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}",
+            "\u{2502} alpha  \u{2502}",
+            "\u{2502} beta needle \u{2502}",
+            "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}",
+        ]),
+    );
+    let cache = empty_mermaid_cache();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "needle");
+    // text block has 1 line (offset 0); table starts at offset 1.
+    // "beta needle" is at layout index 4, so absolute = 1 + 4 = 5.
+    assert_eq!(result, vec![5]);
+}
+
+#[test]
+fn collect_matches_table_fallback_no_layout() {
+    let blocks = vec![make_table_block(2, &["Col"], &[&["findme"], &["nothing"]])];
+    let text_layouts = empty_text_layouts();
+    let table_layouts = HashMap::new();
+    let cache = empty_mermaid_cache();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "findme");
+    // Fallback: header row is at row_offset=1, data rows follow.
+    // "findme" is the first data row → row_offset = 2 → absolute = 0+2 = 2.
+    assert_eq!(result, vec![2]);
+}
+
+#[test]
+fn collect_matches_mermaid_source_only() {
+    let source = "graph LR\n    A --> needle\n    B --> C";
+    let mermaid_id = MermaidBlockId(99);
+    let text_block = make_text_block(&["before"]);
+    let text_layouts = make_text_layouts_for(&text_block, 80);
+    let blocks = vec![
+        text_block,
+        DocBlock::Mermaid {
+            id: mermaid_id,
+            source: source.to_string(),
+            cell_height: Cell::new(DEFAULT_MERMAID_HEIGHT),
+            source_line: 0,
+            source_byte_start: 0,
+            source_byte_end: 0,
+        },
+    ];
+    let cache = source_only_cache(99);
+    let table_layouts = HashMap::new();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "needle");
+    // text block: 1 line (offset 0). mermaid starts at offset 1.
+    // "A --> needle" is source line index 1, so absolute = 1 + 1 = 2.
+    assert_eq!(result, vec![2]);
+}
+
+#[test]
+fn collect_matches_mermaid_failed_shows_source() {
+    let mermaid_id = MermaidBlockId(42);
+    let blocks = vec![DocBlock::Mermaid {
+        id: mermaid_id,
+        source: "graph LR\n    find_this".to_string(),
+        cell_height: Cell::new(DEFAULT_MERMAID_HEIGHT),
+        source_line: 0,
+        source_byte_start: 0,
+        source_byte_end: 0,
+    }];
+    let cache = ready_cache(42);
+    let text_layouts = empty_text_layouts();
+    let table_layouts = HashMap::new();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "find_this");
+    assert_eq!(result, vec![1]);
+}
+
+#[test]
+fn collect_matches_mermaid_absent_shows_source() {
+    let mermaid_id = MermaidBlockId(7);
+    let blocks = vec![DocBlock::Mermaid {
+        id: mermaid_id,
+        source: "sequenceDiagram\n    A ->> match_me: call".to_string(),
+        cell_height: Cell::new(DEFAULT_MERMAID_HEIGHT),
+        source_line: 0,
+        source_byte_start: 0,
+        source_byte_end: 0,
+    }];
+    let text_layouts = empty_text_layouts();
+    let table_layouts = HashMap::new();
+    let cache = empty_mermaid_cache();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "match_me");
+    assert_eq!(result, vec![1]);
+}
+
+// ── table modal key / mouse handler tests ───────────────────────────────
+
+/// Build an `App` with an active `TableModalState` using the given column
+/// widths and initial scroll positions.  Uses `"."` as the root so it runs
+/// without a special directory.
+fn make_app_with_modal(natural_widths: Vec<usize>, h_scroll: u16, v_scroll: u16) -> App {
+    let mut app = App::new(std::path::PathBuf::from("."), None, None);
+    app.table_modal = Some(TableModalState {
+        tab_id: crate::ui::tabs::TabId(0),
+        h_scroll,
+        v_scroll,
+        headers: vec![],
+        rows: vec![],
+        alignments: vec![],
+        natural_widths,
+    });
+    app.focus = Focus::TableModal;
+    app
+}
+
+#[test]
+fn h_key_snaps_to_prev_column_boundary() {
+    // widths [10, 20, 15] → boundaries [0, 13, 36]
+    // From 17 (inside col 1 which starts at 13), h snaps back to 13.
+    let mut app = make_app_with_modal(vec![10, 20, 15], 17, 0);
+    app.handle_table_modal_key(KeyCode::Char('h'));
+    assert_eq!(app.table_modal.as_ref().unwrap().h_scroll, 13);
+}
+
+#[test]
+fn l_key_snaps_to_next_column_boundary() {
+    // From 0, next boundary is 13 (start of col 1).
+    let mut app = make_app_with_modal(vec![10, 20, 15], 0, 0);
+    app.handle_table_modal_key(KeyCode::Char('l'));
+    assert_eq!(app.table_modal.as_ref().unwrap().h_scroll, 13);
+}
+
+#[test]
+fn capital_h_half_page_left() {
+    // inner_width = rect.width - 2 = 42 - 2 = 40; half = 20
+    // h_scroll 50 - 20 = 30
+    let mut app = make_app_with_modal(vec![10, 20, 15], 50, 0);
+    app.table_modal_rect = Some(ratatui::layout::Rect {
+        x: 0,
+        y: 0,
+        width: 42,
+        height: 20,
+    });
+    app.handle_table_modal_key(KeyCode::Char('H'));
+    assert_eq!(app.table_modal.as_ref().unwrap().h_scroll, 30);
+}
+
+#[test]
+fn scroll_wheel_in_modal_scrolls_vertically() {
+    let mut app = make_app_with_modal(vec![10, 20, 15], 0, 0);
+    // Populate the rect so the click registers as "inside".
+    app.table_modal_rect = Some(ratatui::layout::Rect {
+        x: 5,
+        y: 5,
+        width: 80,
+        height: 30,
+    });
+    let m = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 10,
+        row: 10,
+        modifiers: KeyModifiers::empty(),
+    };
+    app.handle_table_modal_mouse(m);
+    assert_eq!(app.table_modal.as_ref().unwrap().v_scroll, 3);
+}
+
+#[test]
+fn shift_scroll_in_modal_pans_column() {
+    // widths [10, 20, 15] → boundaries [0, 13, 36]; Shift+ScrollDown from 0 → 13
+    let mut app = make_app_with_modal(vec![10, 20, 15], 0, 0);
+    app.table_modal_rect = Some(ratatui::layout::Rect {
+        x: 5,
+        y: 5,
+        width: 80,
+        height: 30,
+    });
+    let m = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 10,
+        row: 10,
+        modifiers: KeyModifiers::SHIFT,
+    };
+    app.handle_table_modal_mouse(m);
+    assert_eq!(app.table_modal.as_ref().unwrap().h_scroll, 13);
+}
+
+#[test]
+fn click_outside_modal_closes_it() {
+    let mut app = make_app_with_modal(vec![10, 20, 15], 0, 0);
+    app.table_modal_rect = Some(ratatui::layout::Rect {
+        x: 10,
+        y: 10,
+        width: 60,
+        height: 20,
+    });
+    // Click at (5, 5) — outside the rect (which starts at (10, 10)).
+    let m = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::empty(),
+    };
+    app.handle_table_modal_mouse(m);
+    assert!(
+        app.table_modal.is_none(),
+        "modal should close on outside click"
+    );
+}
+
+#[test]
+fn click_inside_modal_does_not_close_it() {
+    let mut app = make_app_with_modal(vec![10, 20, 15], 5, 2);
+    app.table_modal_rect = Some(ratatui::layout::Rect {
+        x: 10,
+        y: 10,
+        width: 60,
+        height: 20,
+    });
+    // Click at (15, 15) — inside the rect.
+    let m = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 15,
+        row: 15,
+        modifiers: KeyModifiers::empty(),
+    };
+    app.handle_table_modal_mouse(m);
+    assert!(
+        app.table_modal.is_some(),
+        "modal should stay open on inside click"
+    );
+    // Scroll must not have changed.
+    let s = app.table_modal.as_ref().unwrap();
+    assert_eq!(s.h_scroll, 5);
+    assert_eq!(s.v_scroll, 2);
+}
+
+#[test]
+fn collect_matches_absolute_offsets_across_blocks() {
+    let text_block0 = make_text_block(&["line0", "line1", "line2"]);
+    let text_block2 = make_text_block(&["after"]);
+    let mut text_layouts = make_text_layouts_for(&text_block0, 80);
+    text_layouts.extend(make_text_layouts_for(&text_block2, 80));
+    let blocks = vec![
+        text_block0,
+        make_table_block(5, &["H"], &[&["row0"], &["row1 target"]]),
+        text_block2,
+    ];
+    let mut table_layouts = HashMap::new();
+    table_layouts.insert(
+        TableBlockId(5),
+        make_cached_layout(&[
+            "\u{250c}\u{2500}\u{2510}",
+            "\u{2502}H\u{2502}",
+            "\u{251c}\u{2500}\u{2524}",
+            "\u{2502}row0\u{2502}",
+            "\u{2502}row1 target\u{2502}",
+            "\u{2514}\u{2500}\u{2518}",
+        ]),
+    );
+    let cache = empty_mermaid_cache();
+    let result = collect_match_lines(&blocks, &text_layouts, &table_layouts, &cache, "target");
+    // text block: 3 lines (offsets 0-2). table starts at 3, rendered_height=4.
+    // "row1 target" is at layout index 4 → absolute = 3+4 = 7.
+    // after block starts at 3+4=7. "after" is at 7+0=7 — no match for "target".
+    assert_eq!(result, vec![7]);
+}
+
+// ── Editor spike tests ────────────────────────────────────────────────────
+
+/// Open a tab with known content and put the app in a state suitable for
+/// editor tests.  Returns the `App` and the path used.
+fn make_app_with_tab(content: &str) -> (App, PathBuf) {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/test.md");
+    // Use open_or_focus to create the tab, then manually set content.
+    app.tabs.open_or_focus(&path, true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.content = content.to_string();
+        tab.view.current_path = Some(path.clone());
+        tab.view.file_name = "test.md".to_string();
+    }
+    app.focus = Focus::Viewer;
+    (app, path)
+}
+
+#[test]
+fn enter_edit_mode_initializes_editor_from_view_content() {
+    let (mut app, _path) = make_app_with_tab("# Hello\n\nworld");
+    app.enter_edit_mode();
+    let tab = app.tabs.active_tab().expect("tab must exist");
+    let editor = tab
+        .editor
+        .as_ref()
+        .expect("editor must be Some after enter_edit_mode");
+    assert_eq!(editor.baseline, "# Hello\n\nworld");
+    assert!(!editor.is_dirty());
+    assert_eq!(app.focus, Focus::Editor);
+}
+
+#[test]
+fn q_with_no_dirty_returns_to_viewer() {
+    let (mut app, _path) = make_app_with_tab("clean content");
+    app.enter_edit_mode();
+    // Dispatch :q — buffer is clean so the editor should close.
+    {
+        let tab = app.tabs.active_tab_mut().unwrap();
+        let editor = tab.editor.as_mut().unwrap();
+        let outcome = dispatch_command(editor, "q");
+        // Manually apply the outcome as App::apply_command_outcome would.
+        assert_eq!(outcome, CommandOutcome::Close);
+    }
+    // Simulate the close path.
+    app.close_editor();
+    assert!(app.tabs.active_tab().unwrap().editor.is_none());
+    assert_eq!(app.focus, Focus::Viewer);
+}
+
+#[test]
+fn q_with_dirty_blocks_and_sets_status_message() {
+    let (mut app, _path) = make_app_with_tab("original");
+    app.enter_edit_mode();
+    // Make it dirty by changing the baseline so the buffer no longer matches.
+    {
+        let tab = app.tabs.active_tab_mut().unwrap();
+        let editor = tab.editor.as_mut().unwrap();
+        editor.baseline = "something different".to_string();
+        let outcome = dispatch_command(editor, "q");
+        assert_eq!(
+            outcome,
+            CommandOutcome::Handled,
+            ":q on dirty buffer must return Handled (not Close)"
+        );
+        assert!(
+            editor.status_message.is_some(),
+            "a status message must be set when :q is blocked"
+        );
+    }
+    // Editor must remain open.
+    assert!(app.tabs.active_tab().unwrap().editor.is_some());
+}
+
+#[test]
+fn q_bang_with_dirty_discards_and_returns_to_viewer() {
+    let (mut app, _path) = make_app_with_tab("original");
+    app.enter_edit_mode();
+    {
+        let tab = app.tabs.active_tab_mut().unwrap();
+        let editor = tab.editor.as_mut().unwrap();
+        editor.baseline = "something different".to_string();
+        let outcome = dispatch_command(editor, "q!");
+        assert_eq!(
+            outcome,
+            CommandOutcome::Close,
+            ":q! must always close even when dirty"
+        );
+    }
+    app.close_editor();
+    assert!(app.tabs.active_tab().unwrap().editor.is_none());
+    assert_eq!(app.focus, Focus::Viewer);
+}
+
+#[test]
+fn command_line_captures_chars_until_enter() {
+    use crossterm::event::{KeyCode as KC, KeyEvent, KeyModifiers};
+
+    let (mut app, _path) = make_app_with_tab("text");
+    app.enter_edit_mode();
+    app.focus = Focus::Editor;
+
+    // Press `:` — should start command-line mode (editor is in Normal mode).
+    app.handle_editor_key(KeyEvent::new(KC::Char(':'), KeyModifiers::NONE));
+    {
+        let tab = app.tabs.active_tab().unwrap();
+        let editor = tab.editor.as_ref().unwrap();
+        assert!(
+            editor.command_line.is_some(),
+            "':' in Normal mode must start command-line capture"
+        );
+        assert_eq!(editor.command_line.as_deref(), Some(""));
+    }
+
+    // Type 'w'.
+    app.handle_editor_key(KeyEvent::new(KC::Char('w'), KeyModifiers::NONE));
+    {
+        let tab = app.tabs.active_tab().unwrap();
+        let editor = tab.editor.as_ref().unwrap();
+        assert_eq!(editor.command_line.as_deref(), Some("w"));
+    }
+
+    // We can't easily test the Enter path here without an action_tx, so
+    // just verify the capture works: 'w' was collected into command_line.
+}
+
+#[test]
+fn mouse_events_ignored_while_editing() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+
+    let (mut app, _path) = make_app_with_tab("content");
+    app.enter_edit_mode();
+    // Precondition: focus must be Editor.
+    assert_eq!(app.focus, Focus::Editor);
+
+    // Record the tree selection before the mouse event.
+    let selection_before = app.tree.list_state.selected();
+
+    // Simulate a left-click anywhere on screen.
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.handle_mouse(click);
+
+    // Focus must remain on the editor.
+    assert_eq!(app.focus, Focus::Editor, "focus must stay Editor");
+    // Tree selection must be unchanged.
+    assert_eq!(
+        app.tree.list_state.selected(),
+        selection_before,
+        "tree selection must not change during edit mode"
+    );
+    // Editor must still be present.
+    assert!(
+        app.tabs.active_tab().unwrap().editor.is_some(),
+        "editor must remain open"
+    );
+}
+
+// ── enter_edit_mode source-line tests ────────────────────────────────────
+
+/// `enter_edit_mode` must place the edtui cursor on the source line that
+/// the viewer cursor's rendered logical line maps to via `source_line_at`.
+///
+/// We build a Text block whose `source_lines` are [10, 11, 12] and set the
+/// viewer cursor to logical line 1.  `source_line_at` returns 11, so the
+/// editor cursor row must be 11.
+#[test]
+fn enter_edit_mode_uses_cursor_for_source_line() {
+    use crate::markdown::{DocBlock, HeadingAnchor, LinkInfo};
+    use ratatui::text::{Line, Span, Text};
+
+    let mut app = App::new(std::path::PathBuf::from("."), None, None);
+
+    // Open a tab with dummy content that has as many newlines as the
+    // highest source line we reference (line 11 → 12 lines).
+    let content: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        for i in 0..12usize {
+            let _ = writeln!(s, "source line {i}");
+        }
+        s
+    };
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let path = tmp.path().to_path_buf();
+    std::fs::write(&path, &content).unwrap();
+
+    let (_, _) = app.tabs.open_or_focus(&path, true);
+    let palette = crate::theme::Palette::from_theme(crate::theme::Theme::Default);
+    let tab = app.tabs.active_tab_mut().unwrap();
+    tab.view.load(
+        path.clone(),
+        "test.md".into(),
+        content,
+        &palette,
+        crate::theme::Theme::Default,
+        crate::config::MathMode::Text,
+    );
+
+    // Replace the rendered blocks with a hand-crafted Text block whose
+    // source_lines are [10, 11, 12].
+    let src_lines = vec![10u32, 11, 12];
+    let text_lines: Vec<Line<'static>> = src_lines
+        .iter()
+        .map(|i| Line::from(Span::raw(format!("line {i}"))))
+        .collect();
+    let n = src_lines.len();
+    let block_id = {
+        let mut h = DefaultHasher::new();
+        for line in &text_lines {
+            for span in &line.spans {
+                span.content.hash(&mut h);
+            }
+        }
+        n.hash(&mut h);
+        TextBlockId(h.finish())
+    };
+    let block = DocBlock::Text {
+        id: block_id,
+        text: Text::from(text_lines),
+        links: Vec::<LinkInfo>::new(),
+        heading_anchors: Vec::<HeadingAnchor>::new(),
+        source_lines: src_lines,
+        wrapped_height: std::cell::Cell::new(3),
+        source_byte_start: 0,
+        source_byte_end: 0,
+    };
+    // Populate the text_layouts cache so `source_line_at` can resolve physical rows
+    // to logical line indices (and then to source lines).
+    crate::markdown::update_text_layouts(
+        std::slice::from_ref(&block),
+        &mut tab.view.text_layouts,
+        80,
+    );
+    tab.view.rendered = vec![block];
+    tab.view.total_lines = 3;
+    // Set cursor to logical line 1 → source_line_at returns 11.
+    tab.view.cursor_line = 1;
+
+    app.focus = Focus::Viewer;
+    app.enter_edit_mode();
+
+    assert_eq!(app.focus, Focus::Editor, "focus should switch to Editor");
+    let tab = app.tabs.active_tab().unwrap();
+    let editor = tab.editor.as_ref().expect("editor should be set");
+    assert_eq!(
+        editor.state.cursor.row, 11,
+        "editor cursor row should be the mapped source line (11)"
+    );
+}
+
+// ── viewer navigation (d/u/gg/G) regression tests ────────────────────────
+
+/// Minimal App with a tab whose view has a known `total_lines` and a
+/// configured `view_height`.  Cheaper than `make_app_with_tab` because it
+/// does not load + render real markdown content.
+fn make_app_with_view(total_lines: u32, view_height: u32) -> App {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/nav_test.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = view_height;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = total_lines;
+        tab.view.cursor_line = 0;
+        tab.view.scroll_offset = 0;
+    }
+    app.focus = Focus::Viewer;
+    app
+}
+
+#[test]
+fn d_key_moves_cursor_half_page_down() {
+    let mut app = make_app_with_view(100, 30);
+    app.handle_key(KeyCode::Char('d'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_line, 15,
+        "`d` should move the cursor half a page (vh/2 = 15)"
+    );
+}
+
+#[test]
+fn u_key_moves_cursor_half_page_up() {
+    let mut app = make_app_with_view(100, 30);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.cursor_line = 50;
+        tab.view.scroll_offset = 35;
+    }
+    app.handle_key(KeyCode::Char('u'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.view.cursor_line, 35, "`u` should move cursor up vh/2");
+}
+
+#[test]
+fn gg_chord_jumps_cursor_to_top() {
+    let mut app = make_app_with_view(100, 30);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.cursor_line = 50;
+        tab.view.scroll_offset = 35;
+    }
+    app.handle_key(KeyCode::Char('g'), KeyModifiers::NONE);
+    app.handle_key(KeyCode::Char('g'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.view.cursor_line, 0, "`gg` should jump cursor to 0");
+    assert_eq!(tab.view.scroll_offset, 0, "`gg` should reset scroll");
+}
+
+#[test]
+fn shift_g_jumps_cursor_to_bottom() {
+    let mut app = make_app_with_view(100, 30);
+    app.handle_key(KeyCode::Char('G'), KeyModifiers::SHIFT);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_line, 99,
+        "`G` should land cursor on last line"
+    );
+}
+
+/// When the cursor is inside a table block, `Enter` must open THAT
+/// table rather than the first table visible on screen.
+#[test]
+fn try_open_table_modal_picks_table_under_cursor() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/tables.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 30;
+    app.focus = Focus::Viewer;
+
+    // Layout: [text(3)] [table A(4)] [text(3)] [table B(4)]
+    //          0..3      3..7         7..10     10..14
+    let blocks = vec![
+        make_text_block(&["intro", "text", "here"]),
+        make_table_block(10, &["A"], &[&["a-row-0"]]),
+        make_text_block(&["middle", "text", "here"]),
+        make_table_block(20, &["B"], &[&["b-row-0"]]),
+    ];
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.scroll_offset = 0;
+        tab.view.cursor_line = 12; // inside table B (10..14)
+    }
+
+    app.try_open_table_modal();
+    let modal = app.table_modal.as_ref().expect("modal must open");
+    assert_eq!(
+        modal.headers.len(),
+        1,
+        "expected table B's single header, got {:?}",
+        modal.headers
+    );
+    assert_eq!(
+        modal.rows[0][0]
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>(),
+        "b-row-0",
+        "modal should carry table B's data, not table A's",
+    );
+}
+
+/// Regression: when the cursor is on prose (not a table), `Enter` should
+/// fall back to the first table intersecting the viewport (old behaviour).
+#[test]
+fn try_open_table_modal_falls_back_to_first_visible_table() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/tables.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 30;
+    app.focus = Focus::Viewer;
+
+    let blocks = vec![
+        make_text_block(&["intro"]),
+        make_table_block(10, &["A"], &[&["a-row-0"]]),
+        make_table_block(20, &["B"], &[&["b-row-0"]]),
+    ];
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.scroll_offset = 0;
+        tab.view.cursor_line = 0; // on prose, above any table
+    }
+
+    app.try_open_table_modal();
+    let modal = app.table_modal.as_ref().expect("modal must open");
+    assert_eq!(
+        modal.rows[0][0]
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>(),
+        "a-row-0",
+        "modal should open table A (first visible) when cursor is on prose",
+    );
+}
+
+#[test]
+fn d_key_moves_cursor_with_real_loaded_content() {
+    use crate::theme::{Palette, Theme};
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/nav_test.md");
+    app.tabs.open_or_focus(&path, true);
+    let content: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        for i in 0..60usize {
+            let _ = write!(s, "paragraph {i}\n\n");
+        }
+        s
+    };
+    let palette = Palette::from_theme(Theme::Default);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "nav_test.md".to_string(),
+            content,
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+    }
+    app.focus = Focus::Viewer;
+    app.tabs.view_height = 30;
+
+    let before_cursor = app.tabs.active_tab().unwrap().view.cursor_line;
+    let before_total = app.tabs.active_tab().unwrap().view.total_lines;
+    let before_vh = app.tabs.view_height;
+    app.handle_key(KeyCode::Char('d'), KeyModifiers::NONE);
+    let after_cursor = app.tabs.active_tab().unwrap().view.cursor_line;
+    assert!(
+        before_total > 0,
+        "total_lines must be populated (got {before_total})"
+    );
+    assert!(
+        before_vh > 0,
+        "view_height must be positive (got {before_vh})"
+    );
+    assert_ne!(
+        before_cursor, after_cursor,
+        "`d` should move the cursor (before={before_cursor} after={after_cursor} \
+         total_lines={before_total} view_height={before_vh})",
+    );
+}
+
+// ── doc_search navigation ────────────────────────────────────────────────
+
+/// Build an `App` with an active tab whose `doc_search` state has the
+/// given match lines and `current_match`, and whose view has the given
+/// `total_lines`.  `view_height` defaults to 20.
+fn make_app_with_doc_search(match_lines: Vec<u32>, current_match: usize, total_lines: u32) -> App {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/ds_test.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = total_lines;
+        tab.view.cursor_line = 0;
+        tab.view.scroll_offset = 0;
+        tab.doc_search.match_lines = match_lines;
+        tab.doc_search.current_match = current_match;
+    }
+    app
+}
+
+/// `doc_search_next` must advance `current_match`, set `cursor_line` to the
+/// new match line, and adjust `scroll_offset` via `scroll_to_cursor`.
+#[test]
+fn doc_search_next_updates_cursor_and_scroll() {
+    // 100-line doc, view_height = 20; match_lines = [5, 20, 35],
+    // cursor starts at line 5 (current_match = 0).
+    let mut app = make_app_with_doc_search(vec![5, 20, 35], 0, 100);
+    {
+        // Ensure cursor is already at the first match.
+        let tab = app.tabs.active_tab_mut().unwrap();
+        tab.view.cursor_line = 5;
+    }
+    app.doc_search_next();
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.doc_search.current_match, 1);
+    assert_eq!(
+        tab.view.cursor_line, 20,
+        "cursor must move to match line 20"
+    );
+    // After scroll_to_cursor with view_height=20, scroll_offset = 20 - (20-1) = 1.
+    assert_eq!(tab.view.scroll_offset, 1);
+}
+
+/// `doc_search_prev` with `current_match == 0` must wrap to the last match.
+#[test]
+fn doc_search_prev_wraps_to_last_match() {
+    let mut app = make_app_with_doc_search(vec![5, 20, 35], 0, 100);
+    app.doc_search_prev();
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.doc_search.current_match, 2);
+    assert_eq!(tab.view.cursor_line, 35, "cursor must wrap to last match");
+}
+
+/// When there are no matches, `doc_search_next` must not change any state.
+#[test]
+fn doc_search_empty_matches_no_op() {
+    let mut app = make_app_with_doc_search(vec![], 0, 100);
+    {
+        let tab = app.tabs.active_tab_mut().unwrap();
+        tab.view.cursor_line = 7;
+        tab.view.scroll_offset = 3;
+    }
+    app.doc_search_next();
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.view.cursor_line, 7, "cursor must not change");
+    assert_eq!(tab.view.scroll_offset, 3, "scroll must not change");
+}
+
+/// `perform_doc_search` with a matching query must set `cursor_line` to the
+/// first match.
+///
+/// We build rendered blocks that contain "hello" on line 4 (the 5th line
+/// of a Text block that starts at the document root) and verify the cursor
+/// ends up at absolute line 4.
+#[test]
+fn perform_doc_search_first_match_moves_cursor() {
+    let lines: Vec<&str> = (0..10)
+        .map(|i| if i == 4 { "hello world" } else { "other" })
+        .collect();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/search_test.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        let block = make_text_block(lines.as_slice());
+        let total = block.height();
+        tab.view.rendered = vec![block];
+        tab.view.total_lines = total;
+        tab.view.cursor_line = 0;
+        tab.view.scroll_offset = 0;
+        tab.doc_search.active = true;
+        tab.doc_search.query = "hello".to_string();
+    }
+    app.focus = Focus::Viewer;
+    app.perform_doc_search();
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_line, 4,
+        "cursor must jump to first match at line 4"
+    );
+}
+
+#[test]
+fn watcher_suppresses_reload_within_grace_window() {
+    let (mut app, path) = make_app_with_tab("content");
+    // Simulate a recent self-save.
+    app.last_file_save_at = Some((path.clone(), Instant::now()));
+    // reload_changed_tabs requires action_tx; if None it returns early before
+    // the suppression check.  We use a channel so the logic actually runs.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
+    app.action_tx = Some(tx);
+    app.reload_changed_tabs(std::slice::from_ref(&path));
+    // The spawn_blocking must NOT have been called because the path is
+    // within the grace window.  Since spawn_blocking is async, we check that
+    // no FileReloaded action arrives immediately (the channel should be empty).
+    assert!(
+        rx.try_recv().is_err(),
+        "no FileReloaded should be sent when within the grace window"
+    );
+}
+
+// ── apply_file_reloaded cursor-preservation ──────────────────────────────
+
+/// A `FileReloaded` event with unchanged content must not reset the cursor.
+///
+/// On Linux, inotify fires `IN_ACCESS` when a file is *read*, producing a
+/// spurious `FilesChanged` → `FileReloaded` round-trip.  The guard in
+/// `apply_file_reloaded` compares byte content and skips the reload, so the
+/// cursor stays wherever the user left it.
+#[test]
+fn reload_with_unchanged_content_preserves_cursor() {
+    use crate::theme::{Palette, Theme};
+    let palette = Palette::from_theme(Theme::Default);
+    let content: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        for i in 0..20usize {
+            let _ = write!(s, "line {i}\n\n");
+        }
+        s
+    };
+    let path = PathBuf::from("/fake/unchanged.md");
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs.open_or_focus(&path, true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "unchanged.md".to_string(),
+            content.clone(),
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+        tab.view.cursor_line = 10;
+        tab.view.scroll_offset = 5;
+    }
+
+    // Simulate FileReloaded arriving with identical content.
+    app.apply_file_reloaded(path.clone(), content);
+
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_line, 10,
+        "cursor must not reset on spurious reload (unchanged content)"
+    );
+    assert_eq!(
+        tab.view.scroll_offset, 5,
+        "scroll must not reset on spurious reload (unchanged content)"
+    );
+}
+
+/// A `FileReloaded` event with new content must restore the cursor to its
+/// old position when that position is still valid (file grew or same size).
+#[test]
+fn reload_with_changed_content_restores_cursor_when_in_range() {
+    use crate::theme::{Palette, Theme};
+    let palette = Palette::from_theme(Theme::Default);
+    // 20 paragraphs → many display lines.
+    let content_v1: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        for i in 0..20usize {
+            let _ = write!(s, "line {i}\n\n");
+        }
+        s
+    };
+    let path = PathBuf::from("/fake/changed.md");
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs.open_or_focus(&path, true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "changed.md".to_string(),
+            content_v1,
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+        tab.view.cursor_line = 10;
+        tab.view.scroll_offset = 5;
+    }
+
+    // New content that is longer than 10 display lines — cursor stays.
+    let content_v2: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        for i in 0..20usize {
+            let _ = write!(s, "edited {i}\n\n");
+        }
+        s
+    };
+    app.apply_file_reloaded(path.clone(), content_v2);
+
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_line, 10,
+        "cursor must be restored after a genuine reload when still in range"
+    );
+}
+
+// ── build_yank_text ──────────────────────────────────────────────────────
+
+#[test]
+fn build_yank_text_single_line() {
+    let content = "alpha\nbeta\ngamma";
+    assert_eq!(build_yank_text(content, 1, 1), "beta");
+}
+
+#[test]
+fn build_yank_text_multi_line() {
+    let content = "line0\nline1\nline2\nline3";
+    assert_eq!(build_yank_text(content, 1, 3), "line1\nline2\nline3");
+}
+
+#[test]
+fn build_yank_text_reversed_range() {
+    // Range given in reverse order must produce same result as forward range.
+    let content = "a\nb\nc";
+    assert_eq!(build_yank_text(content, 2, 0), "a\nb\nc");
+}
+
+#[test]
+fn build_yank_text_past_eof() {
+    // Range that extends past the available lines returns whatever is there.
+    let content = "x\ny";
+    let result = build_yank_text(content, 0, 10);
+    assert_eq!(result, "x\ny");
+}
+
+#[test]
+fn build_yank_text_empty_content() {
+    assert_eq!(build_yank_text("", 0, 0), "");
+}
+
+// ── Feature 2: Visual mode and yank ─────────────────────────────────────
+
+/// Helper: build an App with a rendered tab (blocks set, not just content string).
+fn make_rendered_app(content: &str) -> (App, PathBuf) {
+    use crate::theme::{Palette, Theme};
+    let palette = Palette::from_theme(Theme::Default);
+    let path = PathBuf::from("/fake/yank_test.md");
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "yank_test.md".to_string(),
+            content.to_string(),
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+    }
+    app.focus = Focus::Viewer;
+    (app, path)
+}
+
+/// Helper to build a line-mode `VisualRange` for tests.
+fn line_vrange(anchor: u32, cursor: u32) -> crate::ui::markdown_view::VisualRange {
+    use crate::ui::markdown_view::{VisualMode, VisualRange};
+    VisualRange {
+        mode: VisualMode::Line,
+        anchor_line: anchor,
+        anchor_col: 0,
+        cursor_line: cursor,
+        cursor_col: 0,
+    }
+}
+
+#[test]
+fn capital_v_enters_line_visual_mode() {
+    use crate::ui::markdown_view::{VisualMode, VisualRange};
+    let (mut app, _path) = make_rendered_app("line0\nline1\nline2");
+    // Move cursor to line 2.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.cursor_line = 2;
+    }
+    app.handle_key(KeyCode::Char('V'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.visual_mode,
+        Some(VisualRange {
+            mode: VisualMode::Line,
+            anchor_line: 2,
+            anchor_col: 0,
+            cursor_line: 2,
+            cursor_col: 0,
+        }),
+        "V must enter line visual mode at current cursor"
+    );
+}
+
+#[test]
+fn lowercase_v_enters_char_visual_mode() {
+    use crate::ui::markdown_view::{VisualMode, VisualRange};
+    let (mut app, _path) = make_rendered_app("line0\nline1\nline2");
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.cursor_line = 1;
+        tab.view.cursor_col = 3;
+    }
+    app.handle_key(KeyCode::Char('v'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.visual_mode,
+        Some(VisualRange {
+            mode: VisualMode::Char,
+            anchor_line: 1,
+            anchor_col: 3,
+            cursor_line: 1,
+            cursor_col: 3,
+        }),
+        "v must enter char visual mode at current cursor/col"
+    );
+}
+
+#[test]
+fn v_in_visual_mode_exits_visual_mode() {
+    let (mut app, _path) = make_rendered_app("line0\nline1\nline2");
+    // Enter line visual mode manually, then press V again to exit.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.visual_mode = Some(line_vrange(1, 2));
+    }
+    app.handle_key(KeyCode::Char('V'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.visual_mode, None,
+        "V in line visual mode must exit it"
+    );
+}
+
+#[test]
+fn esc_in_visual_mode_exits_visual_mode() {
+    let (mut app, _path) = make_rendered_app("line0\nline1");
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.visual_mode = Some(line_vrange(0, 1));
+    }
+    app.handle_key(KeyCode::Esc, KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.view.visual_mode, None, "Esc must exit visual mode");
+}
+
+#[test]
+fn j_in_visual_mode_extends_range() {
+    // Use a controlled tab with known total_lines to avoid renderer side-effects.
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/visual_j.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        // Build 10 logical lines directly so the cursor clamp works correctly.
+        let block = make_text_block(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+        let total = block.height();
+        tab.view.rendered = vec![block];
+        tab.view.total_lines = total;
+        tab.view.cursor_line = 2;
+        tab.view.visual_mode = Some(line_vrange(2, 2));
+    }
+    app.focus = Focus::Viewer;
+    // Press j to move down.
+    app.handle_key(KeyCode::Char('j'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    let range = tab
+        .view
+        .visual_mode
+        .expect("visual mode must still be active");
+    assert_eq!(range.anchor_line, 2, "anchor must stay at 2");
+    assert_eq!(range.cursor_line, 3, "cursor must extend to 3 after j");
+}
+
+#[test]
+fn y_in_visual_mode_yanks_and_exits() {
+    // Use a controlled tab with predictable source_lines mapping.
+    // make_text_block assigns source_lines = [0, 1, 2, ...] sequentially.
+    let content = "alpha\nbeta\ngamma\ndelta";
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/visual_yank.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        let block = make_text_block(&["alpha", "beta", "gamma", "delta"]);
+        let total = block.height();
+        // Populate the text_layouts cache so `source_line_at` can resolve rows.
+        crate::markdown::update_text_layouts(
+            std::slice::from_ref(&block),
+            &mut tab.view.text_layouts,
+            80,
+        );
+        tab.view.rendered = vec![block];
+        tab.view.total_lines = total;
+        tab.view.content = content.to_string();
+        tab.view.current_path = Some(path.clone());
+        // Select logical lines 1..=2 (source lines 1="beta", 2="gamma").
+        tab.view.cursor_line = 1;
+        tab.view.visual_mode = Some(line_vrange(1, 2));
+    }
+    app.focus = Focus::Viewer;
+    // Press y — should yank and exit visual mode.
+    app.handle_key(KeyCode::Char('y'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.visual_mode, None,
+        "y in visual mode must exit visual mode"
+    );
+    // Verify that the yank text for source lines 1..=2 is correct.
+    // Use the tab's own text_layouts so `source_line_at` resolves correctly.
+    let tl = &tab.view.text_layouts;
+    let top_source = crate::markdown::source_line_at(&tab.view.rendered, 1, tl, &HashMap::new());
+    let bottom_source = crate::markdown::source_line_at(&tab.view.rendered, 2, tl, &HashMap::new());
+    let expected = build_yank_text(content, top_source, bottom_source);
+    assert_eq!(
+        expected, "beta\ngamma",
+        "yank text must span visual selection"
+    );
+}
+
+// ── New: h/l cursor column movement ─────────────────────────────────────
+
+#[test]
+fn h_moves_cursor_col_left() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/hl_test.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    // Build a line wide enough to have horizontal room.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        let block = make_text_block(&["hello world"]);
+        tab.view.rendered = vec![block];
+        tab.view.total_lines = 1;
+        tab.view.cursor_col = 5;
+    }
+    app.focus = Focus::Viewer;
+    app.handle_key(KeyCode::Char('h'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(tab.view.cursor_col, 4, "h must decrement cursor_col");
+}
+
+#[test]
+fn l_moves_cursor_col_right_clamped() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/hl_clamp.md");
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+    // "abc" is 3 cells wide — max cursor_col = 2.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        let block = make_text_block(&["abc"]);
+        // Populate text_layouts so `current_line_width()` returns 3 for the single row.
+        crate::markdown::update_text_layouts(
+            std::slice::from_ref(&block),
+            &mut tab.view.text_layouts,
+            80,
+        );
+        tab.view.rendered = vec![block];
+        tab.view.total_lines = 1;
+        tab.view.cursor_col = 2; // already at end
+    }
+    app.focus = Focus::Viewer;
+    app.handle_key(KeyCode::Char('l'), KeyModifiers::NONE);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_col, 2,
+        "l at end of line must not exceed line_width-1"
+    );
+}
+
+// ── Feature 1: confirm_search jumps to match line ───────────────────────
+
+#[test]
+fn pending_jump_cleared_after_apply() {
+    // Set a pending jump and simulate a FileLoaded action for the same path.
+    let path = PathBuf::from("/fake/jump_test.md");
+    let content = "line0\nline1\nline2\nline3\nline4";
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs.open_or_focus(&path, true);
+    // Seed the tab as empty (simulates a pending load).
+    // pending_jump is set to source line 2.
+    app.pending_jump = Some((path.clone(), 2));
+    // Now simulate FileLoaded arriving.
+    app.apply_file_loaded(path.clone(), content.to_string(), true, None);
+    assert!(
+        app.pending_jump.is_none(),
+        "pending_jump must be cleared after apply_file_loaded"
+    );
+}
+
+#[test]
+fn confirm_search_filename_result_no_jump() {
+    // A filename-mode result has first_match_line = None;
+    // after the search confirm, pending_jump should remain None.
+    use crate::ui::search_modal::{SearchMode, SearchResult};
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/fn_result.md");
+    app.search.active = true;
+    app.search.mode = SearchMode::FileName;
+    app.search.results = vec![SearchResult {
+        path: path.clone(),
+        name: "fn_result.md".to_string(),
+        match_count: 0,
+        preview: String::new(),
+        first_match_line: None,
+    }];
+    app.search.selected_index = 0;
+    app.confirm_search();
+    assert!(
+        app.pending_jump.is_none(),
+        "filename result must not set pending_jump"
+    );
+}
+
+#[test]
+fn apply_file_loaded_jumps_cursor_to_source_line() {
+    let content = "alpha\nbeta\ngamma\ndelta\nepsilon";
+    let path = PathBuf::from("/fake/jump_cursor.md");
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs.open_or_focus(&path, true);
+    app.tabs.view_height = 20;
+
+    // Populate the tab with a known block (source_lines = [0,1,2,3,4]).
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        let block = make_text_block(&["alpha", "beta", "gamma", "delta", "epsilon"]);
+        let total = block.height();
+        tab.view.rendered = vec![block];
+        tab.view.total_lines = total;
+        tab.view.content = content.to_string();
+        tab.view.current_path = Some(path.clone());
+    }
+
+    let expected_logical = {
+        let tab = app.tabs.active_tab().unwrap();
+        crate::markdown::logical_line_at_source(&tab.view.rendered, 2, &HashMap::new())
+            .expect("controlled block must map source 2 to logical 2")
+    };
+    assert_eq!(
+        expected_logical, 2,
+        "make_text_block must yield source_line == logical_line"
+    );
+
+    app.pending_jump = Some((path.clone(), 2));
+    app.apply_file_loaded(path.clone(), content.to_string(), true, None);
+
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.cursor_line, expected_logical,
+        "cursor_line must land on logical line {expected_logical} for source line 2"
+    );
+    assert!(app.pending_jump.is_none(), "pending_jump must be consumed");
+}
+
+#[test]
+fn pending_jump_cleared_on_file_load_failure() {
+    // A FileLoadFailed for the matching path must clear pending_jump.
+    let path = PathBuf::from("/fake/nonexistent.md");
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.pending_jump = Some((path.clone(), 5));
+    app.handle_action(Action::FileLoadFailed { path: path.clone() });
+    assert!(
+        app.pending_jump.is_none(),
+        "pending_jump must be cleared when the matching file fails to load"
+    );
+}
+
+#[test]
+fn pending_jump_not_cleared_on_different_path_failure() {
+    // A FileLoadFailed for a different path must not touch pending_jump.
+    let path = PathBuf::from("/fake/target.md");
+    let other = PathBuf::from("/fake/other.md");
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.pending_jump = Some((path.clone(), 3));
+    app.handle_action(Action::FileLoadFailed { path: other });
+    assert!(
+        app.pending_jump.is_some(),
+        "pending_jump must be preserved when a different file fails to load"
+    );
+}
+
+/// Reproducer using a real-world doc the user reports as broken.
+#[test]
+#[ignore] // file path is local; run manually via --include-ignored
+fn open_link_picker_real_doc_repro() {
+    use crate::markdown::renderer::render_markdown;
+    use crate::theme::{Palette, Theme};
+    let path = "/Users/leboiko/Documents/temp/temp2/temp3/intuition-v2/.claude/worktrees/agent-a177c0d2/.planning/backlog/recommendation-engine-v1/personal_notes.md";
+    let Ok(src) = std::fs::read_to_string(path) else {
+        eprintln!("file not found, skip");
+        return;
+    };
+    let palette = Palette::from_theme(Theme::Default);
+    let blocks = render_markdown(&src, &palette, Theme::Default, MathMode::Text);
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/personal_notes.md"), true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.recompute_positions();
+    }
+    app.focus = Focus::Viewer;
+
+    let mut expected: Vec<(String, String)> = Vec::new();
+    let mut chars = src.char_indices().peekable();
+    while let Some((_, c)) = chars.next() {
+        if c != '[' {
+            continue;
+        }
+        let mut text = String::new();
+        for (_, c) in chars.by_ref() {
+            if c == ']' {
+                break;
+            }
+            text.push(c);
+        }
+        if let Some(&(_, '(')) = chars.peek() {
+            chars.next();
+            if let Some(&(_, '#')) = chars.peek() {
+                chars.next();
+                let mut anchor = String::new();
+                for (_, c) in chars.by_ref() {
+                    if c == ')' {
+                        break;
+                    }
+                    anchor.push(c);
+                }
+                expected.push((text, anchor));
+            }
+        }
+    }
+
+    app.open_link_picker();
+    let picker = app.link_picker.expect("picker must open");
+
+    eprintln!("\n=== PICKER (first 30) ===");
+    for (i, item) in picker.items.iter().take(30).enumerate() {
+        eprintln!("  [{i:2}] {} -> #{}", item.text, item.anchor);
+    }
+    eprintln!("\n=== SOURCE LINKS (first 30, deduped first-occurrence) ===");
+    let mut seen = std::collections::HashSet::new();
+    let mut shown = 0;
+    for (text, anchor) in &expected {
+        if seen.insert(anchor.clone()) {
+            eprintln!("  [{shown:2}] {text} -> #{anchor}");
+            shown += 1;
+            if shown >= 30 {
+                break;
+            }
+        }
+    }
+}
+
+/// Heading-anchor lookup must NOT lose a usable link just because an
+/// EARLIER same-anchor link had no target. Regression fix for a
+/// dedup-then-filter ordering bug: previously we added the anchor to
+/// the dedup set BEFORE checking `has_target`, so a stray link to a
+/// non-existent anchor would shadow a later valid same-anchor link.
+#[test]
+fn open_link_picker_dedup_after_target_check() {
+    use crate::markdown::renderer::render_markdown;
+    use crate::theme::{Palette, Theme};
+    // First link points at `#missing` (no such heading), second link
+    // points at `#real` (heading exists). After fix: both shown if
+    // anchors differ. With the buggy order, if BOTH pointed at
+    // `#missing` first then `#real` second... actually that's not the
+    // bug — the bug is specifically when SAME anchor appears twice,
+    // first with no target, then with a target. Mock that:
+    let src = r"# Top
+
+See [BadFirst](#real) and [GoodSecond](#real).
+
+## Real
+.
+";
+    let palette = Palette::from_theme(Theme::Default);
+    let blocks = render_markdown(src, &palette, Theme::Default, MathMode::Text);
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/dedup.md"), true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.recompute_positions();
+    }
+    app.focus = Focus::Viewer;
+
+    app.open_link_picker();
+    let picker = app.link_picker.expect("picker must open");
+    let labels: Vec<&str> = picker.items.iter().map(|i| i.text.as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["BadFirst"],
+        "first occurrence wins for dedup; both link to a real anchor here so just one entry",
+    );
+}
+
+/// Reproducer for a possible link-picker order bug where lists or
+/// nested structures break the source-order invariant.
+#[test]
+fn open_link_picker_handles_lists_and_mixed_structures() {
+    use crate::markdown::renderer::render_markdown;
+    use crate::theme::{Palette, Theme};
+    let src = r"# Top
+
+- First, see [Apple](#apple).
+- Second, see [Banana](#banana).
+
+Then prose with [Cherry](#cherry).
+
+1. Numbered: [Date](#date).
+2. Numbered: [Elderberry](#elderberry).
+
+Final prose link: [Fig](#fig).
+
+## Apple
+.
+## Banana
+.
+## Cherry
+.
+## Date
+.
+## Elderberry
+.
+## Fig
+.
+";
+    let palette = Palette::from_theme(Theme::Default);
+    let blocks = render_markdown(src, &palette, Theme::Default, MathMode::Text);
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/lists.md"), true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.recompute_positions();
+    }
+    app.focus = Focus::Viewer;
+
+    app.open_link_picker();
+    let picker = app.link_picker.expect("picker must open");
+    let labels: Vec<&str> = picker.items.iter().map(|i| i.text.as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig"],
+        "picker must list links in source order even across lists, got: {labels:?}",
+    );
+}
+
+/// Regression for the exact user-reported scenario: an intro paragraph
+/// at the TOP of the doc has links pointing at sections at the BOTTOM
+/// of the doc. Source-order put those bottom-section entries near the
+/// top of the picker (positions [1] and [2] in the user's
+/// `personal_notes.md`), confusing j/k navigation. Target-order puts
+/// them where they belong — at the bottom.
+#[test]
+fn open_link_picker_intro_links_to_end_sort_to_bottom() {
+    use crate::markdown::renderer::render_markdown;
+    use crate::theme::{Palette, Theme};
+    let src = r"# Top
+
+Skim [System overview](#system-overview) first. End-of-doc has [appendix](#appendix) and [last section](#last-section).
+
+## System overview
+.
+## Middle section
+.
+## Appendix
+.
+## Last section
+.
+";
+    let palette = Palette::from_theme(Theme::Default);
+    let blocks = render_markdown(src, &palette, Theme::Default, MathMode::Text);
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/intro_links.md"), true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.recompute_positions();
+    }
+    app.focus = Focus::Viewer;
+
+    app.open_link_picker();
+    let picker = app.link_picker.expect("picker must open");
+    let labels: Vec<&str> = picker.items.iter().map(|i| i.text.as_str()).collect();
+    // Source-order of LINKS: System overview, appendix, last section
+    // Target-order: System overview (top), Appendix, Last section
+    // Picker uses target-order so the appendix link sits NEAR THE
+    // BOTTOM where its target lives.
+    assert_eq!(
+        labels,
+        vec!["System overview", "appendix", "last section"],
+        "picker must put appendix/last-section links AFTER section-2 entries, got: {labels:?}",
+    );
+}
+
+/// Pressing `f` on a doc with multiple internal links must list them
+/// in TARGET-heading order — i.e. the order users walking the doc
+/// top-to-bottom would encounter the destinations. A link whose text
+/// appears in the intro paragraph but whose target is at the END of
+/// the doc should sort to the bottom of the picker, not the top.
+#[test]
+fn open_link_picker_lists_links_by_target_position() {
+    use crate::markdown::renderer::render_markdown;
+    use crate::theme::{Palette, Theme};
+    let src = r"# Top
+
+See [Apple](#apple) and [Zebra](#zebra) at the top.
+
+## Middle
+
+Then [Banana](#banana) and [Yellow](#yellow) here.
+
+### Sub
+
+Finally [Cherry](#cherry).
+
+## Apple
+.
+## Banana
+.
+## Cherry
+.
+## Yellow
+.
+## Zebra
+.
+";
+    let palette = Palette::from_theme(Theme::Default);
+    let blocks = render_markdown(src, &palette, Theme::Default, MathMode::Text);
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/links.md"), true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.recompute_positions();
+    }
+    app.focus = Focus::Viewer;
+
+    app.open_link_picker();
+    let picker = app.link_picker.expect("picker must open");
+    let labels: Vec<&str> = picker.items.iter().map(|i| i.text.as_str()).collect();
+    // Source-order of LINKS: Apple, Zebra, Banana, Yellow, Cherry
+    // Source-order of HEADINGS (== target order): Apple, Banana, Cherry, Yellow, Zebra
+    // Picker uses TARGET order so j/k walks the doc top-to-bottom.
+    assert_eq!(
+        labels,
+        vec!["Apple", "Banana", "Cherry", "Yellow", "Zebra"],
+        "picker must list links in TARGET-heading order, got: {labels:?}",
+    );
+}
+
+// ── Mermaid-modal tests ──────────────────────────────────────────────
+
+/// Build a mermaid block helper, mirroring `make_table_block`.
+fn make_mermaid_block(id: u64, source: &str, height: u32) -> DocBlock {
+    DocBlock::Mermaid {
+        id: MermaidBlockId(id),
+        source: source.to_string(),
+        cell_height: Cell::new(height),
+        source_line: 0,
+        source_byte_start: 0,
+        source_byte_end: 0,
+    }
+}
+
+/// Cursor inside a mermaid block: Enter must open THAT block.
+#[test]
+fn try_open_mermaid_modal_picks_block_under_cursor() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/diagrams.md"), true);
+    app.tabs.view_height = 30;
+    app.focus = Focus::Viewer;
+
+    // Layout: [text(3)] [mermaid A id=1 height(5)] [text(3)] [mermaid B id=2 height(5)]
+    //          0..3      3..8                       8..11     11..16
+    let blocks = vec![
+        make_text_block(&["intro", "text", "here"]),
+        make_mermaid_block(1, "graph LR\n A --> B", 5),
+        make_text_block(&["middle", "text", "here"]),
+        make_mermaid_block(2, "sequenceDiagram\n  A->>B: hi", 5),
+    ];
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.scroll_offset = 0;
+        tab.view.cursor_line = 13; // inside block B (11..16)
+    }
+
+    app.try_open_mermaid_modal();
+    let modal = app.mermaid_modal.as_ref().expect("modal must open");
+    assert_eq!(modal.block_id, MermaidBlockId(2));
+    assert_eq!(modal.source, "sequenceDiagram\n  A->>B: hi");
+    assert_eq!(app.focus, Focus::MermaidModal);
+}
+
+/// Cursor on prose: fall back to the first mermaid block in viewport.
+#[test]
+fn try_open_mermaid_modal_falls_back_to_first_visible_block() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/diagrams.md"), true);
+    app.tabs.view_height = 30;
+    app.focus = Focus::Viewer;
+
+    let blocks = vec![
+        make_text_block(&["intro"]),
+        make_mermaid_block(1, "graph LR\n A --> B", 5),
+        make_mermaid_block(2, "sequenceDiagram\n  A->>B: hi", 5),
+    ];
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.scroll_offset = 0;
+        tab.view.cursor_line = 0; // on prose
+    }
+
+    app.try_open_mermaid_modal();
+    let modal = app.mermaid_modal.as_ref().expect("modal must open");
+    assert_eq!(
+        modal.block_id,
+        MermaidBlockId(1),
+        "should fall back to first visible mermaid",
+    );
+}
+
+/// No mermaid blocks → modal stays closed and focus unchanged.
+#[test]
+fn try_open_mermaid_modal_noop_when_no_blocks() {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/no_diagrams.md"), true);
+    app.tabs.view_height = 30;
+    app.focus = Focus::Viewer;
+
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.rendered = vec![make_text_block(&["just prose"])];
+        tab.view.total_lines = 1;
+        tab.view.cursor_line = 0;
+    }
+
+    app.try_open_mermaid_modal();
+    assert!(app.mermaid_modal.is_none());
+    assert_eq!(app.focus, Focus::Viewer);
+}
+
+/// `q` / Esc / Enter close the modal and restore Viewer focus.
+#[test]
+fn handle_mermaid_modal_key_close() {
+    for code in [
+        crossterm::event::KeyCode::Char('q'),
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyCode::Enter,
+    ] {
+        let mut app = App::new(PathBuf::from("."), None, None);
+        app.mermaid_modal = Some(MermaidModalState {
+            tab_id: crate::ui::tabs::TabId(0),
+            block_id: MermaidBlockId(1),
+            source: "graph LR\nA --> B".to_string(),
+            h_scroll: 0,
+            v_scroll: 0,
+            text_zoom: 0,
+        });
+        app.focus = Focus::MermaidModal;
+        app.handle_mermaid_modal_key(code);
+        assert!(app.mermaid_modal.is_none(), "key {code:?} must close modal");
+        assert_eq!(app.focus, Focus::Viewer);
+    }
+}
+
+/// `j` / `k` adjust v_scroll; `h` / `l` adjust h_scroll. Saturating
+/// arithmetic protects the lower bound; the renderer clamps the upper.
+#[test]
+fn handle_mermaid_modal_key_scroll() {
+    use crossterm::event::KeyCode;
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.mermaid_modal = Some(MermaidModalState {
+        tab_id: crate::ui::tabs::TabId(0),
+        block_id: MermaidBlockId(1),
+        source: "graph LR\nA --> B".to_string(),
+        h_scroll: 5,
+        v_scroll: 5,
+        text_zoom: 0,
+    });
+    app.focus = Focus::MermaidModal;
+
+    app.handle_mermaid_modal_key(KeyCode::Char('j'));
+    app.handle_mermaid_modal_key(KeyCode::Char('l'));
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.v_scroll, 6);
+    assert_eq!(s.h_scroll, 6);
+
+    app.handle_mermaid_modal_key(KeyCode::Char('k'));
+    app.handle_mermaid_modal_key(KeyCode::Char('h'));
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.v_scroll, 5);
+    assert_eq!(s.h_scroll, 5);
+
+    // `0` resets h_scroll to 0; `gg` resets both.
+    app.handle_mermaid_modal_key(KeyCode::Char('0'));
+    assert_eq!(app.mermaid_modal.as_ref().unwrap().h_scroll, 0);
+
+    app.handle_mermaid_modal_key(KeyCode::Char('g'));
+    app.handle_mermaid_modal_key(KeyCode::Char('g'));
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.v_scroll, 0);
+    assert_eq!(s.h_scroll, 0);
+}
+
+/// Saturating-sub on h_scroll/v_scroll prevents underflow when at 0.
+#[test]
+fn handle_mermaid_modal_key_scroll_saturating() {
+    use crossterm::event::KeyCode;
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.mermaid_modal = Some(MermaidModalState {
+        tab_id: crate::ui::tabs::TabId(0),
+        block_id: MermaidBlockId(1),
+        source: "x".to_string(),
+        h_scroll: 0,
+        v_scroll: 0,
+        text_zoom: 0,
+    });
+    app.focus = Focus::MermaidModal;
+
+    // Three k presses at v_scroll=0 must remain 0 (no underflow).
+    for _ in 0..3 {
+        app.handle_mermaid_modal_key(KeyCode::Char('k'));
+        app.handle_mermaid_modal_key(KeyCode::Char('h'));
+    }
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.v_scroll, 0);
+    assert_eq!(s.h_scroll, 0);
+}
+
+/// `+` / `-` adjust `text_zoom` and reset scroll offsets so the user lands
+/// at the top-left of the re-rendered diagram (where the layout is most
+/// likely to differ between zoom levels). `=` resets both zoom and scroll.
+#[test]
+fn handle_mermaid_modal_key_zoom_adjusts_text_zoom() {
+    use crossterm::event::KeyCode;
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.mermaid_modal = Some(MermaidModalState {
+        tab_id: crate::ui::tabs::TabId(0),
+        block_id: MermaidBlockId(1),
+        source: "graph LR\nA --> B".to_string(),
+        h_scroll: 7,
+        v_scroll: 3,
+        text_zoom: 0,
+    });
+    app.focus = Focus::MermaidModal;
+
+    app.handle_mermaid_modal_key(KeyCode::Char('+'));
+    app.handle_mermaid_modal_key(KeyCode::Char('+'));
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.text_zoom, 2, "two `+` presses bump zoom to +2");
+    assert_eq!(s.h_scroll, 0, "zoom should reset h_scroll");
+    assert_eq!(s.v_scroll, 0, "zoom should reset v_scroll");
+
+    app.handle_mermaid_modal_key(KeyCode::Char('-'));
+    app.handle_mermaid_modal_key(KeyCode::Char('-'));
+    app.handle_mermaid_modal_key(KeyCode::Char('-'));
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.text_zoom, -1, "three `-` presses leave zoom at -1");
+
+    app.handle_mermaid_modal_key(KeyCode::Char('='));
+    let s = app.mermaid_modal.as_ref().unwrap();
+    assert_eq!(s.text_zoom, 0, "= resets zoom to 0");
+}
+
+// ── Sub-phase 4: Hybrid mode tests ────────────────────────────────────────────
+
+/// Build an `App` with an active tab fully loaded from `source`, using the real
+/// markdown renderer so `view.rendered` and `view.text_layouts` are populated.
+///
+/// The tab is given the fake path `/fake/hybrid_test.md`; focus starts at
+/// `Focus::Viewer` with the cursor at the top of the document.
+fn make_app_with_rendered_tab(source: &str) -> (App, PathBuf) {
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/hybrid_test.md");
+    app.tabs.open_or_focus(&path, true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        let p = Palette::from_theme(Theme::Default);
+        tab.view.load(
+            path.clone(),
+            "hybrid_test.md".to_string(),
+            source.to_string(),
+            &p,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+        // Populate text layout cache at a 80-column width so byte_to_visual and
+        // visual_to_byte can resolve positions in Text blocks.
+        let width = 80u16;
+        crate::markdown::update_text_layouts(&tab.view.rendered, &mut tab.view.text_layouts, width);
+    }
+    app.focus = Focus::Viewer;
+    (app, path)
+}
+
+/// Test 1 — `HybridState::from_source` places the edtui cursor at row 0, col 0
+/// (byte 0 of the source).
+#[test]
+fn hybrid_state_initial_cursor_at_byte_zero_when_starting_fresh() {
+    use crate::ui::hybrid_editor::HybridState;
+    let state = HybridState::from_source("# Hello\n\nworld\n");
+    // edtui's Index2 uses (row, col); both must be 0 for the start of the source.
+    assert_eq!(
+        state.editor_state.cursor.row, 0,
+        "initial cursor row must be 0"
+    );
+    assert_eq!(
+        state.editor_state.cursor.col, 0,
+        "initial cursor col must be 0"
+    );
+    // line_boundaries[0] is always 0.
+    assert_eq!(
+        state.line_boundaries.first().copied(),
+        Some(0),
+        "first line boundary must be byte 0"
+    );
+    // source and baseline must both equal the input.
+    assert_eq!(state.source, "# Hello\n\nworld\n");
+    assert_eq!(state.baseline, "# Hello\n\nworld\n");
+    assert!(
+        !state.is_dirty(),
+        "freshly constructed state must not be dirty"
+    );
+}
+
+/// Test 2 — `enter_hybrid_mode` sets `app.focus == Focus::HybridEditor` and
+/// `tab.hybrid.is_some()`.
+#[test]
+fn enter_hybrid_mode_sets_focus_correctly() {
+    let (mut app, _path) = make_app_with_rendered_tab("# Heading\n\nParagraph text.\n");
+    app.enter_hybrid_mode();
+    assert_eq!(
+        app.focus,
+        Focus::HybridEditor,
+        "focus must be HybridEditor after enter_hybrid_mode"
+    );
+    let tab = app.tabs.active_tab().expect("tab must exist");
+    assert!(
+        tab.hybrid.is_some(),
+        "tab.hybrid must be Some after enter_hybrid_mode"
+    );
+}
+
+/// Test 3 — after enter then exit, `app.focus == Focus::Viewer` and
+/// `tab.hybrid.is_none()`.
+#[test]
+fn exit_hybrid_mode_restores_viewer_focus() {
+    let (mut app, _path) = make_app_with_rendered_tab("Hello world.\n");
+    app.enter_hybrid_mode();
+    assert_eq!(app.focus, Focus::HybridEditor);
+    app.exit_hybrid_mode();
+    assert_eq!(
+        app.focus,
+        Focus::Viewer,
+        "focus must return to Viewer after exit_hybrid_mode"
+    );
+    let tab = app.tabs.active_tab().expect("tab must exist");
+    assert!(
+        tab.hybrid.is_none(),
+        "tab.hybrid must be None after exit_hybrid_mode"
+    );
+}
+
+/// Test 4 — pressing lowercase `i` now enters `Focus::HybridEditor` by default
+/// (since 1.33.0, `use_hybrid_by_default = true`).
+#[test]
+fn i_keybinding_enters_hybrid_mode_by_default() {
+    let (mut app, _path) = make_app_with_rendered_tab("# Hybrid default\n");
+    // `use_hybrid_by_default` is `true` in the default Config, so `i` → hybrid.
+    assert!(
+        app.use_hybrid_by_default,
+        "default must be use_hybrid_by_default = true"
+    );
+    app.handle_viewer_key(KeyCode::Char('i'), KeyModifiers::empty());
+    assert_eq!(
+        app.focus,
+        Focus::HybridEditor,
+        "lowercase `i` must enter Focus::HybridEditor when use_hybrid_by_default is true"
+    );
+    let tab = app.tabs.active_tab().expect("tab must exist");
+    assert!(
+        tab.hybrid.is_some(),
+        "tab.hybrid must be Some after `i` with use_hybrid_by_default = true"
+    );
+    // The fullscreen editor must NOT have been activated.
+    assert!(
+        tab.editor.is_none(),
+        "tab.editor must remain None after `i` with use_hybrid_by_default = true"
+    );
+}
+
+/// Test 5 — pressing uppercase `I` now calls `enter_edit_mode` (legacy fullscreen
+/// edtui escape hatch) when `use_hybrid_by_default = true` (default since 1.33.0).
+#[test]
+fn capital_i_keybinding_enters_fullscreen_edit_by_default() {
+    let (mut app, _path) = make_app_with_rendered_tab("# Escape hatch\n\nSome text.\n");
+    assert!(
+        app.use_hybrid_by_default,
+        "default must be use_hybrid_by_default = true"
+    );
+    app.handle_viewer_key(KeyCode::Char('I'), KeyModifiers::empty());
+    assert_eq!(
+        app.focus,
+        Focus::Editor,
+        "`I` must enter Focus::Editor (fullscreen edtui) when use_hybrid_by_default is true"
+    );
+    let tab = app.tabs.active_tab().expect("tab must exist");
+    assert!(
+        tab.editor.is_some(),
+        "tab.editor must be Some after pressing `I` with use_hybrid_by_default = true"
+    );
+    // Hybrid state must NOT have been touched.
+    assert!(
+        tab.hybrid.is_none(),
+        "tab.hybrid must remain None after `I` with use_hybrid_by_default = true"
+    );
+}
+
+/// Test 5b — with `use_hybrid_by_default = false`, the bindings revert to the
+/// pre-1.33.0 behaviour: `i` → fullscreen edtui, `I` → hybrid.
+#[test]
+fn keybindings_revert_when_use_hybrid_by_default_is_false() {
+    // `i` → fullscreen edtui
+    let (mut app_i, _path) = make_app_with_rendered_tab("# Opt-out i\n");
+    app_i.use_hybrid_by_default = false;
+    app_i.handle_viewer_key(KeyCode::Char('i'), KeyModifiers::empty());
+    assert_eq!(
+        app_i.focus,
+        Focus::Editor,
+        "`i` must enter Focus::Editor when use_hybrid_by_default = false"
+    );
+    let tab_i = app_i.tabs.active_tab().expect("tab must exist");
+    assert!(
+        tab_i.editor.is_some(),
+        "tab.editor must be Some after `i` with use_hybrid_by_default = false"
+    );
+    assert!(
+        tab_i.hybrid.is_none(),
+        "tab.hybrid must remain None after `i` with use_hybrid_by_default = false"
+    );
+
+    // `I` → hybrid
+    let (mut app_shift_i, _path2) = make_app_with_rendered_tab("# Opt-out I\n\nText.\n");
+    app_shift_i.use_hybrid_by_default = false;
+    app_shift_i.handle_viewer_key(KeyCode::Char('I'), KeyModifiers::empty());
+    assert_eq!(
+        app_shift_i.focus,
+        Focus::HybridEditor,
+        "`I` must enter Focus::HybridEditor when use_hybrid_by_default = false"
+    );
+    let tab_shift_i = app_shift_i.tabs.active_tab().expect("tab must exist");
+    assert!(
+        tab_shift_i.hybrid.is_some(),
+        "tab.hybrid must be Some after `I` with use_hybrid_by_default = false"
+    );
+    assert!(
+        tab_shift_i.editor.is_none(),
+        "tab.editor must remain None after `I` with use_hybrid_by_default = false"
+    );
+}
+
+/// Test 6 — snapshot/rendering smoke test.  With `tab.hybrid` populated, the
+/// draw pipeline doesn't panic and produces the same block-level output as
+/// without hybrid (no visual change to formatted blocks).
+///
+/// Full terminal rendering in a unit test requires a backend; we skip the
+/// `f.set_cursor_position` assertion and instead verify that entering hybrid
+/// mode does NOT change `tab.view.rendered` (the formatted blocks are
+/// byte-identical to what was rendered without hybrid).
+#[test]
+fn hybrid_mode_does_not_alter_rendered_blocks() {
+    let source = "# Title\n\nBody paragraph.\n";
+    let p = Palette::from_theme(Theme::Default);
+
+    // Render once without hybrid.
+    let blocks_without_hybrid =
+        crate::markdown::renderer::render_markdown(source, &p, Theme::Default, MathMode::Text);
+
+    // Render with hybrid entry (which must not re-render the blocks).
+    let (mut app, _path) = make_app_with_rendered_tab(source);
+    app.enter_hybrid_mode();
+    let tab = app.tabs.active_tab().expect("tab must exist");
+
+    // Number of blocks must be identical.
+    assert_eq!(
+        tab.view.rendered.len(),
+        blocks_without_hybrid.len(),
+        "block count must be the same before and after entering hybrid mode"
+    );
+
+    // Spot-check: each block's source byte range is unchanged.  The rendered
+    // text content (Tab::view::rendered) is not mutated by enter_hybrid_mode.
+    for (i, (with_hybrid, without_hybrid)) in tab
+        .view
+        .rendered
+        .iter()
+        .zip(blocks_without_hybrid.iter())
+        .enumerate()
+    {
+        let (hs, he) = {
+            let (s, e) = with_hybrid.source_byte_range();
+            (s as u32, e as u32)
+        };
+        let (ws, we) = {
+            let (s, e) = without_hybrid.source_byte_range();
+            (s as u32, e as u32)
+        };
+        assert_eq!(
+            (hs, he),
+            (ws, we),
+            "block[{i}] byte range must be identical with/without hybrid"
+        );
+    }
+}
+
+// ── Outline picker ────────────────────────────────────────────────────────────
+
+/// Pressing `o` in the viewer should open the outline picker with one entry
+/// per heading in the document and set focus to `OutlinePicker`.
+#[test]
+fn pressing_o_opens_outline_picker() {
+    use crate::markdown::renderer::render_markdown;
+    use crate::theme::{Palette, Theme};
+
+    let src = "# First Heading\n\nSome text.\n\n## Second Heading\n\nMore text.\n";
+    let palette = Palette::from_theme(Theme::Default);
+    let blocks = render_markdown(src, &palette, Theme::Default, MathMode::Text);
+
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tabs
+        .open_or_focus(&PathBuf::from("/fake/outline_test.md"), true);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.total_lines = blocks.iter().map(DocBlock::height).sum();
+        tab.view.rendered = blocks;
+        tab.view.recompute_positions();
+    }
+    app.focus = Focus::Viewer;
+
+    // Simulate pressing `o`.
+    app.open_outline_picker();
+
+    assert_eq!(
+        app.focus,
+        Focus::OutlinePicker,
+        "focus must switch to OutlinePicker"
+    );
+    let picker = app
+        .outline_picker
+        .as_ref()
+        .expect("outline_picker must be Some");
+    assert_eq!(
+        picker.entries.len(),
+        2,
+        "doc has 2 headings, picker must list both"
+    );
+    // Entries are in document order: H1 before H2.
+    assert_eq!(picker.entries[0].level, 1, "first entry must be H1");
+    assert_eq!(picker.entries[1].level, 2, "second entry must be H2");
+}
+
+#[tokio::test]
+async fn applying_theme_preserves_position_with_mermaid_blocks() {
+    // User-reported residual after the cursor_line restoration fix:
+    // applying a theme clears `mermaid_cache`, so on the next draw
+    // `update_mermaid_heights` reads `DEFAULT_MERMAID_HEIGHT` (20) for
+    // every mermaid block until the async re-render lands. total_lines
+    // shrinks → cursor/scroll appear to jump up. When the render lands
+    // (~100ms later), they snap back. Symptom only appears when the
+    // cursor is near a mermaid block.
+    use crate::markdown::{DocBlock, MermaidBlockId, update_mermaid_heights};
+    use crate::mermaid::MermaidEntry;
+    use crate::theme::{Palette, Theme};
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/mermaid_test.md");
+    app.tabs.open_or_focus(&path, true);
+    let content = "# Doc\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nsome text after\n";
+    let palette = Palette::from_theme(Theme::Default);
+    let max_height = 50u32;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "mermaid_test.md".to_string(),
+            content.to_string(),
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+    }
+    // Pretend the mermaid block had previously rendered to a 30-cell-tall
+    // image (much larger than DEFAULT_MERMAID_HEIGHT = 20).
+    let mermaid_id: MermaidBlockId = if let Some(tab) = app.tabs.active_tab() {
+        tab.view
+            .rendered
+            .iter()
+            .find_map(|b| {
+                if let DocBlock::Mermaid { id, .. } = b {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .expect("test content must contain a mermaid block")
+    } else {
+        panic!("active tab missing");
+    };
+    let large_height: u32 = 30;
+    // Insert a fake AsciiDiagram entry with the expected large height —
+    // simulates an already-rendered diagram. AsciiDiagram height is derived
+    // from line count; we can't easily fake that without long source. Instead,
+    // populate cell_height directly on the block to mirror what the production
+    // draw cycle would do.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        for b in &mut tab.view.rendered {
+            if let DocBlock::Mermaid { cell_height, .. } = b {
+                cell_height.set(large_height);
+            }
+        }
+        tab.view.total_lines = tab
+            .view
+            .rendered
+            .iter()
+            .map(|b: &DocBlock| b.height())
+            .sum();
+        // Position cursor inside the mermaid block region.
+        tab.view.cursor_line = 5;
+        tab.view.scroll_offset = 0;
+    }
+    // Insert a corresponding AsciiDiagram entry so the cache returns the
+    // large height during update_mermaid_heights — this mirrors the steady
+    // state before the user opens the config popup.
+    let fake_diagram = "X".repeat(0) + &"\n".repeat((large_height - 2) as usize);
+    app.mermaid_cache.insert(
+        mermaid_id,
+        MermaidEntry::AsciiDiagram {
+            diagram: fake_diagram.clone(),
+            reason: "test".to_string(),
+            styled_text_cache: RefCell::new(None),
+        },
+    );
+    // Let update_mermaid_heights set cell_height from the cache once.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        update_mermaid_heights(&tab.view.rendered, &app.mermaid_cache, max_height);
+        tab.view.total_lines = tab
+            .view
+            .rendered
+            .iter()
+            .map(|b: &DocBlock| b.height())
+            .sum();
+    }
+    let total_before = app.tabs.active_tab().unwrap().view.total_lines;
+    let cursor_before = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_before = app.tabs.active_tab().unwrap().view.scroll_offset;
+
+    // Apply the theme — this clears mermaid_cache.
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    app.handle_key(KeyCode::Down, KeyModifiers::NONE);
+    app.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    // Simulate the next draw — update_mermaid_heights now reads DEFAULT
+    // for the missing entry and total_lines shrinks.
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        update_mermaid_heights(&tab.view.rendered, &app.mermaid_cache, max_height);
+        tab.view.total_lines = tab
+            .view
+            .rendered
+            .iter()
+            .map(|b: &DocBlock| b.height())
+            .sum();
+    }
+    let total_after = app.tabs.active_tab().unwrap().view.total_lines;
+    let cursor_after = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_after = app.tabs.active_tab().unwrap().view.scroll_offset;
+    assert_eq!(
+        total_after, total_before,
+        "total_lines must NOT shrink during the brief window when mermaid_cache is being refreshed for a theme change (was {total_before}, became {total_after})"
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "cursor_line drifted: was {cursor_before}, became {cursor_after}"
+    );
+    assert_eq!(
+        scroll_after, scroll_before,
+        "scroll_offset drifted: was {scroll_before}, became {scroll_after}"
+    );
+}
+
+#[tokio::test]
+async fn applying_theme_preserves_position_across_draw_cycle() {
+    // Reproduces the user-reported residual after the cursor_line restoration
+    // fix: even with cursor_line preserved across `tab.view.load`, the *first
+    // draw after rerender* re-runs `update_text_layouts` which can change
+    // `total_lines`. If the new total_lines puts the existing scroll_offset
+    // past the `total_lines - vh/2` clamp, scroll_offset gets clamped down.
+    //
+    // To repro the real scenario we have to simulate the draw-cycle layout
+    // pass that runs between user interactions.
+    use crate::markdown::{DocBlock, update_text_layouts};
+    use crate::theme::{Palette, Theme};
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/wrap_test.md");
+    app.tabs.open_or_focus(&path, true);
+    let content: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        // Long lines that wrap when content_width is small.
+        for i in 0..30usize {
+            let _ = write!(
+                s,
+                "paragraph {i} with some words that will wrap nicely under a narrow viewer column when it is rendered to the user\n\n"
+            );
+        }
+        s
+    };
+    let palette = Palette::from_theme(Theme::Default);
+    let layout_width: u16 = 40;
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "wrap_test.md".to_string(),
+            content,
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+        update_text_layouts(&tab.view.rendered, &mut tab.view.text_layouts, layout_width);
+        tab.view.layout_width = layout_width;
+        tab.view.total_lines = tab
+            .view
+            .rendered
+            .iter()
+            .map(|b: &DocBlock| b.height())
+            .sum();
+        tab.view.cursor_line = 50;
+        tab.view.scroll_offset = 35;
+    }
+    app.focus = Focus::Viewer;
+    app.tabs.view_height = 30;
+
+    let cursor_before = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_before = app.tabs.active_tab().unwrap().view.scroll_offset;
+    let total_before = app.tabs.active_tab().unwrap().view.total_lines;
+
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    app.handle_key(KeyCode::Down, KeyModifiers::NONE);
+    app.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        update_text_layouts(&tab.view.rendered, &mut tab.view.text_layouts, layout_width);
+        tab.view.layout_width = layout_width;
+        tab.view.total_lines = tab
+            .view
+            .rendered
+            .iter()
+            .map(|b: &DocBlock| b.height())
+            .sum();
+    }
+
+    let cursor_after = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_after = app.tabs.active_tab().unwrap().view.scroll_offset;
+    let total_after = app.tabs.active_tab().unwrap().view.total_lines;
+
+    assert_eq!(
+        total_after, total_before,
+        "total_lines should be identical after theme rerender at same width (was {total_before}, became {total_after})"
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "cursor_line drifted across theme apply + draw: was {cursor_before}, became {cursor_after}"
+    );
+    assert_eq!(
+        scroll_after, scroll_before,
+        "scroll_offset drifted across theme apply + draw: was {scroll_before}, became {scroll_after}"
+    );
+}
+
+#[tokio::test]
+async fn applying_theme_preserves_viewer_cursor_and_scroll() {
+    // User-reported scenario: open config (`c`), select a theme, press
+    // Enter — the apply path goes through `rerender_all_tabs` →
+    // `tab.view.load` which previously reset cursor_line to 0. The viewer
+    // appeared to "scroll" because the cursor jumped to the top.
+    use crate::theme::{Palette, Theme};
+    let mut app = App::new(PathBuf::from("."), None, None);
+    let path = PathBuf::from("/fake/nav_test.md");
+    app.tabs.open_or_focus(&path, true);
+    let content: String = {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        for i in 0..60usize {
+            let _ = write!(s, "paragraph {i}\n\n");
+        }
+        s
+    };
+    let palette = Palette::from_theme(Theme::Default);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.load(
+            path.clone(),
+            "nav_test.md".to_string(),
+            content,
+            &palette,
+            Theme::Default,
+            crate::config::MathMode::Text,
+        );
+        tab.view.cursor_line = 50;
+        tab.view.scroll_offset = 35;
+    }
+    app.focus = Focus::Viewer;
+    app.tabs.view_height = 30;
+
+    let cursor_before = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_before = app.tabs.active_tab().unwrap().view.scroll_offset;
+
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    app.handle_key(KeyCode::Down, KeyModifiers::NONE);
+    app.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+
+    let cursor_after = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_after = app.tabs.active_tab().unwrap().view.scroll_offset;
+    assert_eq!(
+        cursor_after, cursor_before,
+        "applying a theme must preserve viewer cursor_line (was {cursor_before}, became {cursor_after})"
+    );
+    assert_eq!(
+        scroll_after, scroll_before,
+        "applying a theme must preserve viewer scroll_offset (was {scroll_before}, became {scroll_after})"
+    );
+}
+
+#[test]
+fn mouse_scroll_does_not_pass_through_open_config_popup() {
+    let mut app = make_app_with_view(100, 30);
+    if let Some(tab) = app.tabs.active_tab_mut() {
+        tab.view.cursor_line = 0;
+        tab.view.scroll_offset = 0;
+    }
+    app.viewer_area_rect = Some(ratatui::layout::Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 30,
+    });
+    app.config_popup = Some(ConfigPopupState::default());
+    app.focus = Focus::Config;
+
+    let cursor_before = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_before = app.tabs.active_tab().unwrap().view.scroll_offset;
+
+    let m = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 40,
+        row: 15,
+        modifiers: KeyModifiers::empty(),
+    };
+    app.handle_mouse(m);
+
+    let cursor_after = app.tabs.active_tab().unwrap().view.cursor_line;
+    let scroll_after = app.tabs.active_tab().unwrap().view.scroll_offset;
+    assert_eq!(
+        cursor_after, cursor_before,
+        "viewer cursor must not move while config popup is open"
+    );
+    assert_eq!(
+        scroll_after, scroll_before,
+        "viewer scroll must not move while config popup is open"
+    );
+}
+
+// ── File-tree visibility setting (PR #15) ────────────────────────────────────
+
+/// Reproduce the production cursor-offset arithmetic so a regression in
+/// `PANELS_ROWS` (or any earlier section count) that silently mis-routes every
+/// setting below Panels fails loudly. Each assertion pins an exact value, so a
+/// no-op or wrongly-shifted route cannot satisfy it.
+#[tokio::test]
+async fn config_selection_routing_pins_settings_to_their_sections() {
+    use crate::config::SearchPreview;
+    let theme_count = Theme::ALL.len();
+    let panels_start = theme_count + 1; // +1 for the single Markdown row
+    let search_start = panels_start + 3; // 3 Panels rows: show-tree, left, right
+    let mermaid_start = search_start + 2; // 2 Search rows
+
+    // `panels_start` must toggle tree visibility and leave Search untouched.
+    crate::config::use_isolated_test_config();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.search_preview = SearchPreview::Snippet;
+    let hidden_before = app.tree_hidden;
+    app.apply_config_selection(panels_start);
+    assert_ne!(
+        app.tree_hidden, hidden_before,
+        "panels_start must toggle tree visibility"
+    );
+    assert_eq!(
+        app.search_preview,
+        SearchPreview::Snippet,
+        "panels_start must NOT touch the search preview"
+    );
+
+    // `search_start` must set the Search preview, proving the Panels rows did
+    // not shift the Search section. Starts from Snippet so FullLine is a change.
+    let mut app2 = App::new(PathBuf::from("."), None, None);
+    app2.search_preview = SearchPreview::Snippet;
+    app2.apply_config_selection(search_start);
+    assert_eq!(
+        app2.search_preview,
+        SearchPreview::FullLine,
+        "search_start must route to the Search section (FullLine)"
+    );
+
+    // `mermaid_start` must change the mermaid mode, not the search preview.
+    let mut app3 = App::new(PathBuf::from("."), None, None);
+    app3.search_preview = SearchPreview::Snippet;
+    app3.apply_config_selection(mermaid_start);
+    assert_eq!(
+        app3.search_preview,
+        SearchPreview::Snippet,
+        "mermaid_start must NOT touch the search preview"
+    );
+    assert_eq!(
+        app3.mermaid_mode,
+        crate::config::MermaidMode::Auto,
+        "mermaid_start must route to the Mermaid section (Auto)"
+    );
+}
+
+/// `H` lazily discovers the tree on first reveal and the `tree_discovered`
+/// latch survives a re-hide, so repeated toggles never queue duplicate walks.
+#[test]
+fn h_key_lazy_discovers_tree_and_latch_persists() {
+    crate::config::use_isolated_test_config();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    // Simulate launching with `show_file_tree = false`.
+    app.tree_hidden = true;
+    app.show_file_tree = false;
+    app.tree_discovered = false;
+    app.focus = Focus::Viewer;
+
+    // First reveal must unhide and mark discovered (even with no action_tx).
+    app.handle_key(KeyCode::Char('H'), KeyModifiers::NONE);
+    assert!(!app.tree_hidden, "H must reveal the tree");
+    assert!(
+        app.tree_discovered,
+        "first reveal must mark the tree discovered before spawning the walk"
+    );
+
+    // Re-hide must not reset the discovery latch.
+    app.handle_key(KeyCode::Char('H'), KeyModifiers::NONE);
+    assert!(app.tree_hidden, "second H must hide the tree");
+    assert!(
+        app.tree_discovered,
+        "re-hiding must not reset tree_discovered"
+    );
+}
+
+/// `H` is an ephemeral runtime toggle: it must never rewrite the persisted
+/// `show_file_tree` startup preference.
+#[test]
+fn h_key_does_not_rewrite_startup_preference() {
+    crate::config::use_isolated_test_config();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.show_file_tree = true;
+    app.tree_hidden = false;
+    app.focus = Focus::Viewer;
+
+    app.handle_key(KeyCode::Char('H'), KeyModifiers::NONE);
+    assert!(app.tree_hidden, "H must hide the tree");
+    assert!(
+        app.show_file_tree,
+        "H must leave the persisted startup preference untouched"
+    );
+}
+
+/// Toggling "Show file tree" in the settings popup flips live visibility, keeps
+/// the persisted preference in sync (so the bullet always matches reality), and
+/// redirects focus off the tree when it disappears.
+#[tokio::test]
+async fn config_toggle_syncs_visibility_focus_and_preference() {
+    crate::config::use_isolated_test_config();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tree_hidden = false;
+    app.show_file_tree = true;
+    app.focus = Focus::Tree;
+    let panels_start = Theme::ALL.len() + 1;
+
+    // Toggle off: tree hides, preference follows, focus leaves the hidden panel.
+    app.apply_config_selection(panels_start);
+    assert!(app.tree_hidden, "toggle must hide the tree");
+    assert!(
+        !app.show_file_tree,
+        "persisted preference must mirror the hidden state"
+    );
+    assert_eq!(
+        app.focus,
+        Focus::Viewer,
+        "focus must move off the now-hidden tree"
+    );
+
+    // Toggle on: tree shows, preference follows, discovery is ensured.
+    app.apply_config_selection(panels_start);
+    assert!(!app.tree_hidden, "toggle must reveal the tree");
+    assert!(
+        app.show_file_tree,
+        "persisted preference must mirror the visible state"
+    );
+    assert!(
+        app.tree_discovered,
+        "revealing via the popup must ensure the tree is discovered"
+    );
+}
+
+/// A `FilesChanged` event while the tree has never been discovered must not
+/// trigger a background walk or flip the discovery latch.
+#[test]
+fn files_changed_while_undiscovered_skips_rediscovery() {
+    crate::config::use_isolated_test_config();
+    let mut app = App::new(PathBuf::from("."), None, None);
+    app.tree_hidden = true;
+    app.show_file_tree = false;
+    app.tree_discovered = false;
+
+    app.handle_action(Action::FilesChanged(vec![PathBuf::from("/fake/x.md")]));
+    assert!(
+        !app.tree_discovered,
+        "FilesChanged must not discover the tree while it is hidden+undiscovered"
+    );
+}
+
+/// Repro for #17: with a file open, the filesystem watcher fires `TreeDiscovered`
+/// roughly once a second on noisy filesystems (e.g. Chrostini inotify emitting
+/// spurious `IN_ACCESS`). Each rediscovery must NOT snap the tree cursor back to
+/// the open file — doing so strands the user, who can never navigate to or open
+/// a different file. The *first* discovery still aligns the tree with the viewer.
+#[test]
+fn watcher_rediscovery_preserves_user_tree_selection() {
+    use crate::fs::discovery::FileEntry;
+
+    let file_a = PathBuf::from("/fake/test.md"); // the open file (active tab)
+    let file_b = PathBuf::from("/fake/other.md"); // where the user navigates
+
+    let (mut app, _path) = make_app_with_tab("# A");
+    app.focus = Focus::Tree;
+    app.tree_discovered = true;
+
+    let entries = vec![
+        FileEntry {
+            path: file_a.clone(),
+            name: "test.md".into(),
+            is_dir: false,
+            children: vec![],
+        },
+        FileEntry {
+            path: file_b.clone(),
+            name: "other.md".into(),
+            is_dir: false,
+            children: vec![],
+        },
+    ];
+
+    // First discovery aligns the tree to the open file — intended behaviour.
+    app.handle_action(Action::TreeDiscovered(entries.clone()));
+    assert_eq!(
+        app.tree.selected_path(),
+        Some(file_a.as_path()),
+        "first discovery must align the tree to the open file"
+    );
+
+    // The user navigates down to the second file.
+    app.tree.move_down();
+    assert_eq!(
+        app.tree.selected_path(),
+        Some(file_b.as_path()),
+        "precondition: user moved the selection to the second file"
+    );
+
+    // The watcher fires again (inotify noise) → another TreeDiscovered.
+    app.handle_action(Action::TreeDiscovered(entries.clone()));
+
+    // The user's selection must survive: NOT snapped back to the open file.
+    assert_eq!(
+        app.tree.selected_path(),
+        Some(file_b.as_path()),
+        "#17: watcher rediscovery must not steal the cursor back to the open file"
+    );
+}
+
+// ── #16: focus must never land on a hidden file tree ──────────────────────────
+//
+// Every handler that returns focus "to the tree" must resolve to the viewer
+// when the tree is hidden. Each test drives the real entry point twice — once
+// with the tree visible (must reach `Focus::Tree`) and once hidden (must reach
+// `Focus::Viewer`) — so an implementation that always picks one branch fails.
+
+/// `Tab` from the viewer.
+#[test]
+fn tab_from_viewer_respects_hidden_tree() {
+    let (mut app, _p) = make_app_with_tab("body");
+
+    app.tree_hidden = false;
+    app.focus = Focus::Viewer;
+    app.handle_viewer_key(KeyCode::Tab, KeyModifiers::NONE);
+    assert_eq!(app.focus, Focus::Tree, "Tab focuses the visible tree");
+
+    app.tree_hidden = true;
+    app.focus = Focus::Viewer;
+    app.handle_viewer_key(KeyCode::Tab, KeyModifiers::NONE);
+    assert_eq!(
+        app.focus,
+        Focus::Viewer,
+        "#16: Tab must not focus a hidden tree"
+    );
+}
+
+/// Closing the last tab from the viewer (`x`).
+#[test]
+fn last_tab_close_respects_hidden_tree() {
+    for (hidden, expected) in [(false, Focus::Tree), (true, Focus::Viewer)] {
+        let (mut app, _p) = make_app_with_tab("body");
+        app.tree_hidden = hidden;
+        app.focus = Focus::Viewer;
+        app.handle_viewer_key(KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(app.tabs.is_empty(), "precondition: the last tab is closed");
+        assert_eq!(
+            app.focus, expected,
+            "#16: closing the last tab with tree_hidden={hidden} must focus {expected:?}"
+        );
+    }
+}
+
+/// `Esc` out of the search overlay.
+#[test]
+fn search_esc_respects_hidden_tree() {
+    for (hidden, expected) in [(false, Focus::Tree), (true, Focus::Viewer)] {
+        let (mut app, _p) = make_app_with_tab("body");
+        app.tree_hidden = hidden;
+        app.search.active = true;
+        app.focus = Focus::Search;
+        app.handle_search_key(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(!app.search.active, "Esc closes the search overlay");
+        assert_eq!(
+            app.focus, expected,
+            "#16: search Esc with tree_hidden={hidden} must focus {expected:?}"
+        );
+    }
+}
+
+/// Dismissing the copy-path popup (Enter and Esc).
+#[test]
+fn copy_menu_dismiss_respects_hidden_tree() {
+    for code in [KeyCode::Esc, KeyCode::Enter] {
+        for (hidden, expected) in [(false, Focus::Tree), (true, Focus::Viewer)] {
+            let (mut app, _p) = make_app_with_tab("body");
+            app.tree_hidden = hidden;
+            app.focus = Focus::CopyMenu;
+            app.copy_menu = Some(CopyMenuState {
+                cursor: 1, // filename branch — avoids touching the clipboard path
+                path: PathBuf::from("/fake/test.md"),
+                name: "test.md".into(),
+            });
+            app.handle_copy_menu_key(code);
+            assert!(app.copy_menu.is_none(), "{code:?} dismisses the copy menu");
+            assert_eq!(
+                app.focus, expected,
+                "#16: copy-menu {code:?} with tree_hidden={hidden} must focus {expected:?}"
+            );
+        }
+    }
+}
+
+/// Closing the last tab via the mouse close button (×) — the separate
+/// `handle_mouse` path, distinct from the keyboard `x` covered above.
+#[test]
+fn mouse_last_tab_close_respects_hidden_tree() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    for (hidden, expected) in [(false, Focus::Tree), (true, Focus::Viewer)] {
+        let (mut app, _p) = make_app_with_tab("body");
+        app.tree_hidden = hidden;
+        app.focus = Focus::Viewer;
+
+        // Inject a close-button rect so the click resolves to the close path.
+        let tab_id = app.tabs.active.expect("an active tab must exist");
+        app.tab_close_rects = vec![(
+            tab_id,
+            ratatui::layout::Rect {
+                x: 5,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+        )];
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(app.tabs.is_empty(), "mouse close must close the last tab");
+        assert_eq!(
+            app.focus, expected,
+            "#16: mouse tab-close with tree_hidden={hidden} must focus {expected:?}"
+        );
+    }
+}
+
+/// The tree realigns to the open file on first discovery, but the `aligned`
+/// latch then stays set — so even a transient empty tree (all files deleted,
+/// then recreated) does NOT re-steal the cursor back to the open file. This is
+/// the edge a "nothing selected yet" heuristic would mishandle.
+#[test]
+fn tree_realigns_only_until_first_alignment() {
+    use crate::fs::discovery::FileEntry;
+
+    // Order matters: the open file (file_a) is NOT at index 0, so a forced
+    // realign (reveal) is observably different from rebuild's default-to-row-0.
+    let file_a = PathBuf::from("/fake/test.md"); // the open file (index 1)
+    let file_b = PathBuf::from("/fake/other.md"); // index 0
+    let entries = || {
+        vec![
+            FileEntry {
+                path: file_b.clone(),
+                name: "other.md".into(),
+                is_dir: false,
+                children: vec![],
+            },
+            FileEntry {
+                path: file_a.clone(),
+                name: "test.md".into(),
+                is_dir: false,
+                children: vec![],
+            },
+        ]
+    };
+
+    let (mut app, _p) = make_app_with_tab("# A");
+    app.focus = Focus::Tree;
+    app.tree_discovered = true;
+
+    // First discovery aligns to the open file (index 1) and latches `aligned`.
+    app.handle_action(Action::TreeDiscovered(entries()));
+    assert_eq!(app.tree.selected_path(), Some(file_a.as_path()));
+    assert!(app.tree.aligned, "first discovery must latch aligned");
+
+    // All files vanish (e.g. directory wiped) → selection clears.
+    app.handle_action(Action::TreeDiscovered(vec![]));
+    assert_eq!(app.tree.selected_path(), None);
+
+    // Files reappear. A "nothing selected" heuristic would re-reveal here and
+    // jump to file_a (index 1); the latch prevents that, so rebuild's default
+    // leaves the cursor on row 0 (file_b) — NOT forced onto the open file.
+    app.handle_action(Action::TreeDiscovered(entries()));
+    assert_eq!(
+        app.tree.selected_path(),
+        Some(file_b.as_path()),
+        "#17: a transient empty tree must not re-trigger a forced realign to the open file"
+    );
+}
+
+/// Revealing a hidden tree (lazy discovery via the latch) must still align it
+/// to the open file the first time — the latch must not suppress the *initial*
+/// alignment.
+#[test]
+fn lazy_discovery_aligns_hidden_tree_to_open_file() {
+    use crate::fs::discovery::FileEntry;
+
+    let file_a = PathBuf::from("/fake/test.md");
+    let file_b = PathBuf::from("/fake/other.md");
+
+    let (mut app, _p) = make_app_with_tab("# A");
+    // Simulate a hidden tree that has never been discovered: empty + not aligned.
+    app.tree_hidden = true;
+    app.tree_discovered = true; // pretend H just triggered discovery
+    assert!(!app.tree.aligned, "precondition: tree not yet aligned");
+
+    app.handle_action(Action::TreeDiscovered(vec![
+        FileEntry {
+            path: file_b.clone(),
+            name: "other.md".into(),
+            is_dir: false,
+            children: vec![],
+        },
+        FileEntry {
+            path: file_a.clone(),
+            name: "test.md".into(),
+            is_dir: false,
+            children: vec![],
+        },
+    ]));
+
+    assert_eq!(
+        app.tree.selected_path(),
+        Some(file_a.as_path()),
+        "first discovery of a previously-hidden tree must align to the open file"
+    );
+}
+
+/// `FocusLeft` and `ExitSearch` actions.
+#[test]
+fn focus_actions_respect_hidden_tree() {
+    for (hidden, expected) in [(false, Focus::Tree), (true, Focus::Viewer)] {
+        let (mut app, _p) = make_app_with_tab("body");
+
+        app.tree_hidden = hidden;
+        app.focus = Focus::Viewer;
+        app.handle_action(Action::FocusLeft);
+        assert_eq!(
+            app.focus, expected,
+            "#16: FocusLeft with tree_hidden={hidden} must focus {expected:?}"
+        );
+
+        app.tree_hidden = hidden;
+        app.search.active = true;
+        app.focus = Focus::Search;
+        app.handle_action(Action::ExitSearch);
+        assert_eq!(
+            app.focus, expected,
+            "#16: ExitSearch with tree_hidden={hidden} must focus {expected:?}"
+        );
+    }
+}

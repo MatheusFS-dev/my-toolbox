@@ -1,0 +1,164 @@
+use crate::fs::git_status::GitFileStatus;
+use crate::markdown::{MathBlockId, MermaidBlockId};
+use crate::math_image::MathEntry;
+use crate::mermaid::MermaidEntry;
+use crate::ui::search_modal::SearchResult;
+use crossterm::event::{KeyEvent, MouseEvent};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// All actions that can be dispatched through the application event loop.
+///
+/// `RawKey` events are produced by the input task and translated into more
+/// specific variants by the focused-widget key handlers. Many variants are
+/// constructed only through `handle_key` dispatch paths, so dead-code analysis
+/// produces false positives for this enum.
+#[allow(dead_code)]
+pub enum Action {
+    /// Exit the application.
+    Quit,
+
+    /// Raw terminal key event — mapped to a concrete action based on focus.
+    RawKey(KeyEvent),
+
+    /// Move focus to the file tree panel.
+    FocusLeft,
+    /// Move focus to the viewer panel.
+    FocusRight,
+
+    /// Move the tree cursor up one entry.
+    TreeUp,
+    /// Move the tree cursor down one entry.
+    TreeDown,
+    /// Toggle expansion of the selected directory.
+    TreeToggle,
+    /// Open the selected file or toggle the selected directory.
+    TreeSelect,
+    /// Jump to the first entry in the tree.
+    TreeFirst,
+    /// Jump to the last entry in the tree.
+    TreeLast,
+
+    /// Scroll the viewer up by `n` lines.
+    ScrollUp(u16),
+    /// Scroll the viewer down by `n` lines.
+    ScrollDown(u16),
+    /// Scroll the viewer up by half a page.
+    ScrollHalfPageUp,
+    /// Scroll the viewer down by half a page.
+    ScrollHalfPageDown,
+    /// Jump to the top of the document.
+    ScrollToTop,
+    /// Jump to the bottom of the document.
+    ScrollToBottom,
+
+    /// Open the search bar and reset its state.
+    EnterSearch,
+    /// Close the search bar and return focus to the tree.
+    ExitSearch,
+    /// Append a character to the search query.
+    SearchInput(char),
+    /// Remove the last character from the search query.
+    SearchBackspace,
+    /// Select the next search result.
+    SearchNext,
+    /// Select the previous search result.
+    SearchPrev,
+    /// Confirm the current search result and open the file.
+    SearchConfirm,
+    /// Toggle between file-name and content search modes.
+    SearchToggleMode,
+
+    /// Notify the app that one or more watched files changed on disk.
+    FilesChanged(Vec<PathBuf>),
+
+    /// Terminal was resized to the given (width, height).
+    Resize(u16, u16),
+
+    /// Raw mouse event forwarded from crossterm.
+    Mouse(MouseEvent),
+
+    /// A background mermaid render completed; entry is ready to be stored.
+    ///
+    /// Boxed to avoid inflating every `Action` variant by the size of `MermaidEntry`.
+    MermaidReady(MermaidBlockId, Box<MermaidEntry>),
+
+    /// A background LaTeX math render completed; entry is ready to be stored.
+    ///
+    /// Boxed for the same reason as [`Action::MermaidReady`] — `MathEntry`
+    /// carries a `StatefulProtocol`, which is large. The request id prevents a
+    /// completion queued before a cache refresh from replacing a newer render
+    /// of the same formula.
+    MathReady(MathBlockId, u64, Box<MathEntry>),
+
+    /// Background content search completed; replace the search result list.
+    ///
+    /// The `generation` field matches the counter that was current when the task
+    /// was spawned. Stale results (superseded by a newer query) are dropped by
+    /// the handler before touching `SearchState`.
+    SearchResults {
+        generation: u64,
+        results: Vec<SearchResult>,
+        /// `true` when the file list was capped at [`RESULT_CAP`] entries.
+        truncated: bool,
+    },
+
+    /// A file was loaded asynchronously and is ready to be opened in a tab.
+    FileLoaded {
+        /// Absolute path that was read.
+        path: PathBuf,
+        /// Raw text content.
+        content: String,
+        /// `true` → open in a new tab; `false` → replace the active tab.
+        new_tab: bool,
+        /// Override the display name shown in the tab bar.
+        ///
+        /// When `None` (the normal case), the name is derived from `path.file_name()`.
+        /// Set to `Some("<stdin>")` when the content came from piped stdin so the
+        /// tab strip shows a conventional Unix sentinel instead of the temp-file name.
+        display_name: Option<String>,
+    },
+
+    /// A watched file was reloaded asynchronously; update all matching tabs.
+    FileReloaded {
+        /// Absolute path that was re-read.
+        path: PathBuf,
+        /// Fresh text content.
+        content: String,
+    },
+
+    /// Background git-status scan completed; replace the tree color map.
+    GitStatusReady(HashMap<PathBuf, GitFileStatus>),
+
+    /// Background directory tree scan completed; rebuild the file tree.
+    TreeDiscovered(Vec<crate::fs::discovery::FileEntry>),
+
+    /// An editor save completed successfully.
+    ///
+    /// `saved_content` carries the exact string that was written so the
+    /// `App` can update `tab.editor.baseline` without a second extraction.
+    FileSaved {
+        /// The path that was written.
+        path: PathBuf,
+        /// The content that was written (used to update the baseline).
+        saved_content: String,
+    },
+
+    /// An editor save failed.
+    FileSaveError {
+        /// The path that the write was attempted on.
+        path: PathBuf,
+        /// Human-readable error description.
+        error: String,
+    },
+
+    /// A background file read failed.
+    ///
+    /// Used to clear a [`crate::app::App::pending_jump`] that can never be
+    /// satisfied because the file could not be read.  No user-facing message
+    /// is shown in v1.4.0 — the handler is intentionally quiet.
+    FileLoadFailed {
+        /// The path whose read attempt failed.
+        path: PathBuf,
+    },
+}
