@@ -12,7 +12,7 @@ set -eu
 if [ "$#" -ne 1 ] || [ "$1" != "__complete" ]; then
     exit 2
 fi
-printf '%s\n' help install-codex install-gh list uninstall update version
+printf '%s\n' help install-codex install-gh list search uninstall update version
 SH
 chmod 755 "$test_root/bin/tb"
 
@@ -76,5 +76,17 @@ zsh_later=$(PATH="$test_root/bin:$PATH" ZDOTDIR="$test_root/zsh" zsh -f -c '
 ' zsh "$repository_root")
 if [ -n "$zsh_later" ]; then
     printf 'Zsh later-argument completion returned %s.\n' "$zsh_later" >&2
+    exit 1
+fi
+
+bash_search=$(PATH="$test_root/bin:$PATH" bash -c '
+    . "$1/completions/tb.bash"
+    COMP_WORDS=(tb se)
+    COMP_CWORD=1
+    _tb_completion
+    printf "%s" "${COMPREPLY[*]}"
+' bash "$repository_root")
+if [ "$bash_search" != "search" ]; then
+    printf 'Bash search completion = %s\n' "$bash_search" >&2
     exit 1
 fi

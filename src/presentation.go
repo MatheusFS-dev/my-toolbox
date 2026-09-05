@@ -14,6 +14,7 @@ const maxPresentationWidth = 72
 
 const (
 	ansiWhite     = "37"
+	ansiBlue      = "34"
 	ansiGreen     = "32"
 	ansiGray      = "90"
 	ansiBoldWhite = "1;37"
@@ -126,6 +127,7 @@ func renderHelp(commands []Command, version string, terminalWidth int, styled bo
 		description string
 	}{
 		{"tb list", "Select supported tools interactively and run them in catalog order."},
+		{"tb search", "Browse and search the bundled Markdown guides."},
 		{"tb <tool> [arguments...]", "Run one supported catalog tool directly, forwarding its arguments."},
 		{"tb update", "Reinstall the toolbox when a newer release is available."},
 		{"tb uninstall", "Confirm and remove the toolbox wrapper and installed versions."},

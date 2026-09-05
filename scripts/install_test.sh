@@ -28,6 +28,9 @@ for command in catalog["commands"]:
 requirements = root / "packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt"
 requirements.parent.mkdir(parents=True, exist_ok=True)
 requirements.write_text("toml==0.10.2\n", encoding="utf-8")
+article = root / "packages/search/articles/test/fixture.md"
+article.parent.mkdir(parents=True, exist_ok=True)
+article.write_text("# Fixture Guide\n", encoding="utf-8")
 PY
 tar -C "$test_root/payload" -czf "$test_root/downloads/toolbox-linux-amd64.tar.gz" .
 (
@@ -571,6 +574,10 @@ if [ ! -f "$test_root/home/.local/share/my-toolbox/versions/0.1.5/packages/other
     printf 'Installer did not install the fixture payload.\n' >&2
     exit 1
 fi
+if [ ! -d "$test_root/home/.local/share/my-toolbox/versions/0.1.5/packages/search/articles" ]; then
+    printf 'Installer did not install the article library.\n' >&2
+    exit 1
+fi
 for completion in _tb tb.bash tb.ps1; do
     if ! cmp -s "$repository_root/completions/$completion" "$test_root/home/.local/share/my-toolbox/completions/$completion"; then
         printf 'Installer did not publish completion asset %s.\n' "$completion" >&2
@@ -720,5 +727,24 @@ if [ -e "$test_root/malformed-home/.local/share/my-toolbox/versions/0.1.5" ] ||
     [ -e "$test_root/malformed-home/.local/bin/tb" ] ||
     [ -e "$test_root/malformed-home/.local/share/my-toolbox/completions" ]; then
     printf 'Malformed-marker failure left a partial installation behind.\n' >&2
+    exit 1
+fi
+
+mkdir -p "$test_root/missing-articles-downloads" "$test_root/missing-articles-home"
+cp -R "$test_root/payload" "$test_root/payload-without-articles"
+rm -rf "$test_root/payload-without-articles/packages/search/articles"
+tar -C "$test_root/payload-without-articles" -czf "$test_root/missing-articles-downloads/toolbox-linux-amd64.tar.gz" .
+(
+    cd "$test_root/missing-articles-downloads"
+    sha256sum toolbox-linux-amd64.tar.gz > toolbox-linux-amd64.tar.gz.sha256
+)
+if HOME="$test_root/missing-articles-home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/missing-articles-downloads" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/missing-articles.out" 2>&1; then
+    printf 'Installer accepted a payload without the article library.\n' >&2
+    exit 1
+fi
+if ! grep -F '[FAIL] Stage 5/7: extraction/validation' "$test_root/missing-articles.out" >/dev/null ||
+    ! grep -F 'packages/search/articles' "$test_root/missing-articles.out" >/dev/null; then
+    printf 'Missing article library did not fail validation explicitly.\n' >&2
+    cat "$test_root/missing-articles.out" >&2
     exit 1
 fi

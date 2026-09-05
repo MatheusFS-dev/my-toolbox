@@ -8,10 +8,31 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 )
 
-// HuhUI renders Arrow/Space selection and typed configuration forms.
+// HuhUI renders interactive selection, article search, and typed forms.
 type HuhUI struct{}
+
+// Search opens the bundled article browser.
+//
+// Args:
+//   - articles: Loaded release articles to browse.
+//
+// Returns:
+//   - error: ErrCancelled for Ctrl+C or Escape, or a rendering error.
+func (HuhUI) Search(articles []Article) error {
+	program := tea.NewProgram(newSearchModel(articles, maxPresentationWidth, 24))
+	finalModel, err := program.Run()
+	if err != nil {
+		return err
+	}
+	model, valid := finalModel.(searchModel)
+	if !valid {
+		return fmt.Errorf("article search returned an invalid model")
+	}
+	return model.resultError()
+}
 
 // Select renders the catalog as a checkbox list.
 //
@@ -68,7 +89,7 @@ func (HuhUI) Ask(question Question) (any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported question type %q", question.Type)
 	}
-	if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
+	if err := toolboxHuhForm(field).Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			return nil, ErrCancelled
 		}
@@ -84,6 +105,42 @@ func (HuhUI) Ask(question Question) (any, error) {
 	default:
 		return nil, fmt.Errorf("question %q produced an invalid answer", question.ID)
 	}
+}
+
+// toolboxHuhForm applies the toolbox focus and selection colors to one field.
+func toolboxHuhForm(field huh.Field) *huh.Form {
+	theme := huh.Theme(huh.ThemeFunc(toolboxHuhStyles))
+	if _, multiple := field.(*huh.MultiSelect[string]); multiple {
+		theme = huh.ThemeFunc(toolboxHuhMultiSelectStyles)
+	}
+	return huh.NewForm(huh.NewGroup(field)).WithTheme(theme)
+}
+
+func toolboxHuhStyles(isDark bool) *huh.Styles {
+	styles := huh.ThemeCharm(isDark)
+	blue := lipgloss.Color("4")
+	styles.Focused.Title = styles.Focused.Title.Foreground(blue)
+	styles.Focused.NoteTitle = styles.Focused.NoteTitle.Foreground(blue)
+	styles.Focused.Directory = styles.Focused.Directory.Foreground(blue)
+	styles.Focused.SelectSelector = styles.Focused.SelectSelector.Foreground(blue)
+	styles.Focused.NextIndicator = styles.Focused.NextIndicator.Foreground(blue)
+	styles.Focused.PrevIndicator = styles.Focused.PrevIndicator.Foreground(blue)
+	styles.Focused.MultiSelectSelector = styles.Focused.MultiSelectSelector.Foreground(blue)
+	styles.Focused.SelectedOption = styles.Focused.SelectedOption.Foreground(blue)
+	styles.Focused.FocusedButton = styles.Focused.FocusedButton.Background(blue)
+	styles.Focused.Next = styles.Focused.Next.Background(blue)
+	styles.Focused.TextInput.Cursor = styles.Focused.TextInput.Cursor.Foreground(blue)
+	styles.Focused.TextInput.Prompt = styles.Focused.TextInput.Prompt.Foreground(blue)
+	styles.Group.Title = styles.Focused.Title
+	return styles
+}
+
+func toolboxHuhMultiSelectStyles(isDark bool) *huh.Styles {
+	styles := toolboxHuhStyles(isDark)
+	green := lipgloss.Color("2")
+	styles.Focused.SelectedPrefix = styles.Focused.SelectedPrefix.Foreground(green)
+	styles.Focused.SelectedOption = styles.Focused.SelectedOption.Foreground(green)
+	return styles
 }
 
 func huhOptions(options []Option) []huh.Option[string] {
@@ -335,10 +392,13 @@ func (model *selectorModel) rebuildContent() {
 func (model selectorModel) commandLines(command Command, index int) []string {
 	cursor := "  "
 	if index == model.cursor {
-		cursor = presentationStyle("›", ansiGreen, true) + " "
+		cursor = presentationStyle("›", ansiBlue, true) + " "
 	}
 	color := ansiWhite
 	marker := "◯"
+	if index == model.cursor {
+		color = ansiBlue
+	}
 	if model.selected[index] {
 		color = ansiGreen
 		marker = "◉"

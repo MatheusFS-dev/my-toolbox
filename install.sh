@@ -672,6 +672,10 @@ for required in tb commands.json version.txt \
         exit 1
     }
 done
+[ -d "$staging_payload/packages/search/articles" ] || {
+    printf 'Downloaded payload is missing packages/search/articles.\n' >&2
+    exit 1
+}
 [ "$(sed -n '1p' "$staging_payload/version.txt")" = "$version" ] || {
     printf 'Downloaded payload version does not match release %s.\n' "$version" >&2
     exit 1

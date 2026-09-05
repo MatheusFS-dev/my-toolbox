@@ -737,6 +737,10 @@ try {
             throw "Downloaded payload is missing $RelativePath."
         }
     }
+    $ArticleRoot = Join-Path $Payload 'packages\search\articles'
+    if (-not (Test-Path -LiteralPath $ArticleRoot -PathType Container)) {
+        throw 'Downloaded payload is missing packages\search\articles.'
+    }
     $PayloadVersion = (Get-Content -LiteralPath (Join-Path $Payload 'version.txt') -TotalCount 1).Trim()
     if ($PayloadVersion -ne $Version) {
         throw "Downloaded payload version $PayloadVersion does not match release $Version."

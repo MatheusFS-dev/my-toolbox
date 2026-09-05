@@ -551,6 +551,20 @@ class ProjectTemplateTest(unittest.TestCase):
         """
         cls.tool = load_tool("create_project_template")
 
+    def test_repository_template_omits_article_guides_and_keeps_other_assets(self) -> None:
+        """Copy the release template without the guides moved to the search library."""
+        source = PACKAGE_ROOT / "template"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "project"
+            destination.mkdir()
+            entries = self.tool.discover_template(source)
+            self.tool.copy_template(source, destination, entries, overwrite=False)
+
+            self.assertFalse((destination / "docs").exists())
+            self.assertTrue((destination / "README.md").is_file())
+            self.assertTrue((destination / ".github" / "ISSUE_TEMPLATE" / "bug_report.md").is_file())
+            self.assertTrue((destination / "tests" / "gpu_nvidia" / "stress_gpu.py").is_file())
+
     def test_recursive_copy_includes_special_entries(self) -> None:
         """Copy dotfiles, empty directories, and symlinks dynamically."""
         with tempfile.TemporaryDirectory() as directory:

@@ -13,6 +13,7 @@ type fakeUI struct {
 	answers  map[string]any
 	err      error
 	commands []Command
+	articles []Article
 }
 
 func (ui *fakeUI) Select(commands []Command) ([]string, error) {
@@ -25,6 +26,34 @@ func (ui *fakeUI) Ask(question Question) (any, error) {
 		return nil, ui.err
 	}
 	return ui.answers[question.ID], nil
+}
+
+func (ui *fakeUI) Search(articles []Article) error {
+	ui.articles = append([]Article(nil), articles...)
+	return ui.err
+}
+
+func TestSearchLoadsArticlesOnlyWhenInvokedAndRejectsArguments(t *testing.T) {
+	root := t.TempDir()
+	writeTestArticle(t, root, "git/reset.md", "# Reset Git\n\nInstructions.\n")
+	ui := &fakeUI{}
+	app := App{Catalog: testCatalog("tool"), Environment: "linux-native", UI: ui, ArticleRoot: root, Output: &bytes.Buffer{}}
+
+	if err := app.Execute([]string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	if ui.articles != nil {
+		t.Fatalf("help loaded articles: %#v", ui.articles)
+	}
+	if err := app.Execute([]string{"search"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.articles) != 1 || ui.articles[0].Title != "Reset Git" {
+		t.Fatalf("search articles = %#v", ui.articles)
+	}
+	if err := app.Execute([]string{"search", "git"}); err == nil || err.Error() != "tb search does not accept arguments" {
+		t.Fatalf("argument error = %v", err)
+	}
 }
 
 type fakeExecutor struct {
@@ -108,7 +137,7 @@ func TestCompletePrintsSortedBuiltinsAndSupportedCatalogCommands(t *testing.T) {
 	if err := app.Execute([]string{"__complete"}); err != nil {
 		t.Fatal(err)
 	}
-	want := "alpha\ndirect\nhelp\nlist\nuninstall\nupdate\nversion\nzeta\n"
+	want := "alpha\ndirect\nhelp\nlist\nsearch\nuninstall\nupdate\nversion\nzeta\n"
 	if output.String() != want {
 		t.Fatalf("completion output = %q, want %q", output.String(), want)
 	}
@@ -125,15 +154,15 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 	}{
 		{
 			environment: "linux-native",
-			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
+			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nsearch\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
 		},
 		{
 			environment: "linux-wsl",
-			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
+			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
 		},
 		{
 			environment: "windows",
-			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
+			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nsearch\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
 		},
 	}
 	for _, test := range tests {

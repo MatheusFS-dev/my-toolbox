@@ -15,6 +15,7 @@ var ErrCancelled = errors.New("toolbox batch cancelled")
 type UI interface {
 	Select(commands []Command) ([]string, error)
 	Ask(question Question) (any, error)
+	Search(articles []Article) error
 }
 
 // Executor discovers questions and runs fully configured commands.
@@ -38,6 +39,8 @@ type App struct {
 	UI          UI
 	Executor    Executor
 	Output      io.Writer
+	Error       io.Writer
+	ArticleRoot string
 	Version     string
 }
 
@@ -62,7 +65,7 @@ func (app App) Execute(arguments []string) error {
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb __complete does not accept arguments")
 		}
-		names := []string{"help", "list", "uninstall", "update", "version"}
+		names := []string{"help", "list", "search", "uninstall", "update", "version"}
 		for _, command := range app.Catalog.Commands {
 			if command.SupportsEnvironment(app.Environment) {
 				names = append(names, command.Name)
@@ -113,6 +116,19 @@ func (app App) Execute(arguments []string) error {
 			}
 		}
 		return app.executeBatch(commands, nil, output)
+	case "search":
+		if len(arguments) != 1 {
+			return fmt.Errorf("tb search does not accept arguments")
+		}
+		warnings := app.Error
+		if warnings == nil {
+			warnings = output
+		}
+		articles, err := loadArticles(app.ArticleRoot, warnings)
+		if err != nil {
+			return err
+		}
+		return app.UI.Search(articles)
 	case "update":
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb update does not accept arguments")

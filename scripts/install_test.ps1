@@ -37,6 +37,9 @@ try {
             Set-Content -LiteralPath $Path -Value 'fixture' -Encoding ascii
         }
     }
+    $ArticleRoot = Join-Path $Payload 'packages\search\articles\test'
+    New-Item -ItemType Directory -Force -Path $ArticleRoot | Out-Null
+    Set-Content -LiteralPath (Join-Path $ArticleRoot 'fixture.md') -Value '# Fixture Guide' -Encoding utf8
     $Archive = Join-Path $Downloads 'toolbox-windows-amd64.zip'
     Compress-Archive -Path (Join-Path $Payload '*') -DestinationPath $Archive
     $Digest = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -186,6 +189,10 @@ try {
     $InstalledTool = Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5\packages\others\create_project_template.py'
     if (-not (Test-Path -LiteralPath $InstalledTool -PathType Leaf)) {
         throw 'Installer did not install the fixture payload.'
+    }
+    $InstalledArticles = Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5\packages\search\articles'
+    if (-not (Test-Path -LiteralPath $InstalledArticles -PathType Container)) {
+        throw 'Installer did not install the article library.'
     }
     foreach ($Completion in @('_tb', 'tb.bash', 'tb.ps1')) {
         $ExpectedCompletion = Join-Path $RepositoryRoot "completions\$Completion"
@@ -359,6 +366,26 @@ try {
     )
     if ($LeakedTemporaryPaths.Count -gt 0) {
         throw "Failed installer left temporary directories behind: $LeakedTemporaryPaths"
+    }
+
+    $MissingPayload = Join-Path $TestRoot 'payload-without-articles'
+    Copy-Item -LiteralPath $Payload -Destination $MissingPayload -Recurse
+    Remove-Item -LiteralPath (Join-Path $MissingPayload 'packages\search\articles') -Recurse -Force
+    $MissingArchive = Join-Path $Downloads 'toolbox-windows-amd64-missing-articles.zip'
+    Compress-Archive -Path (Join-Path $MissingPayload '*') -DestinationPath $MissingArchive
+    $MissingDigest = (Get-FileHash -LiteralPath $MissingArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$MissingArchive.sha256" -Value "$MissingDigest  toolbox-windows-amd64.zip" -Encoding ascii
+    $global:ToolboxInstallerFixtureArchive = $MissingArchive
+    Remove-Item -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox') -Recurse -Force -ErrorAction SilentlyContinue
+    [IO.File]::WriteAllText($WindowsPowerShellProfile, $UnrelatedProfileText, [Text.UTF8Encoding]::new($false))
+    $Failure = ''
+    try {
+        Invoke-TestInstaller -UserPathWriter $PathWriter
+    } catch {
+        $Failure = ($_ | Out-String)
+    }
+    if (-not $Failure.Contains('[FAIL] Stage 5/7: extraction/validation') -or -not $Failure.Contains('packages\search\articles')) {
+        throw "Missing article library did not fail validation explicitly. Error: $Failure"
     }
 } finally {
     Remove-Variable -Name ToolboxInstallerFixtureArchive -Scope Global -ErrorAction SilentlyContinue

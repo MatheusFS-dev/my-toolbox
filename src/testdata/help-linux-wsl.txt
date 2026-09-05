@@ -5,6 +5,8 @@ TOOLBOX 1.2.3
 USAGE
   tb list
     Select supported tools interactively and run them in catalog order.
+  tb search
+    Browse and search the bundled Markdown guides.
   tb <tool> [arguments...]
     Run one supported catalog tool directly, forwarding its arguments.
   tb update

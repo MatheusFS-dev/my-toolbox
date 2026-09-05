@@ -41,9 +41,10 @@
 | --- | --- |
 | Supported systems | Linux x64, Linux ARM64, and Windows x64 |
 | Interactive workflow | Categorized, multi-select terminal interface through `tb list` |
+| Guide library | Searchable bundled Markdown articles through `tb search` |
 | Platform awareness | Native Linux, WSL, and Windows filtering before commands are shown or run |
 | Catalog source | Tool names, categories, descriptions, and platform rules in `commands.json` |
-| Maintenance | Built-in update, version, help, and uninstall commands |
+| Maintenance | Built-in search, update, version, help, and uninstall commands |
 
 The toolbox gathers all required answers before it runs selected tools, executes them in catalog order, and stops at the first failure. Unsupported tools return an explicit platform error, while direct-only commands remain available through `tb help`.
 
@@ -85,6 +86,7 @@ Bootstrap installation does not replace an existing toolbox. When a newer releas
 
 ```text
 tb list
+tb search
 tb <tool> [arguments...]
 tb update
 tb uninstall
@@ -111,6 +113,8 @@ SELECT TOOLS
 ```
 
 The example is shortened to show the row layout. The live selector wraps to the current terminal width, capped at 72 columns. Its title and controls remain visible while tool rows scroll; selected markers and names are green, while descriptions remain gray.
+
+Run `tb search` to browse the bundled Markdown guides. Type to filter by title, headings, or body text; use Up and Down to choose a result and Enter to open it. The full-screen reader renders Markdown in Tokyo Night colors and wraps long code lines to the terminal width. Scroll with the mouse wheel or use Up and Down, Page Up and Page Down, Home, and End; click a code block's Copy control or press `c` to copy visible code, then press Escape to return to the preserved search.
 
 `tb list` excludes direct-only commands, while `tb help` includes them. Running `tb` without arguments is invalid and directs you to `tb list`. Help output uses ANSI styling only when standard output is a terminal; redirected output remains plain text with the same hierarchy.
 

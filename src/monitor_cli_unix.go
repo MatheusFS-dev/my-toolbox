@@ -87,10 +87,10 @@ func runMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 			fmt.Fprintf(output, "  %d. %s\n", index+1, target)
 		}
 		action := "run"
-		err := huh.NewForm(huh.NewGroup(huh.NewSelect[string]().Title("Review Monitor launch").Options(
+		err := toolboxHuhForm(huh.NewSelect[string]().Title("Review Monitor launch").Options(
 			huh.NewOption("Run", "run"), huh.NewOption("Edit this run", "edit"),
 			huh.NewOption("Config", "config"), huh.NewOption("Cancel", "cancel"),
-		).Value(&action))).Run()
+		).Value(&action)).Run()
 		if err != nil || action == "cancel" {
 			return 130
 		}
@@ -874,7 +874,7 @@ func configureMonitor(root string, output io.Writer) error {
 }
 
 func runMonitorConfigStep(field huh.Field) error {
-	if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
+	if err := toolboxHuhForm(field).Run(); err != nil {
 		return ErrCancelled
 	}
 	return nil

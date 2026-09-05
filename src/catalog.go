@@ -14,6 +14,7 @@ var commandNamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
 var reservedCommands = map[string]bool{
 	"help":      true,
 	"list":      true,
+	"search":    true,
 	"uninstall": true,
 	"update":    true,
 	"version":   true,
