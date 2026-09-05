@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="markdown-reader logo" width="180">
+  <img src="docs/assets/logo.png" alt="tb-markdown-reader logo" width="180">
 </p>
 
-<h1 align="center">markdown-reader</h1>
+<h1 align="center">tb-markdown-reader</h1>
 
 <p align="center">
   The terminal markdown reader with hybrid live-preview editing, inline
@@ -11,9 +11,15 @@
 </p>
 
 <p align="center">
-  <code>markdown-reader</code> is the binary name. The crates.io package is
-  <code>markdown-tui-explorer</code>.
+  <code>tb-markdown-reader</code> is the package and binary name of this
+  toolbox-local fork.
 </p>
+
+> [!NOTE]
+> This directory is the bundled toolbox fork of
+> [`leboiko/markdown-reader`](https://github.com/leboiko/markdown-reader), not
+> the upstream crates.io or release artifact. See [`UPSTREAM.md`](UPSTREAM.md)
+> for the pinned revision, imported scope, license, and local changes.
 
 <!--
   TODO: record an asciinema cast or screen recording showing:
@@ -24,9 +30,9 @@
     5. Render to HTML with --export-html
   Save as docs/assets/demo.gif (or .mp4) and replace this placeholder.
 -->
-![markdown-reader in action — live preview editing of a doc with Mermaid diagrams](docs/assets/demo.gif)
+![tb-markdown-reader in action — live preview editing of a doc with Mermaid diagrams](docs/assets/demo.gif)
 
-`markdown-reader` is a TUI for reading and editing docs-heavy repositories.
+`tb-markdown-reader` is a TUI for reading and editing docs-heavy repositories.
 Open a folder, browse the file tree, fan documents into tabs, and search
 across every markdown file in the project. Mermaid diagrams (16 types),
 LaTeX math, fenced code, and tables all render inline — and pressing `i`
@@ -48,7 +54,7 @@ raw markdown source while every other block stays formatted.
 
 ## vs other terminal markdown tools
 
-| Feature | markdown-reader | treemd | glow | bat |
+| Feature | tb-markdown-reader | treemd | glow | bat |
 |---|---|---|---|---|
 | Repository browser (tree + tabs) | Yes | No | No | No |
 | Mermaid diagrams (inline Unicode) | Yes (16 types) | No | No | No |
@@ -61,7 +67,6 @@ raw markdown source while every other block stays formatted.
 | HTML export | Yes | No | No | No |
 | Link validator (CLI) | Yes | No | No | No |
 | jq-like query language | No | Yes | No | No |
-| Pre-built binaries | Yes | Yes | Yes | Yes |
 
 ## Screenshots
 
@@ -81,7 +86,7 @@ reached via `c`.
 
 ![GitHub Light theme with settings open](https://raw.githubusercontent.com/leboiko/markdown-reader/master/docs/screenshots/settings-github-light.png)
 
-## Why markdown-reader?
+## Why tb-markdown-reader?
 
 - **Repository-first workflow** — browse a whole docs tree, not just one file
 - **Terminal-native reading** — tabs, vim-style movement, search, links, and
@@ -222,130 +227,36 @@ drawn on the left of the viewer content when enabled.
 
 ## Installation
 
-### Pre-built binaries
-
-Download a pre-built binary for your platform from the
-[GitHub Releases page](https://github.com/leboiko/markdown-reader/releases/latest)
-— no Rust toolchain required.
-
-**Linux x86_64**
-```sh
-curl -L https://github.com/leboiko/markdown-reader/releases/latest/download/markdown-reader-x86_64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv markdown-reader-*/markdown-reader /usr/local/bin/
-```
-
-**Linux ARM64**
-```sh
-curl -L https://github.com/leboiko/markdown-reader/releases/latest/download/markdown-reader-aarch64-unknown-linux-gnu.tar.gz | tar xz
-sudo mv markdown-reader-*/markdown-reader /usr/local/bin/
-```
-
-**macOS Intel (x86_64)**
-```sh
-curl -L https://github.com/leboiko/markdown-reader/releases/latest/download/markdown-reader-x86_64-apple-darwin.tar.gz | tar xz
-sudo mv markdown-reader-*/markdown-reader /usr/local/bin/
-```
-
-**macOS Apple Silicon (ARM64)**
-```sh
-curl -L https://github.com/leboiko/markdown-reader/releases/latest/download/markdown-reader-aarch64-apple-darwin.tar.gz | tar xz
-sudo mv markdown-reader-*/markdown-reader /usr/local/bin/
-```
-
-> **macOS Gatekeeper note**: the binaries are currently unsigned. On first
-> run macOS will show a security warning. Right-click (or Control-click) the
-> binary and select **Open** once to allow it. Subsequent launches work
-> normally.
-
-**Windows x86_64**
-
-Download `markdown-reader-<version>-x86_64-pc-windows-msvc.zip` from the
-[Releases page](https://github.com/leboiko/markdown-reader/releases/latest),
-extract it, and place `markdown-reader.exe` somewhere on your `%PATH%`.
-
-Each archive also contains `LICENSE` and `README.md`. SHA256 checksums for
-every archive are provided in the `SHA256SUMS` file on the same release.
-
 ### Prerequisites
 
 - [Rust toolchain](https://rustup.rs/) (1.85+ recommended, edition 2024)
 
-### Homebrew (macOS, Linux)
+### Building from the toolbox repository
 
 ```sh
-brew tap leboiko/tap
-brew install markdown-reader
+cargo build --locked --release --manifest-path third_party/tb-markdown-reader/Cargo.toml
 ```
 
-### Arch Linux (AUR)
-
-```sh
-yay -S markdown-reader-bin
-# or any AUR helper: paru, pikaur, etc.
-```
-
-The `-bin` package pulls the same prebuilt binary as the Homebrew tap
-and the GitHub Release tarballs. A source-built variant is planned but
-not yet published.
-
-### Nix (with flakes)
-
-```sh
-# One-off run without installing
-nix run github:leboiko/markdown-reader
-
-# Permanent install
-nix profile install github:leboiko/markdown-reader
-
-# Use as a flake input in your own configuration
-{
-  inputs.markdown-reader.url = "github:leboiko/markdown-reader";
-}
-```
-
-`nix develop github:leboiko/markdown-reader` opens a dev shell with
-`rustc`/`cargo`/`rustfmt`/`clippy`/`cargo-deny`/`cargo-audit` ready —
-useful for contributors.
-
-### From crates.io
-
-```sh
-cargo install markdown-tui-explorer
-```
-
-This installs the `markdown-reader` binary.
-
-### From GitHub
-
-```sh
-cargo install --git https://github.com/leboiko/markdown-reader
-```
-
-### Building from source
-
-```sh
-git clone https://github.com/leboiko/markdown-reader.git
-cd markdown-reader
-cargo build --release
-```
-
-The binary will be at `target/release/markdown-reader`.
+The binary will be at
+`third_party/tb-markdown-reader/target/release/tb-markdown-reader`. This fork
+is bundled and versioned with toolbox; it is not published as the upstream
+crates.io package and should not be installed from the upstream release feeds.
 
 ## Usage
 
 ```sh
 # Browse the current directory
-markdown-reader
+tb-markdown-reader
 
 # Browse a specific directory
-markdown-reader ~/projects/my-docs
+tb-markdown-reader ~/projects/my-docs
 
 # Pipe markdown directly via stdin (path argument is ignored)
-cat README.md | markdown-reader
-curl -s https://example.com/spec.md | markdown-reader
+cat README.md | tb-markdown-reader
+curl -s https://example.com/spec.md | tb-markdown-reader
 
 # Show help
-markdown-reader --help
+tb-markdown-reader --help
 ```
 
 When stdin is piped, the markdown is read into a temporary file and
@@ -359,10 +270,10 @@ no external CSS or JavaScript required:
 
 ```sh
 # Write to stdout and redirect to a file
-markdown-reader --export-html input.md > output.html
+tb-markdown-reader --export-html input.md > output.html
 
 # Write directly to a file
-markdown-reader --export-html input.md --output rendered.html
+tb-markdown-reader --export-html input.md --output rendered.html
 ```
 
 The exported document includes:
@@ -376,7 +287,7 @@ The exported document includes:
 - YAML/TOML frontmatter as a labelled, highlighted `<section class="frontmatter">`
 
 The output is a single `.html` file you can open in any browser or send to
-someone who doesn't have `markdown-reader` installed.
+someone who doesn't have `tb-markdown-reader` installed.
 
 ### Link validation
 
@@ -384,8 +295,8 @@ Scan a directory (or the current directory) for broken markdown links — no TUI
 launched, exits with a non-zero status when broken links are found:
 
 ```sh
-markdown-reader --check-links docs/
-markdown-reader --check-links          # current directory
+tb-markdown-reader --check-links docs/
+tb-markdown-reader --check-links          # current directory
 ```
 
 What is checked:
@@ -397,8 +308,8 @@ What is checked:
 External link checking (optional):
 
 ```sh
-markdown-reader --check-links docs/ --check-external
-markdown-reader --check-links docs/ --check-external --external-timeout-secs 15
+tb-markdown-reader --check-links docs/ --check-external
+tb-markdown-reader --check-links docs/ --check-external --external-timeout-secs 15
 ```
 
 When `--check-external` is added, every `http://` and `https://` link found
@@ -424,11 +335,11 @@ The TUI is not launched in this mode.
 
 ### Stdin support
 
-`markdown-reader` accepts piped content — no file path needed:
+`tb-markdown-reader` accepts piped content — no file path needed:
 
 ```sh
-cat README.md | markdown-reader
-curl -s https://raw.githubusercontent.com/leboiko/markdown-reader/master/README.md | markdown-reader
+cat README.md | tb-markdown-reader
+curl -s https://raw.githubusercontent.com/leboiko/markdown-reader/master/README.md | tb-markdown-reader
 ```
 
 The piped content opens in the TUI exactly as if it were a file. The tab strip
@@ -440,8 +351,8 @@ not persisted in the session file, so it will not be restored on next launch.
 Extract a single heading section and print it to stdout — no TUI launched:
 
 ```sh
-markdown-reader --section "Installation" docs/guide.md
-cat docs/guide.md | markdown-reader --section "Usage"
+tb-markdown-reader --section "Installation" docs/guide.md
+cat docs/guide.md | tb-markdown-reader --section "Usage"
 ```
 
 The first heading whose text **contains** `NAME` (case-insensitive) is selected.
@@ -732,10 +643,10 @@ app starts with defaults rather than refusing to launch.
 
 ### `config.toml` — user preferences
 
-- **Linux**: `$XDG_CONFIG_HOME/markdown-reader/config.toml`
-  (typically `~/.config/markdown-reader/config.toml`)
-- **macOS**: `~/Library/Application Support/markdown-reader/config.toml`
-- **Windows**: `%APPDATA%\markdown-reader\config.toml`
+- **Linux**: `$XDG_CONFIG_HOME/tb-markdown-reader/config.toml`
+  (typically `~/.config/tb-markdown-reader/config.toml`)
+- **macOS**: `~/Library/Application Support/tb-markdown-reader/config.toml`
+- **Windows**: `%APPDATA%\tb-markdown-reader\config.toml`
 
 Fields:
 
@@ -752,33 +663,13 @@ Holds a map of canonical root paths to their saved tab lists and active
 indices. Old (v0.1.0) single-file entries from prior versions are read
 transparently.
 
-- **Linux**: `$XDG_STATE_HOME/markdown-reader/state.toml`
-  (typically `~/.local/state/markdown-reader/state.toml`)
-- **macOS**: `~/Library/Application Support/markdown-reader/state.toml`
-- **Windows**: `%LOCALAPPDATA%\markdown-reader\state.toml`
+- **Linux**: `$XDG_STATE_HOME/tb-markdown-reader/state.toml`
+  (typically `~/.local/state/tb-markdown-reader/state.toml`)
+- **macOS**: `~/Library/Application Support/tb-markdown-reader/state.toml`
+- **Windows**: `%LOCALAPPDATA%\tb-markdown-reader\state.toml`
 
 To reset a session (for example, if you want a fresh start on a project),
 delete the state file. Configuration is untouched.
-
-### Update notifications
-
-When you quit the TUI, `markdown-reader` checks crates.io (at most once every
-24 hours, in a background thread started at launch) and prints a brief upgrade
-banner to stderr if a newer version is published.  The check never delays the
-exit path — it is a pure cache read at quit time.
-
-To disable, add this to your `config.toml`:
-
-```toml
-[updates]
-check_for_updates = false
-```
-
-The cache is stored at:
-
-- **Linux**: `~/.cache/markdown-tui-explorer/last-version-check.json`
-- **macOS**: `~/Library/Caches/markdown-tui-explorer/last-version-check.json`
-- **Windows**: `%LOCALAPPDATA%\markdown-tui-explorer\last-version-check.json`
 
 ## Markdown rendering
 

@@ -679,7 +679,7 @@ pub fn source_line_at(
 /// # Examples
 ///
 /// ```
-/// # use markdown_tui_explorer::markdown::{DocBlock, TextBlockId, logical_line_at_source};
+/// # use tb_markdown_reader::markdown::{DocBlock, TextBlockId, logical_line_at_source};
 /// # use ratatui::text::{Line, Span, Text};
 /// # use std::cell::Cell;
 /// let block = DocBlock::Text {
@@ -819,7 +819,7 @@ pub fn logical_line_at_source(
 /// # Examples
 ///
 /// ```
-/// # use markdown_tui_explorer::markdown::heading_to_anchor;
+/// # use tb_markdown_reader::markdown::heading_to_anchor;
 /// assert_eq!(heading_to_anchor("Installation Guide"), "installation-guide");
 /// assert_eq!(heading_to_anchor("What's New?"), "whats-new");
 /// assert_eq!(heading_to_anchor("API v2.0"), "api-v20");

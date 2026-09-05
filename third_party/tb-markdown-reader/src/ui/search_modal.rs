@@ -136,7 +136,7 @@ const SNIPPET_WINDOW: usize = 80;
 /// # Examples
 ///
 /// ```
-/// use markdown_tui_explorer::ui::search_modal::smartcase_is_sensitive;
+/// use tb_markdown_reader::ui::search_modal::smartcase_is_sensitive;
 /// assert!(!smartcase_is_sensitive("hello"));
 /// assert!(smartcase_is_sensitive("Hello"));
 /// assert!(!smartcase_is_sensitive(""));
