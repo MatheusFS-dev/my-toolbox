@@ -25,6 +25,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [What's New in v1.3.0](#whats-new-in-v130)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Tool Catalog](#tool-catalog)
@@ -47,6 +48,10 @@
 | Maintenance | Built-in search, update, version, help, and uninstall commands |
 
 The toolbox gathers all required answers before it runs selected tools, executes them in catalog order, and stops at the first failure. Unsupported tools return an explicit platform error, while direct-only commands remain available through `tb help`.
+
+## What's New in v1.3.0
+
+Version 1.3.0 introduces `tb search`, a searchable library of bundled Markdown guides. Its full-screen Tokyo Night reader supports responsive Markdown rendering, wrapped syntax-highlighted code cards, mouse scrolling, and copy controls that work through both native and terminal clipboards. Search results cover article titles, headings, and body text, and Escape returns to the preserved query and selection.
 
 ## Installation
 
