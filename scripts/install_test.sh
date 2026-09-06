@@ -11,6 +11,16 @@ cp -R "$repository_root/completions" "$test_root/payload/completions"
 printf '%s\n' '0.1.5' > "$test_root/payload/version.txt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$test_root/payload/tb"
 chmod 755 "$test_root/payload/tb"
+mkdir -p "$test_root/payload/libexec"
+# Fixture arguments and environment variables expand when the staged reader runs.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' \
+    '[ "$#" -eq 1 ] && [ "$1" = --tb-self-check ] || exit 91' \
+    'case "$0" in */versions/.install-0.1.5.*/libexec/tb-markdown-reader) ;; *) exit 92 ;; esac' \
+    '[ -z "${READER_CHECK_LOG:-}" ] || printf "%s\n" "$0" "$@" > "$READER_CHECK_LOG"' \
+    'exit "${READER_EXIT_CODE:-0}"' > "$test_root/payload/libexec/tb-markdown-reader"
+# Extraction must repair an archive whose reader is not executable.
+chmod 600 "$test_root/payload/libexec/tb-markdown-reader"
 python3 - "$repository_root/commands.json" "$test_root/payload" <<'PY'
 import json
 import pathlib
@@ -80,6 +90,89 @@ fi
 exec /bin/mv "$@"
 SH
 chmod 755 "$test_root/bin/uname" "$test_root/bin/curl" "$test_root/bin/mv"
+
+for reader_case in missing failed symlink directory-symlink; do
+    reader_payload="$test_root/reader-$reader_case-payload"
+    reader_downloads="$test_root/reader-$reader_case-downloads"
+    reader_exit_code=0
+    mkdir -p "$reader_downloads"
+    cp -R "$test_root/payload" "$reader_payload"
+    case "$reader_case" in
+        missing) rm "$reader_payload/libexec/tb-markdown-reader" ;;
+        failed) reader_exit_code=23 ;;
+        symlink)
+            mv "$reader_payload/libexec/tb-markdown-reader" "$reader_payload/reader-target"
+            ln -s ../reader-target "$reader_payload/libexec/tb-markdown-reader"
+            ;;
+        directory-symlink)
+            mv "$reader_payload/libexec" "$reader_payload/reader-target"
+            ln -s reader-target "$reader_payload/libexec"
+            ;;
+    esac
+    tar -C "$reader_payload" -czf "$reader_downloads/toolbox-linux-amd64.tar.gz" .
+    (
+        cd "$reader_downloads"
+        sha256sum toolbox-linux-amd64.tar.gz > toolbox-linux-amd64.tar.gz.sha256
+    )
+    for installation_state in fresh existing; do
+        reader_home="$test_root/reader-$reader_case-$installation_state-home"
+        reader_data="$reader_home/.local/share/my-toolbox"
+        mkdir -p "$reader_home"
+        if [ "$installation_state" = existing ]; then
+            # The bootstrap stages only without current.txt; retain an older
+            # version and all surrounding installation files on this path.
+            mkdir -p "$reader_data/versions/0.1.4" "$reader_data/completions" "$reader_home/.local/bin"
+            printf '%s\n' 'old executable' > "$reader_data/versions/0.1.4/tb"
+            printf '%s\n' 'old wrapper' > "$reader_home/.local/bin/tb"
+            printf '%s\n' 'old completion' > "$reader_data/completions/tb.bash"
+            printf '%s\n' 'old bash profile' > "$reader_home/.bashrc"
+            printf '%s\n' 'old zsh profile' > "$reader_home/.zshrc"
+            cp -Rp "$reader_home" "$reader_home.before"
+        fi
+        if HOME="$reader_home" ZDOTDIR="$reader_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$reader_downloads" READER_EXIT_CODE="$reader_exit_code" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/reader.out" 2>&1; then
+            printf 'Installer accepted %s reader for %s installation.\n' "$reader_case" "$installation_state" >&2
+            exit 1
+        fi
+        if ! grep -F '[FAIL] Stage 5/7: extraction/validation' "$test_root/reader.out" >/dev/null ||
+            ! grep -F 'reader' "$test_root/reader.out" >/dev/null; then
+            printf 'Reader failure did not identify staged reader validation.\n' >&2
+            cat "$test_root/reader.out" >&2
+            exit 1
+        fi
+        if [ -e "$reader_data/current.txt" ] || [ -e "$reader_data/versions/0.1.5" ] ||
+            find "$reader_data/versions" "$test_root/tmp" -mindepth 1 -name '.install-*' -print | grep . >/dev/null; then
+            printf 'Reader validation failure left publication or staging files.\n' >&2
+            exit 1
+        fi
+        if [ "$installation_state" = existing ]; then
+            diff -r "$reader_home.before" "$reader_home"
+        elif [ -e "$reader_home/.local/bin" ] || [ -e "$reader_data/completions" ] ||
+            [ -e "$reader_home/.bashrc" ] || [ -e "$reader_home/.zshrc" ]; then
+            printf 'Fresh reader validation failure published installation files.\n' >&2
+            exit 1
+        fi
+    done
+done
+
+reader_home="$test_root/reader-success-home"
+reader_data="$reader_home/.local/share/my-toolbox"
+mkdir -p "$reader_home"
+HOME="$reader_home" ZDOTDIR="$reader_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" READER_CHECK_LOG="$test_root/reader-check.log" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/reader-success.out" 2>&1
+if [ ! -f "$test_root/reader-check.log" ] ||
+    [ "$(sed -n '2p' "$test_root/reader-check.log")" != --tb-self-check ] ||
+    [ "$(stat -c '%a' "$reader_data/versions/0.1.5/libexec/tb-markdown-reader")" != 755 ]; then
+    printf 'Installer did not validate the staged reader and repair its mode to 755.\n' >&2
+    exit 1
+fi
+# An active installation still takes the existing completion repair shortcut.
+cp -Rp "$reader_home" "$reader_home.before"
+rm "$test_root/reader-check.log"
+HOME="$reader_home" ZDOTDIR="$reader_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/reader-missing-downloads" READER_EXIT_CODE=23 READER_CHECK_LOG="$test_root/reader-check.log" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/reader-current.out" 2>&1
+diff -r "$reader_home.before" "$reader_home"
+if [ -e "$test_root/reader-check.log" ] || ! grep -F 'is already installed' "$test_root/reader-current.out" >/dev/null; then
+    printf 'Installer changed the existing current-file shortcut.\n' >&2
+    exit 1
+fi
 
 make_prerequisite_bin() {
     destination=$1

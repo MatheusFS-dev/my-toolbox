@@ -645,6 +645,7 @@ mkdir -p "$versions_root"
 staging_payload=$(mktemp -d "$versions_root/.install-$version.XXXXXX")
 tar -xzf "$temporary_root/$archive" -C "$staging_payload"
 for required in tb commands.json version.txt \
+    libexec/tb-markdown-reader \
     completions/_tb \
     completions/tb.bash \
     completions/tb.ps1 \
@@ -680,6 +681,17 @@ done
     printf 'Downloaded payload version does not match release %s.\n' "$version" >&2
     exit 1
 }
+staged_reader="$staging_payload/libexec/tb-markdown-reader"
+if [ ! -d "$staging_payload/libexec" ] || [ -L "$staging_payload/libexec" ] ||
+    [ ! -f "$staged_reader" ] || [ -L "$staged_reader" ]; then
+    printf 'Downloaded payload has an unsafe bundled reader path.\n' >&2
+    exit 1
+fi
+chmod 755 "$staged_reader"
+if ! "$staged_reader" --tb-self-check; then
+    printf 'Bundled Markdown reader self-check failed.\n' >&2
+    exit 1
+fi
 complete_stage
 
 start_stage 6 installation

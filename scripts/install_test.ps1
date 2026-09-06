@@ -9,6 +9,7 @@ $Documents = Join-Path $TestRoot 'Documents'
 $OriginalLocalAppData = $env:LOCALAPPDATA
 $OriginalPath = $env:PATH
 $OriginalPathExt = $env:PATHEXT
+$OriginalLastExitCode = $global:LASTEXITCODE
 $OriginalProcessorArchitecture = $env:PROCESSOR_ARCHITECTURE
 $OriginalProcessorArchitectureW6432 = $env:PROCESSOR_ARCHITEW6432
 New-Item -ItemType Directory -Path $Payload, $Downloads, $Documents | Out-Null
@@ -22,6 +23,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'completions') -Destination (Join-Path $Payload 'completions') -Recurse
     Set-Content -LiteralPath (Join-Path $Payload 'version.txt') -Value '0.1.5' -Encoding ascii
     Set-Content -LiteralPath (Join-Path $Payload 'tb.exe') -Value 'fixture' -Encoding ascii
+    New-Item -ItemType Directory -Path (Join-Path $Payload 'libexec') | Out-Null
+    Set-Content -LiteralPath (Join-Path $Payload 'libexec\tb-markdown-reader.exe') -Value 'reader fixture' -Encoding ascii
     $Catalog = Get-Content -LiteralPath (Join-Path $RepositoryRoot 'commands.json') -Raw | ConvertFrom-Json
     foreach ($Command in $Catalog.commands) {
         if ($Command.protocol -eq 'builtin') {
@@ -67,10 +70,20 @@ try {
     function Invoke-TestInstaller {
         param(
             [Parameter(Mandatory = $true)]
-            [scriptblock]$UserPathWriter
+            [scriptblock]$UserPathWriter,
+            [scriptblock]$ReaderValidator = {
+                param([string]$ReaderPath, [string[]]$ReaderArguments)
+                Assert-StagedReaderInvocation $ReaderPath $ReaderArguments
+                return 0
+            },
+            [switch]$UseProductionReaderValidator
         )
 
-        & $Installer `
+        $ReaderParameters = @{}
+        if (-not $UseProductionReaderValidator) {
+            $ReaderParameters.ReaderValidator = $ReaderValidator
+        }
+        & $Installer @ReaderParameters `
             -UserPathReader { $global:ToolboxInstallerTestUserPath } `
             -UserPathWriter $UserPathWriter `
             -DocumentsPathReader { $global:ToolboxInstallerTestDocuments } `
@@ -82,6 +95,145 @@ try {
                 return Get-Command $Name -ErrorAction SilentlyContinue
             }
     }
+
+    function Assert-StagedReaderInvocation {
+        param([string]$ReaderPath, [string[]]$ReaderArguments)
+
+        $Data = Join-Path $env:LOCALAPPDATA 'my-toolbox'
+        $Staging = @(Get-ChildItem -LiteralPath (Join-Path $Data 'versions') -Directory -Filter '.install-0.1.5-*')
+        if ($Staging.Count -ne 1 -or $ReaderPath -cne (Join-Path $Staging[0].FullName 'libexec\tb-markdown-reader.exe') -or
+            $ReaderArguments.Count -ne 1 -or $ReaderArguments[0] -cne '--tb-self-check' -or
+            -not (Test-Path -LiteralPath $ReaderPath -PathType Leaf)) {
+            throw 'Reader validator did not receive the exact staged executable and self-check argument.'
+        }
+        if ((Test-Path -LiteralPath (Join-Path $Data 'versions\0.1.5')) -or (Test-Path -LiteralPath (Join-Path $Data 'current.txt'))) {
+            throw 'Reader validator ran after version or current publication.'
+        }
+        $global:ToolboxInstallerReaderChecks += $ReaderPath
+    }
+
+    function Get-InstallerSnapshot {
+        param([string]$Root)
+
+        return (@(Get-ChildItem -LiteralPath $Root -Recurse -Force | Sort-Object FullName | ForEach-Object {
+            $Relative = $_.FullName.Substring($Root.Length)
+            if ($_.PSIsContainer) {
+                "directory $Relative"
+            } else {
+                "file $Relative $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+            }
+        }) -join "`n")
+    }
+
+    $global:ToolboxInstallerReaderChecks = @()
+    $MissingReaderPayload = Join-Path $TestRoot 'payload-without-reader'
+    Copy-Item -LiteralPath $Payload -Destination $MissingReaderPayload -Recurse
+    Remove-Item -LiteralPath (Join-Path $MissingReaderPayload 'libexec\tb-markdown-reader.exe')
+    $MissingReaderArchive = Join-Path $Downloads 'toolbox-windows-amd64-missing-reader.zip'
+    Compress-Archive -Path (Join-Path $MissingReaderPayload '*') -DestinationPath $MissingReaderArchive
+    $MissingReaderDigest = (Get-FileHash -LiteralPath $MissingReaderArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$MissingReaderArchive.sha256" -Value "$MissingReaderDigest  toolbox-windows-amd64.zip" -Encoding ascii
+    $ReaderArchives = @{ missing = $MissingReaderArchive }
+    foreach ($LinkCase in @('symlink', 'directory-symlink')) {
+        $LinkArchive = Join-Path $Downloads "toolbox-windows-amd64-$LinkCase.zip"
+        Copy-Item -LiteralPath $Archive -Destination $LinkArchive
+        $Zip = [IO.Compression.ZipFile]::Open($LinkArchive, [IO.Compression.ZipArchiveMode]::Update)
+        try {
+            foreach ($Entry in @($Zip.Entries | Where-Object { $_.FullName.Replace('\', '/').StartsWith('libexec/') })) {
+                $Entry.Delete()
+            }
+            $TargetName = if ($LinkCase -eq 'symlink') { 'reader-target.exe' } else { 'reader-target/tb-markdown-reader.exe' }
+            $Writer = [IO.StreamWriter]::new($Zip.CreateEntry($TargetName).Open())
+            try { $Writer.Write('reader fixture') } finally { $Writer.Dispose() }
+            $LinkName = if ($LinkCase -eq 'symlink') { 'libexec/tb-markdown-reader.exe' } else { 'libexec' }
+            $LinkTarget = if ($LinkCase -eq 'symlink') { '../reader-target.exe' } else { 'reader-target' }
+            $LinkEntry = $Zip.CreateEntry($LinkName)
+            $LinkEntry.ExternalAttributes = -1610612736 # Unix symbolic-link type (0xA000 << 16).
+            $Writer = [IO.StreamWriter]::new($LinkEntry.Open())
+            try { $Writer.Write($LinkTarget) } finally { $Writer.Dispose() }
+        } finally {
+            $Zip.Dispose()
+        }
+        $LinkDigest = (Get-FileHash -LiteralPath $LinkArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath "$LinkArchive.sha256" -Value "$LinkDigest  toolbox-windows-amd64.zip" -Encoding ascii
+        $ReaderArchives[$LinkCase] = $LinkArchive
+    }
+    foreach ($ReaderCase in @('invalid-executable', 'missing', 'failed', 'validator-error', 'symlink', 'directory-symlink')) {
+        foreach ($InstallationState in @('fresh', 'existing')) {
+            $CaseRoot = Join-Path $TestRoot "reader-$ReaderCase-$InstallationState"
+            $env:LOCALAPPDATA = Join-Path $CaseRoot 'localappdata'
+            $global:ToolboxInstallerTestDocuments = Join-Path $CaseRoot 'Documents'
+            New-Item -ItemType Directory -Path $env:LOCALAPPDATA, $global:ToolboxInstallerTestDocuments | Out-Null
+            $Data = Join-Path $env:LOCALAPPDATA 'my-toolbox'
+            if ($InstallationState -eq 'existing') {
+                # Without current.txt, bootstrap can stage alongside an older
+                # version, wrapper, completions, and profiles.
+                foreach ($RelativePath in @('versions\0.1.4\tb.exe', 'bin\tb.cmd', 'completions\tb.ps1')) {
+                    $ExistingPath = Join-Path $Data $RelativePath
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ExistingPath) | Out-Null
+                    Set-Content -LiteralPath $ExistingPath -Value "original $RelativePath" -Encoding ascii
+                }
+                foreach ($Profile in @('WindowsPowerShell\profile.ps1', 'PowerShell\profile.ps1')) {
+                    $ExistingPath = Join-Path $global:ToolboxInstallerTestDocuments $Profile
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ExistingPath) | Out-Null
+                    Set-Content -LiteralPath $ExistingPath -Value '# original profile' -Encoding ascii
+                }
+                $Before = Get-InstallerSnapshot $CaseRoot
+            }
+            $env:PATH = 'C:\Windows\System32'
+            $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Reader'
+            $global:ToolboxInstallerFixtureArchive = if ($ReaderArchives.ContainsKey($ReaderCase)) { $ReaderArchives[$ReaderCase] } else { $Archive }
+            $ChecksBeforeFailure = $global:ToolboxInstallerReaderChecks.Count
+            $ReaderParameters = @{}
+            if ($ReaderCase -eq 'invalid-executable') {
+                $ReaderParameters.UseProductionReaderValidator = $true
+                $global:LASTEXITCODE = 0
+            } else {
+                $ReaderParameters.ReaderValidator = {
+                    param([string]$ReaderPath, [string[]]$ReaderArguments)
+                    Assert-StagedReaderInvocation $ReaderPath $ReaderArguments
+                    if ($ReaderCase -eq 'validator-error') { throw 'Injected reader startup failure.' }
+                    if ($ReaderCase -in @('symlink', 'directory-symlink')) { return 0 }
+                    return 23
+                }
+            }
+            $Failure = ''
+            try {
+                Invoke-TestInstaller @ReaderParameters -UserPathWriter { param([string]$Value) throw 'Validation reached PATH publication.' } | Out-Null
+            } catch {
+                $Failure = $_.Exception.Message
+            }
+            if (-not $Failure.Contains('[FAIL] Stage 5/7: extraction/validation')) {
+                throw "$ReaderCase reader did not fail staging for $InstallationState installation. Error: $Failure"
+            }
+            if ($ReaderCase -eq 'missing' -and -not $Failure.Contains('libexec\tb-markdown-reader.exe')) {
+                throw "Missing reader failure did not identify its path. Error: $Failure"
+            }
+            if ($ReaderCase -in @('symlink', 'directory-symlink') -and -not $Failure.Contains('unsafe bundled reader path')) {
+                throw "Reader link did not fail the safety check explicitly. Error: $Failure"
+            }
+            $ExpectedChecks = if ($ReaderCase -in @('failed', 'validator-error')) { 1 } else { 0 }
+            if ($global:ToolboxInstallerReaderChecks.Count -ne ($ChecksBeforeFailure + $ExpectedChecks)) {
+                throw "$ReaderCase invoked reader validation an unexpected number of times."
+            }
+            if ((Test-Path -LiteralPath (Join-Path $Data 'current.txt')) -or (Test-Path -LiteralPath (Join-Path $Data 'versions\0.1.5')) -or
+                @(Get-ChildItem -LiteralPath (Join-Path $Data 'versions') -Force -Filter '.install-*').Count -ne 0) {
+                throw 'Reader validation failure left publication or staging files.'
+            }
+            if ($InstallationState -eq 'existing') {
+                if ((Get-InstallerSnapshot $CaseRoot) -cne $Before) {
+                    throw 'Reader validation failure changed existing installation or profile files.'
+                }
+            } elseif ((Test-Path -LiteralPath (Join-Path $Data 'bin')) -or (Test-Path -LiteralPath (Join-Path $Data 'completions')) -or
+                @(Get-ChildItem -LiteralPath $global:ToolboxInstallerTestDocuments -Recurse -Force).Count -ne 0) {
+                throw 'Fresh reader validation failure published wrapper, completion, or profile files.'
+            }
+            if ($env:PATH -cne 'C:\Windows\System32' -or $global:ToolboxInstallerTestUserPath -cne 'C:\Persisted\Reader') {
+                throw 'Reader validation failure changed process or user PATH.'
+            }
+        }
+    }
+    $global:ToolboxInstallerFixtureArchive = $Archive
 
     $env:LOCALAPPDATA = ''
     $env:PROCESSOR_ARCHITECTURE = 'ARM64'
@@ -156,7 +308,12 @@ try {
     [IO.File]::WriteAllBytes($WindowsPowerShellProfile, $UnrelatedProfileBytes)
     $global:ToolboxInstallerTestUserPath = 'C:\Persisted\One;;C:\Persisted\Two'
     $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
+    $ChecksBeforeSuccess = $global:ToolboxInstallerReaderChecks.Count
     $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
+    if ($global:ToolboxInstallerReaderChecks.Count -ne ($ChecksBeforeSuccess + 1) -or
+        -not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5\libexec\tb-markdown-reader.exe'))) {
+        throw 'Successful installation did not validate and publish the bundled reader.'
+    }
     $ExpectedBannerLines = @(
         '###>   ###>##>   ##>    ########> ######>  ######> ##>     ######>  ######> ##>  ##>',
         '####> ####|<##> ##+]    <==##+==]##+===##>##+===##>##|     ##+==##>##+===##><##>##+]',
@@ -239,6 +396,18 @@ try {
         if (-not [string]::Equals($InstalledCommand.Source, (Join-Path $WrapperRoot 'tb.cmd'), [StringComparison]::OrdinalIgnoreCase)) {
             throw "Get-Command tb resolved '$($InstalledCommand.Source)'."
         }
+    }
+
+    # The active-pointer shortcut preserves an already complete installation,
+    # even when a downloaded reader would fail. Update staging is a later task.
+    $CurrentBefore = [IO.File]::ReadAllText((Join-Path $env:LOCALAPPDATA 'my-toolbox\current.txt'))
+    $InstallationBefore = Get-InstallerSnapshot $env:LOCALAPPDATA
+    $ProfilesBefore = Get-InstallerSnapshot $Documents
+    Invoke-TestInstaller -UserPathWriter $PathWriter -ReaderValidator { throw 'Active install unexpectedly validated a new reader.' } | Out-Null
+    if ([IO.File]::ReadAllText((Join-Path $env:LOCALAPPDATA 'my-toolbox\current.txt')) -cne $CurrentBefore -or
+        (Get-InstallerSnapshot $env:LOCALAPPDATA) -cne $InstallationBefore -or (Get-InstallerSnapshot $Documents) -cne $ProfilesBefore -or
+        $env:PATH -cne $ExpectedProcessPath -or $global:ToolboxInstallerTestUserPath -cne $ExpectedUserPath) {
+        throw 'Active installation shortcut changed existing installation, current pointer, profiles, or PATH.'
     }
 
     $env:PATH = 'C:\Windows\System32'
@@ -391,9 +560,11 @@ try {
     Remove-Variable -Name ToolboxInstallerFixtureArchive -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ToolboxInstallerTestUserPath -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ToolboxInstallerTestDocuments -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name ToolboxInstallerReaderChecks -Scope Global -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $OriginalLocalAppData
     $env:PATH = $OriginalPath
     $env:PATHEXT = $OriginalPathExt
+    $global:LASTEXITCODE = $OriginalLastExitCode
     $env:PROCESSOR_ARCHITECTURE = $OriginalProcessorArchitecture
     $env:PROCESSOR_ARCHITEW6432 = $OriginalProcessorArchitectureW6432
     if (Test-Path -LiteralPath $TestRoot) {

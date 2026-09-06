@@ -6,7 +6,26 @@ param(
     [Parameter(DontShow = $true)]
     [scriptblock]$DocumentsPathReader = { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) },
     [Parameter(DontShow = $true)]
-    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue }
+    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue },
+    [Parameter(DontShow = $true)]
+    [scriptblock]$ReaderValidator = {
+        param([string]$ReaderPath, [string[]]$ReaderArguments)
+
+        $Process = [Diagnostics.Process]::new()
+        try {
+            $Process.StartInfo.FileName = $ReaderPath
+            $Process.StartInfo.Arguments = $ReaderArguments -join ' '
+            $Process.StartInfo.UseShellExecute = $false
+            $Process.StartInfo.CreateNoWindow = $true
+            if (-not $Process.Start()) {
+                throw 'Bundled Markdown reader could not start.'
+            }
+            $Process.WaitForExit()
+            return $Process.ExitCode
+        } finally {
+            $Process.Dispose()
+        }
+    }
 )
 
 $ErrorActionPreference = 'Stop'
@@ -587,6 +606,10 @@ function Expand-ToolboxArchive {
             }
             $UnixType = (($Entry.ExternalAttributes -shr 16) -band 0xF000)
             if ($UnixType -eq 0xA000) {
+                if ($EntryPath -eq (Join-Path $Root 'libexec') -or
+                    $EntryPath -eq (Join-Path $Root 'libexec\tb-markdown-reader.exe')) {
+                    throw 'Downloaded payload has an unsafe bundled reader path.'
+                }
                 $SymbolicLinks += [pscustomobject]@{ Entry = $Entry; Path = $EntryPath; Name = $ArchiveName }
                 continue
             }
@@ -719,6 +742,7 @@ try {
     Expand-ToolboxArchive -ArchivePath $ArchivePath -Destination $Payload
     $Required = @(
         'tb.exe',
+        'libexec\tb-markdown-reader.exe',
         'commands.json',
         'version.txt',
         'completions\_tb',
@@ -744,6 +768,17 @@ try {
     $PayloadVersion = (Get-Content -LiteralPath (Join-Path $Payload 'version.txt') -TotalCount 1).Trim()
     if ($PayloadVersion -ne $Version) {
         throw "Downloaded payload version $PayloadVersion does not match release $Version."
+    }
+    $ReaderDirectory = Get-Item -LiteralPath (Join-Path $Payload 'libexec') -Force
+    $StagedReader = Get-Item -LiteralPath (Join-Path $Payload 'libexec\tb-markdown-reader.exe') -Force
+    if (-not $ReaderDirectory.PSIsContainer -or
+        ($ReaderDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        ($StagedReader.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Downloaded payload has an unsafe bundled reader path.'
+    }
+    $ReaderExitCode = & $ReaderValidator $StagedReader.FullName @('--tb-self-check')
+    if ($ReaderExitCode -ne 0) {
+        throw "Bundled Markdown reader self-check failed with exit code $ReaderExitCode."
     }
     Complete-Stage
 
