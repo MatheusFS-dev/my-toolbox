@@ -1,7 +1,7 @@
 //! Integration test: `--export-html` produces valid, non-empty HTML.
 //!
-//! Runs the compiled binary against the project's own `sample.md` and
-//! checks that the output looks like a complete HTML document.
+//! Runs the compiled binary against a temporary Markdown document and checks
+//! that the output looks like a complete HTML document.
 
 use std::path::Path;
 use std::process::Command;
@@ -20,16 +20,13 @@ fn binary() -> std::path::PathBuf {
         .join("tb-markdown-reader")
 }
 
-/// Happy-path: exporting the project's own `sample.md` produces a non-empty
-/// self-contained HTML document.
+/// Happy-path: exporting Markdown produces a non-empty self-contained HTML
+/// document.
 #[test]
 fn export_html_produces_valid_html_document() {
-    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("sample.md");
-    assert!(
-        sample.exists(),
-        "sample.md not found at {}: integration test requires it",
-        sample.display()
-    );
+    let directory = tempfile::tempdir().expect("temporary directory must be created");
+    let sample = directory.path().join("sample.md");
+    std::fs::write(&sample, "# Sample\n\nBody.\n").expect("sample Markdown must be written");
 
     let output = Command::new(binary())
         .args(["--export-html", &sample.to_string_lossy()])
@@ -58,7 +55,7 @@ fn export_html_produces_valid_html_document() {
         html.contains("</html>"),
         "output must be a complete HTML document"
     );
-    // The document must have at least one heading (sample.md has several).
+    // The input contains one heading.
     assert!(
         html.contains("<h1") || html.contains("<h2"),
         "expected at least one heading element in output"

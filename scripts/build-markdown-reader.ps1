@@ -16,10 +16,10 @@ if (Test-Path -LiteralPath $OutputDirectory -PathType Leaf) {
 }
 $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
-$ManifestPath = Join-Path $RepositoryRoot 'third_party/tb-markdown-reader/Cargo.toml'
+$ManifestPath = Join-Path $RepositoryRoot 'packages/search/fork-markdown-reader/Cargo.toml'
 $TargetDirectory = $env:CARGO_TARGET_DIR
 if ([string]::IsNullOrEmpty($TargetDirectory)) {
-    $TargetDirectory = Join-Path $RepositoryRoot 'third_party/tb-markdown-reader/target'
+    $TargetDirectory = Join-Path $RepositoryRoot 'packages/search/fork-markdown-reader/target'
 }
 $TargetDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($TargetDirectory)
 [void](Get-Command cargo -ErrorAction Stop)

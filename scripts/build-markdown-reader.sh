@@ -22,10 +22,10 @@ for command in cargo readelf; do
     fi
 done
 repository_root=$(unset CDPATH; cd -- "$(dirname "$0")/.." && pwd)
-target_directory=${CARGO_TARGET_DIR:-"$repository_root/third_party/tb-markdown-reader/target"}
+target_directory=${CARGO_TARGET_DIR:-"$repository_root/packages/search/fork-markdown-reader/target"}
 case "$target_directory" in /*) ;; *) target_directory="$PWD/$target_directory" ;; esac
 cargo build --locked --release --target "$rust_target" \
-    --manifest-path "$repository_root/third_party/tb-markdown-reader/Cargo.toml" \
+    --manifest-path "$repository_root/packages/search/fork-markdown-reader/Cargo.toml" \
     --target-dir "$target_directory"
 reader="$target_directory/$rust_target/release/tb-markdown-reader"
 if [ ! -f "$reader" ] || [ ! -s "$reader" ] || [ ! -x "$reader" ] || [ -L "$reader" ]; then

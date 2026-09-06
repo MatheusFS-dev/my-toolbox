@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const OFFICIAL_REPOSITORY: &str = "https://github.com/leboiko/markdown-reader";
-const UPSTREAM_COMMIT: &str = "186698caba1f6c4f9932296da03c5599b35408d0";
-const UPSTREAM_VERSION: &str = "1.35.1";
 
 fn vendored_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,7 +12,8 @@ fn repository_root() -> PathBuf {
     vendored_root()
         .parent()
         .and_then(Path::parent)
-        .expect("vendored crate must live at third_party/tb-markdown-reader")
+        .and_then(Path::parent)
+        .expect("vendored crate must live at packages/search/fork-markdown-reader")
         .to_path_buf()
 }
 
@@ -55,25 +54,6 @@ fn binary() -> PathBuf {
 }
 
 #[test]
-fn upstream_provenance_is_pinned() {
-    let upstream = fs::read_to_string(vendored_root().join("UPSTREAM.md"))
-        .expect("vendored snapshot must include UPSTREAM.md");
-
-    for required in [
-        OFFICIAL_REPOSITORY,
-        UPSTREAM_VERSION,
-        UPSTREAM_COMMIT,
-        "crates/mermaid-text",
-        "MIT",
-    ] {
-        assert!(
-            upstream.contains(required),
-            "UPSTREAM.md must contain {required:?}"
-        );
-    }
-}
-
-#[test]
 fn vendored_snapshot_has_no_nested_git_directory() {
     let mut nested_git = Vec::new();
     collect_named(&vendored_root(), ".git", &mut nested_git);
@@ -88,7 +68,7 @@ fn vendored_reader_is_not_a_submodule() {
     let gitmodules = fs::read_to_string(repository_root().join(".gitmodules"))
         .expect("toolbox .gitmodules must remain readable");
     assert!(
-        !gitmodules.contains("third_party/tb-markdown-reader")
+        !gitmodules.contains("packages/search/fork-markdown-reader")
             && !gitmodules.contains("toolbox-reader"),
         "vendored reader must not be registered as a submodule"
     );

@@ -25,7 +25,6 @@
 ## Table of Contents
 
 - [Overview](#overview)
-- [What's New in v1.3.0](#whats-new-in-v130)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Tool Catalog](#tool-catalog)
@@ -35,6 +34,7 @@
 - [Contributing](#contributing)
 - [License](#license)
 - [Collaborators](#collaborators)
+- [References](#references)
 
 ## Overview
 
@@ -48,10 +48,6 @@
 | Maintenance | Built-in search, update, version, help, and uninstall commands |
 
 The toolbox gathers all required answers before it runs selected tools, executes them in catalog order, and stops at the first failure. Unsupported tools return an explicit platform error, while direct-only commands remain available through `tb help`.
-
-## What's New in v1.3.0
-
-Version 1.3.0 introduces `tb search`, a searchable library of bundled Markdown guides. The bundled full-screen reader uses GitHub Dark colors and supports wrapped syntax-highlighted code cards, tables, Mermaid diagrams, math, mouse scrolling, and code-copy controls. Search results cover article titles, headings, and body text; Escape or `q` returns to the preserved query and selection.
 
 ## Installation
 
@@ -265,7 +261,7 @@ Development and release builds require Go 1.25.8, as declared in `go.mod`, and P
 
 ```sh
 go test ./...
-cargo test --locked --manifest-path third_party/tb-markdown-reader/Cargo.toml
+cargo test --locked --manifest-path packages/search/fork-markdown-reader/Cargo.toml
 python3 -m pip install -r packages/monitor_runtime/requirements.txt
 PYTHONPATH=packages/monitor_runtime python3 -m unittest discover -s packages/monitor_runtime/tests -v
 python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
@@ -314,8 +310,6 @@ Contributions are welcome:
 
 This project is licensed under the [Apache License 2.0](LICENSE).
 
-The bundled reader is a local fork of `leboiko/markdown-reader` 1.35.1 under the [MIT License](third_party/tb-markdown-reader/LICENSE). Its pinned upstream commit and import details are recorded in [UPSTREAM.md](third_party/tb-markdown-reader/UPSTREAM.md).
-
 ## Collaborators
 
 Thanks to the people who have contributed to my-toolbox:
@@ -330,3 +324,7 @@ Thanks to the people who have contributed to my-toolbox:
     </td>
   </tr>
 </table>
+
+## References
+
+- The bundled reader is derived from [leboiko/markdown-reader](https://github.com/leboiko/markdown-reader) 1.35.1 at [commit `186698c`](https://github.com/leboiko/markdown-reader/tree/186698caba1f6c4f9932296da03c5599b35408d0). Credit goes to its original author and contributors. The local fork remains available under its [MIT License](packages/search/fork-markdown-reader/LICENSE).

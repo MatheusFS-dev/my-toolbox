@@ -75,7 +75,7 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
-          TOOLBOX_RELEASE_MINIMUM_VERSION: 1.1.0
+          TOOLBOX_RELEASE_MINIMUM_VERSION: 1.4.0
         run: |
           VERSION=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | sh scripts/next-release-version.sh)
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"

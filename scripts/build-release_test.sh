@@ -161,7 +161,7 @@ for platform in linux-amd64 linux-arm64; do
         exit 1
     fi
     tar -xOf "$archive" libexec/tb-markdown-reader-LICENSE |
-        cmp "$repository_root/third_party/tb-markdown-reader/LICENSE" -
+        cmp "$repository_root/packages/search/fork-markdown-reader/LICENSE" -
     "$extracted_reader" --tb-self-check
     for tomli_asset in $tomli_assets; do
         if ! printf '%s\n' "$entries" | grep -Fx "$tomli_asset" >/dev/null; then
@@ -172,7 +172,7 @@ for platform in linux-amd64 linux-arm64; do
     done
 
     find "$repository_root/packages" \
-        \( -type d \( -name .git -o -name __pycache__ \) -prune \) -o \
+        \( -type d \( -path "$repository_root/packages/search/fork-markdown-reader" -o -name .git -o -name __pycache__ \) -prune \) -o \
         \( ! -name .git \( \( -type f ! -name '*.pyc' ! -name '*.pyo' \) -o -type l \) \) -print |
         while IFS= read -r source_path; do
         relative_path=${source_path#"$repository_root/"}
@@ -207,7 +207,7 @@ done
 unzip -p "$windows_archive" libexec/tb-markdown-reader.exe > "$temporary_root/windows-reader"
 cmp "$reader_directory/windows-amd64/libexec/tb-markdown-reader.exe" "$temporary_root/windows-reader"
 unzip -p "$windows_archive" libexec/tb-markdown-reader-LICENSE |
-    cmp "$repository_root/third_party/tb-markdown-reader/LICENSE" -
+    cmp "$repository_root/packages/search/fork-markdown-reader/LICENSE" -
 for tomli_asset in $tomli_assets; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$tomli_asset" >/dev/null; then
         printf '%s is missing required Tomli asset %s.\n' \
@@ -220,7 +220,7 @@ if ! zipinfo -l "$windows_archive" packages/others/template/.release-symlink-tes
     exit 1
 fi
 find "$repository_root/packages" \
-    \( -type d \( -name .git -o -name __pycache__ \) -prune \) -o \
+    \( -type d \( -path "$repository_root/packages/search/fork-markdown-reader" -o -name .git -o -name __pycache__ \) -prune \) -o \
     \( ! -name .git \( \( -type f ! -name '*.pyc' ! -name '*.pyo' \) -o -type l \) \) -print |
     while IFS= read -r source_path; do
     relative_path=${source_path#"$repository_root/"}
