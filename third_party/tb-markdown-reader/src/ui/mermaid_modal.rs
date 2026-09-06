@@ -71,8 +71,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.mermaid_modal_rect = Some(popup);
     f.render_widget(Clear, popup);
 
-    let title =
-        " Mermaid  j/k scroll  h/l pan  +/- zoom (text)  = reset  g/G top/bot  q/Esc close ";
+    let embedded = app.mode == crate::app::AppMode::TbEmbedded;
+    let title = if embedded {
+        " Mermaid  j/k scroll  h/l pan  +/- zoom  = reset  Enter close  Esc/q back "
+    } else {
+        " Mermaid  j/k scroll  h/l pan  +/- zoom (text)  = reset  g/G top/bot  q/Esc close "
+    };
 
     let block = Block::default()
         .title(title)
@@ -154,6 +158,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
     };
 
+    let footer_text = if embedded {
+        footer_text.replace("Esc/Enter close", "Enter close, Esc/q back")
+    } else {
+        footer_text
+    };
     let footer_rect = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),

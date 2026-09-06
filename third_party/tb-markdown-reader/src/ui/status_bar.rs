@@ -11,6 +11,15 @@ use ratatui::{
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let p = &app.palette;
 
+    if app.mode == crate::app::AppMode::TbEmbedded {
+        f.render_widget(
+            Paragraph::new(crate::toolbox::FOOTER)
+                .style(Style::default().fg(p.dim).bg(p.background)),
+            area,
+        );
+        return;
+    }
+
     let focus_label = match app.focus {
         Focus::Tree => "TREE",
         Focus::Viewer => "VIEWER",

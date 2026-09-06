@@ -140,6 +140,7 @@ impl Tokens {
             Theme::GruvboxDark => super::themes::gruvbox_dark(),
             Theme::GruvboxLight => super::themes::gruvbox_light(),
             Theme::GithubLight => super::themes::github_light(),
+            Theme::ToolboxGithubDark => super::themes::toolbox_github_dark(),
         }
     }
 }

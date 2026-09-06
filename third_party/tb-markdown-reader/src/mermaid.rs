@@ -488,7 +488,7 @@ const SVG_RENDER_SCALE: f32 = 3.0;
 /// light palette to match the active theme. For dark themes (average luminance
 /// < 128), node fills, text, borders, and arrows are remapped to dark-friendly
 /// equivalents. The canvas background is always replaced with `bg_rgb`.
-fn svg_to_image(svg: &str, bg_rgb: (u8, u8, u8)) -> Result<DynamicImage, String> {
+pub(crate) fn svg_to_image(svg: &str, bg_rgb: (u8, u8, u8)) -> Result<DynamicImage, String> {
     let bg_hex = format!("#{:02X}{:02X}{:02X}", bg_rgb.0, bg_rgb.1, bg_rgb.2);
     let svg = svg.replacen("fill=\"#FFFFFF\"", &format!("fill=\"{bg_hex}\""), 1);
 

@@ -50,6 +50,9 @@ pub enum Theme {
     GruvboxDark,
     GruvboxLight,
     GithubLight,
+    /// Fixed toolbox palette; never loaded from normal user configuration.
+    #[serde(skip)]
+    ToolboxGithubDark,
 }
 
 impl Theme {
@@ -76,6 +79,7 @@ impl Theme {
             Theme::GruvboxDark => "Gruvbox Dark",
             Theme::GruvboxLight => "Gruvbox Light",
             Theme::GithubLight => "GitHub Light",
+            Theme::ToolboxGithubDark => "Toolbox GitHub Dark",
         }
     }
 
@@ -92,7 +96,9 @@ impl Theme {
     /// update here whenever a new [`Theme`] variant is added.
     pub fn syntax_theme_name(self) -> &'static str {
         match self {
-            Theme::Default | Theme::SolarizedDark | Theme::Nord => "base16-ocean.dark",
+            Theme::Default | Theme::SolarizedDark | Theme::Nord | Theme::ToolboxGithubDark => {
+                "base16-ocean.dark"
+            }
             Theme::Dracula | Theme::GruvboxDark => "base16-eighties.dark",
             Theme::SolarizedLight | Theme::GruvboxLight | Theme::GithubLight => "InspiredGitHub",
         }

@@ -214,6 +214,13 @@ pub fn collect_match_lines(
 
 // ── Focus ────────────────────────────────────────────────────────────────────
 
+/// Controls whether application features can access normal user state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Normal,
+    TbEmbedded,
+}
+
 /// Which panel currently receives keyboard input.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
@@ -366,6 +373,7 @@ pub struct GotoLineState {
 #[allow(clippy::struct_excessive_bools)]
 #[allow(clippy::struct_field_names)]
 pub struct App {
+    pub mode: AppMode,
     /// Set to `false` to break the event loop and exit.
     pub running: bool,
     /// Which panel is currently focused.
@@ -522,10 +530,56 @@ impl App {
         initial_file: Option<PathBuf>,
         initial_display_name: Option<String>,
     ) -> Self {
-        let config = Config::load();
+        Self::new_with_mode(root, initial_file, initial_display_name, AppMode::Normal)
+    }
+
+    /// Open one validated canonical file from content already read by the CLI.
+    /// No configuration, session, filesystem discovery, or terminal queries run here.
+    pub fn new_embedded(path: PathBuf, content: String) -> Self {
+        let root = path
+            .parent()
+            .expect("canonical file has a parent")
+            .to_path_buf();
+        let mut app = Self::new_with_mode(root, None, None, AppMode::TbEmbedded);
+        app.tabs.open_or_focus(&path, true);
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        app.tabs.active_tab_mut().expect("embedded tab").view.load(
+            path,
+            name,
+            content,
+            &app.palette,
+            app.theme,
+            app.math_mode,
+        );
+        app
+    }
+
+    fn new_with_mode(
+        root: PathBuf,
+        initial_file: Option<PathBuf>,
+        initial_display_name: Option<String>,
+        mode: AppMode,
+    ) -> Self {
+        let config = if mode == AppMode::TbEmbedded {
+            Config {
+                theme: Theme::ToolboxGithubDark,
+                show_file_tree: false,
+                ..Config::default()
+            }
+        } else {
+            Config::load()
+        };
         let palette = Palette::from_theme(config.theme);
         let tokens = Tokens::from_theme(config.theme);
-        let app_state = AppState::load();
+        let app_state = if mode == AppMode::Normal {
+            AppState::load()
+        } else {
+            AppState::default()
+        };
 
         let tree_hidden = !config.show_file_tree;
         let mut tree = FileTreeState::default();
@@ -540,7 +594,11 @@ impl App {
         // event loop starts (so action_tx is available).  Starting with an empty map
         // means the tree renders immediately without blocking on `git` subprocess I/O.
 
-        let picker = crate::mermaid::create_picker();
+        let picker = if mode == AppMode::Normal {
+            crate::mermaid::create_picker()
+        } else {
+            None
+        };
         let initial_focus = if tree_hidden {
             Focus::Viewer
         } else {
@@ -548,6 +606,7 @@ impl App {
         };
 
         let mut app = Self {
+            mode,
             running: true,
             focus: initial_focus,
             pre_config_focus: initial_focus,
@@ -602,7 +661,9 @@ impl App {
             initial_display_name,
         };
 
-        app.restore_session();
+        if mode == AppMode::Normal {
+            app.restore_session();
+        }
         app
     }
 
@@ -728,6 +789,9 @@ impl App {
 
     /// Build the data needed for a session write without mutating `self`.
     fn session_snapshot(&self) -> Option<(AppState, PathBuf, Vec<TabSession>, usize)> {
+        if self.mode == AppMode::TbEmbedded {
+            return None;
+        }
         let tab_sessions: Vec<TabSession> = self
             .tabs
             .iter()
@@ -760,6 +824,9 @@ impl App {
 
     /// Persist the current config settings on a background thread (fire-and-forget).
     fn persist_config(&self) {
+        if self.mode == AppMode::TbEmbedded {
+            return;
+        }
         let config = Config {
             theme: self.theme,
             show_line_numbers: self.show_line_numbers,
@@ -794,6 +861,9 @@ impl App {
     /// Re-run `git status` on a background thread and send the result back as
     /// [`Action::GitStatusReady`]. No-ops when `action_tx` is not yet set.
     fn refresh_git_status(&self) {
+        if self.mode == AppMode::TbEmbedded {
+            return;
+        }
         let Some(tx) = self.action_tx.clone() else {
             return;
         };
@@ -807,6 +877,9 @@ impl App {
     /// Walk the filesystem on a background thread and deliver the result as
     /// [`Action::TreeDiscovered`]. No-ops when `action_tx` is not yet set.
     fn spawn_tree_discovery(&self) {
+        if self.mode == AppMode::TbEmbedded {
+            return;
+        }
         let Some(tx) = self.action_tx.clone() else {
             return;
         };
@@ -850,6 +923,10 @@ impl App {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     ) -> Result<()> {
+        // Query graphics before the input thread starts consuming terminal replies.
+        if self.mode == AppMode::TbEmbedded {
+            self.picker = crate::mermaid::create_picker();
+        }
         let (mut events, tx) = EventHandler::new();
         self.action_tx = Some(tx.clone());
 
@@ -871,7 +948,11 @@ impl App {
         }
 
         let root_clone = self.root.clone();
-        let _watcher = crate::fs::watcher::spawn_watcher(&root_clone, tx.clone());
+        let _watcher = if self.mode == AppMode::Normal {
+            Some(crate::fs::watcher::spawn_watcher(&root_clone, tx.clone()))
+        } else {
+            None
+        };
 
         loop {
             terminal.draw(|f| crate::ui::draw(f, self))?;
@@ -893,6 +974,19 @@ impl App {
     /// more state mutations.
     #[allow(clippy::too_many_lines)]
     pub(crate) fn handle_action(&mut self, action: Action) {
+        if self.mode == AppMode::TbEmbedded
+            && !matches!(
+                &action,
+                Action::RawKey(_)
+                    | Action::Quit
+                    | Action::Resize(_, _)
+                    | Action::Mouse(_)
+                    | Action::MermaidReady(_, _)
+                    | Action::MathReady(_, _, _)
+            )
+        {
+            return;
+        }
         match action {
             Action::RawKey(key) => self.handle_key(key.code, key.modifiers),
             Action::Quit => self.running = false,
@@ -1283,6 +1377,10 @@ impl App {
 
     /// Top-level key-event dispatcher.
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        if self.mode == AppMode::TbEmbedded {
+            self.handle_embedded_key(code, modifiers);
+            return;
+        }
         if self.show_help {
             self.show_help = false;
             return;

@@ -26,6 +26,71 @@
 use super::tokens::*;
 use ratatui::style::Color;
 
+/// Fixed GitHub dark canvas used only by the toolbox sidecar.
+pub(super) fn toolbox_github_dark() -> Tokens {
+    let bg = Color::Rgb(13, 17, 23);
+    let fg = Color::Rgb(201, 209, 217);
+    let muted = Color::Rgb(139, 148, 158);
+    let border = Color::Rgb(48, 54, 61);
+    let accent = Color::Rgb(88, 166, 255);
+    let success = Color::Rgb(63, 185, 80);
+    let danger = Color::Rgb(248, 81, 73);
+    Tokens {
+        surface: Surface {
+            base: bg,
+            raised: Color::Rgb(22, 27, 34),
+            border,
+        },
+        text: Text {
+            primary: fg,
+            muted,
+            on_accent: bg,
+            title: fg,
+        },
+        state: State {
+            selection_bg: border,
+            selection_fg: fg,
+            focus: accent,
+            search_bg: accent,
+            current_match_bg: danger,
+            match_fg: bg,
+        },
+        accent: Accent {
+            primary: accent,
+            alt: danger,
+            link: accent,
+        },
+        syntax: Syntax {
+            inline_code: fg,
+            code_fg: fg,
+            code_border: border,
+        },
+        heading: Heading {
+            h1: fg,
+            h2: fg,
+            h3: fg,
+            other: fg,
+        },
+        status: Status {
+            bg,
+            fg,
+            help_bg: bg,
+            gutter: muted,
+        },
+        list: List {
+            marker: fg,
+            task_marker: success,
+            block_quote_fg: muted,
+            block_quote_border: border,
+        },
+        table: Table { header: fg, border },
+        git: Git {
+            new: success,
+            modified: danger,
+        },
+    }
+}
+
 /// Default theme — neutral dark background, ANSI named accents. The
 /// only theme that uses named (non-RGB) colors heavily, so most slots
 /// stay explicit.

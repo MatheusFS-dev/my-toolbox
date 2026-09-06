@@ -364,7 +364,7 @@ fn render_blocking(
 ///
 /// Split out from [`render_blocking`] so it can be unit-tested without a
 /// terminal graphics picker.
-fn render_png(source: &str, fg_rgb: (u8, u8, u8)) -> Result<Vec<u8>, String> {
+pub(crate) fn render_png(source: &str, fg_rgb: (u8, u8, u8)) -> Result<Vec<u8>, String> {
     use ratex_layout::{LayoutOptions, layout, to_display_list};
     use ratex_parser::parser::parse;
     use ratex_render::{RenderOptions, render_to_png};

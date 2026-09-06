@@ -59,7 +59,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Min(1), Spacing::Xs.into()])
         .split(area);
 
-    let has_tabs = !app.tabs.is_empty();
+    let has_tabs = app.mode == crate::app::AppMode::Normal && !app.tabs.is_empty();
     let tab_bar_height: u16 = u16::from(has_tabs);
 
     let viewer_area;

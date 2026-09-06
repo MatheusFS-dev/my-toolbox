@@ -108,8 +108,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let popup_area = centered_rect(width, height, area);
     f.render_widget(Clear, popup_area);
 
+    let title = if app.mode == crate::app::AppMode::TbEmbedded {
+        " Outline (j/k navigate, Enter jump, o dismiss, Esc/q back) "
+    } else {
+        " Outline (j/k navigate, Enter jump, Esc dismiss) "
+    };
     let block = Block::default()
-        .title(" Outline (j/k navigate, Enter jump, Esc dismiss) ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(p.border_focused))
         .style(Style::default().bg(p.help_bg));

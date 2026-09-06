@@ -13,6 +13,7 @@ mod section_extract;
 mod state;
 mod text_layout;
 mod theme;
+mod toolbox;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -66,8 +67,15 @@ struct Cli {
     /// the tree at its parent directory and immediately displays the file.
     /// Defaults to the current directory. Ignored when markdown is piped via
     /// stdin (`cat README.md | tb-markdown-reader`).
-    #[arg(default_value = ".")]
-    path: PathBuf,
+    path: Option<PathBuf>,
+
+    /// Toolbox-only single-document viewer, isolated from user settings and state.
+    #[arg(long, requires = "path", conflicts_with_all = ["tb_self_check", "export_html", "output", "check_links", "check_external", "external_timeout_secs", "section"])]
+    tb_embedded: bool,
+
+    /// Verify bundled rendering components without starting a terminal UI.
+    #[arg(long, conflicts_with_all = ["path", "tb_embedded", "export_html", "output", "check_links", "check_external", "external_timeout_secs", "section"])]
+    tb_self_check: bool,
 
     /// Render a markdown file to a self-contained HTML document and exit.
     ///
@@ -182,6 +190,20 @@ fn redirect_stdin_to_tty() -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if cli.tb_self_check {
+        toolbox::self_check()?;
+        println!("tb-markdown-reader: ok");
+        return Ok(());
+    }
+    // Validate and read before stdin, config, sessions, or terminal changes.
+    let embedded = if cli.tb_embedded {
+        let (path, content) = toolbox::read_embedded_file(cli.path.as_deref().unwrap())?;
+        Some(App::new_embedded(path, content))
+    } else {
+        None
+    };
+    let cli_path = cli.path.as_deref().unwrap_or(std::path::Path::new("."));
+
     // ── HTML export mode ─────────────────────────────────────────────
     // When `--export-html` is supplied, render to HTML and exit without
     // touching the TUI at all. This keeps the happy path fully isolated
@@ -246,9 +268,9 @@ async fn main() -> Result<()> {
         //
         // When no file is given (`cli.path == "."`), fall back to stdin. If stdin
         // is also a TTY at that point there is nothing to read, so we print an error.
-        let file_given = cli.path.as_os_str() != ".";
+        let file_given = cli_path.as_os_str() != ".";
         let source = if file_given {
-            let path = &cli.path;
+            let path = cli_path;
             std::fs::read_to_string(path)
                 .with_context(|| format!("failed to read {}", path.display()))?
         } else if !std::io::stdin().is_terminal() {
@@ -283,7 +305,7 @@ async fn main() -> Result<()> {
     // a temp file and open THAT — the path argument is ignored in this
     // mode. The temp file must outlive the App, so hold it in a binding
     // here and let it drop on main()'s return.
-    let stdin_temp = if std::io::stdin().is_terminal() {
+    let stdin_temp = if cli.tb_embedded || std::io::stdin().is_terminal() {
         None
     } else {
         let temp = drain_stdin_to_temp()?;
@@ -297,7 +319,9 @@ async fn main() -> Result<()> {
     //
     // When stdin was piped, `initial_display_name` is set to `"<stdin>"` so the
     // tab bar shows a conventional Unix sentinel instead of the temp-file name.
-    let (root, initial_file, initial_display_name) = if let Some(temp) = stdin_temp.as_ref() {
+    let (root, initial_file, initial_display_name) = if let Some(app) = embedded.as_ref() {
+        (app.root.clone(), None, None)
+    } else if let Some(temp) = stdin_temp.as_ref() {
         // stdin mode: temp file's parent (typically /tmp) is the tree
         // root, and the temp file is the initial focused tab.
         let path = temp.path().canonicalize()?;
@@ -307,7 +331,7 @@ async fn main() -> Result<()> {
             .to_path_buf();
         (parent, Some(path), Some("<stdin>".to_string()))
     } else {
-        let canonical = cli.path.canonicalize()?;
+        let canonical = cli_path.canonicalize()?;
         // When the user passes a file, root the tree at its parent directory
         // and remember the file so the event loop can open it once
         // action_tx is ready. When the path is a directory (the common
@@ -352,7 +376,8 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = App::new(root, initial_file, initial_display_name)
+    let result = embedded
+        .unwrap_or_else(|| App::new(root, initial_file, initial_display_name))
         .run(&mut terminal)
         .await;
     // Keep `stdin_temp` alive until after the App exits so the file

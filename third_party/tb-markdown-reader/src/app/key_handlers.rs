@@ -8,6 +8,65 @@
 use super::*;
 
 impl App {
+    /// Embedded keys are filtered before any upstream overlay or chord handler.
+    /// Only document navigation and read-only viewing overlays are reachable.
+    pub(super) fn handle_embedded_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        if matches!(code, KeyCode::Esc | KeyCode::Char('q')) {
+            self.running = false;
+            return;
+        }
+        if !modifiers.is_empty() && modifiers != KeyModifiers::SHIFT {
+            return;
+        }
+        let navigation = matches!(
+            code,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::Char('j' | 'k' | 'h' | 'l' | 'd' | 'u' | 'g' | 'G')
+                | KeyCode::Enter
+        );
+        match self.focus {
+            Focus::Viewer if navigation || matches!(code, KeyCode::Char('f' | 'o')) => {
+                self.handle_viewer_key(code, modifiers);
+            }
+            Focus::TableModal if navigation => self.handle_table_modal_key(code),
+            Focus::MermaidModal if navigation || matches!(code, KeyCode::Char('+' | '-' | '=')) => {
+                self.handle_mermaid_modal_key(code);
+            }
+            Focus::LinkPicker
+                if matches!(
+                    code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k' | 'f') | KeyCode::Enter
+                ) =>
+            {
+                crate::ui::link_picker::handle_key(self, code);
+                if self.link_picker.is_none() {
+                    self.focus = Focus::Viewer;
+                }
+            }
+            Focus::OutlinePicker
+                if matches!(
+                    code,
+                    KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k' | 'o') | KeyCode::Enter
+                ) =>
+            {
+                crate::ui::outline_picker::handle_key(self, code);
+                if self.outline_picker.is_none() {
+                    self.focus = Focus::Viewer;
+                }
+            }
+            _ => {
+                self.pending_chord = None;
+            }
+        }
+    }
+
     // ── Config popup ─────────────────────────────────────────────────────────
 
     /// Handle a key press while the settings popup ([`Focus::Config`]) is open.

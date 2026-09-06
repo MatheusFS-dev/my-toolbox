@@ -66,8 +66,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let popup_area = centered_rect(width, height, area);
     f.render_widget(Clear, popup_area);
 
+    let title = if app.mode == crate::app::AppMode::TbEmbedded {
+        " Links (j/k navigate, Enter jump, f dismiss, Esc/q back) "
+    } else {
+        " Links (j/k navigate, Enter jump, Esc dismiss) "
+    };
     let block = Block::default()
-        .title(" Links (j/k navigate, Enter jump, Esc dismiss) ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(p.border_focused))
         .style(Style::default().bg(p.help_bg));

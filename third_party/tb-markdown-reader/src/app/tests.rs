@@ -19,6 +19,136 @@ use crossterm::event::MouseEvent;
 use ratatui::text::{Line, Span, Text};
 use std::cell::Cell;
 
+fn embedded_app() -> App {
+    App::new_embedded(
+        PathBuf::from("/toolbox/readme.md"),
+        "# Start\n\n[End](#end)\n\nOne\n\nTwo\n\n# End\n".to_string(),
+    )
+}
+
+#[test]
+fn toolbox_embedded_initialization_is_isolated_and_prerenders_one_document() {
+    let mut app = embedded_app();
+    assert_eq!(app.mode, AppMode::TbEmbedded);
+    assert_eq!(app.root, PathBuf::from("/toolbox"));
+    assert_eq!(app.focus, Focus::Viewer);
+    assert!(app.tree_hidden);
+    assert!(!app.tree_discovered);
+    assert!(app.tree.flat_items.is_empty());
+    assert!(app.app_state.sessions.is_empty());
+    assert!(app.picker.is_none());
+    assert!(app.initial_file.is_none());
+    assert_eq!(app.tabs.len(), 1);
+    let tab = app.tabs.active_tab().unwrap();
+    assert_eq!(
+        tab.view.current_path.as_deref(),
+        Some(Path::new("/toolbox/readme.md"))
+    );
+    assert!(!tab.view.rendered.is_empty());
+    assert_eq!(app.palette.background, Color::Rgb(13, 17, 23));
+    assert_eq!(app.palette.foreground, Color::Rgb(201, 209, 217));
+    assert!(!Theme::ALL.contains(&app.theme));
+    assert!(app.session_snapshot().is_none());
+    app.save_session();
+    app.persist_config(); // Must not spawn a task or require a Tokio runtime.
+    assert!(app.app_state.sessions.is_empty());
+}
+
+#[test]
+fn toolbox_embedded_layout_has_only_viewer_and_exact_footer() {
+    let mut app = embedded_app();
+    let backend = ratatui::backend::TestBackend::new(120, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.viewer_area_rect, Some(Rect::new(0, 0, 120, 23)));
+    assert!(app.tree_area_rect.is_none());
+    assert!(app.tab_bar_rects.is_empty());
+    let buffer = terminal.backend().buffer();
+    let footer: String = (0..120).map(|x| buffer[(x, 23)].symbol()).collect();
+    assert_eq!(
+        footer.trim(),
+        "Esc/q:back j/k:scroll d/u:page gg/G:ends f:links o:outline Enter:open/close"
+    );
+}
+
+#[test]
+fn toolbox_embedded_overlays_advertise_exit_separately_from_dismissal() {
+    let mut app = embedded_app();
+    app.handle_key(KeyCode::Char('f'), KeyModifiers::NONE);
+    let backend = ratatui::backend::TestBackend::new(120, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("f dismiss, Esc/q back"), "{text}");
+    assert!(!text.contains("Esc dismiss"));
+}
+
+#[test]
+fn toolbox_embedded_exit_precedes_every_overlay_and_pending_chord() {
+    for focus in [
+        Focus::Viewer,
+        Focus::Tree,
+        Focus::Search,
+        Focus::DocSearch,
+        Focus::Config,
+        Focus::GotoLine,
+        Focus::TabPicker,
+        Focus::TableModal,
+        Focus::MermaidModal,
+        Focus::CopyMenu,
+        Focus::LinkPicker,
+        Focus::OutlinePicker,
+        Focus::Editor,
+        Focus::HybridEditor,
+    ] {
+        for key in [KeyCode::Esc, KeyCode::Char('q')] {
+            let mut app = embedded_app();
+            app.focus = focus;
+            app.show_help = true;
+            app.pending_chord = Some('g');
+            app.handle_key(key, KeyModifiers::NONE);
+            assert!(!app.running, "{focus:?}: {key:?}");
+        }
+    }
+}
+
+#[test]
+fn toolbox_embedded_blocks_settings_search_editing_and_tab_actions() {
+    let mut app = embedded_app();
+    for key in [
+        'H', '?', 'c', '/', 'i', 'I', 't', 'T', 'x', '`', '0', '1', ':', 'y', 'v', 'V', '[', ']',
+    ] {
+        app.handle_key(KeyCode::Char(key), KeyModifiers::NONE);
+        assert_eq!(app.focus, Focus::Viewer, "{key}");
+        assert!(app.tree_hidden);
+        assert!(!app.show_help);
+        assert!(app.config_popup.is_none());
+        assert_eq!(app.tabs.len(), 1);
+        assert!(app.tabs.active_tab().unwrap().editor.is_none());
+        assert!(app.tabs.active_tab().unwrap().hybrid.is_none());
+    }
+    app.handle_action(Action::EnterSearch);
+    app.handle_action(Action::TreeSelect);
+    assert_eq!(app.focus, Focus::Viewer);
+    assert!(!app.search.active);
+    app.tabs.view_height = 5;
+    app.handle_key(KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(app.tabs.active_tab().unwrap().view.cursor_line, 1);
+    app.handle_key(KeyCode::Char('f'), KeyModifiers::CONTROL);
+    assert_eq!(app.focus, Focus::Viewer);
+    app.handle_key(KeyCode::Char('f'), KeyModifiers::NONE);
+    assert_eq!(app.focus, Focus::LinkPicker);
+    app.handle_key(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.focus, Focus::Viewer);
+    assert!(app.tabs.active_tab().unwrap().view.cursor_line > 1);
+}
+
 /// A completion from a render queued before a cache refresh must not win over
 /// the newer render of the same formula. The exact final reason makes this
 /// resistant to a no-op handler: ignoring both completions would leave the

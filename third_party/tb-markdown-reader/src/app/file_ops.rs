@@ -144,6 +144,9 @@ impl App {
         jump_to_source: Option<u32>,
         display_name: Option<String>,
     ) {
+        if self.mode == AppMode::TbEmbedded {
+            return;
+        }
         if path.is_dir() {
             return;
         }

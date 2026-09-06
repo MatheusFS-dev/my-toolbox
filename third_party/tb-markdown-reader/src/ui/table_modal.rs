@@ -29,11 +29,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     let num_cols = state.natural_widths.len();
 
-    let title = format!(
-        " Table  {} col{}  h/l col  H/L \u{00bd}pg  q/Esc close ",
-        num_cols,
-        if num_cols == 1 { "" } else { "s" },
-    );
+    let title = if app.mode == crate::app::AppMode::TbEmbedded {
+        format!(" Table  {num_cols} cols  h/l pan  Enter close  Esc/q back ")
+    } else {
+        format!(
+            " Table  {} col{}  h/l col  H/L \u{00bd}pg  q/Esc close ",
+            num_cols,
+            if num_cols == 1 { "" } else { "s" },
+        )
+    };
 
     // Use the viewer background rather than `help_bg` so the grid border
     // colour (which is tuned for contrast against the main background) stays
