@@ -316,6 +316,46 @@ func TestHuhUISearchDefaultsFallbackToProcessStreams(t *testing.T) {
 	}
 }
 
+func TestHuhUISearchReturnsWarningWriteFailureAfterWritingMarkdown(t *testing.T) {
+	wantErr := errors.New("stderr unavailable")
+	for _, test := range []struct {
+		name      string
+		writerErr error
+		wantErr   error
+	}{
+		{"stderr error", wantErr, wantErr},
+		{"stderr short write", nil, io.ErrShortWrite},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			ui := HuhUI{stdout: &stdout, stderr: failingReaderOutput{err: test.writerErr}, runSearch: func(initial tea.Model) (tea.Model, error) {
+				model := initial.(searchModel)
+				model.fallback = &articleReaderResultMsg{article: Article{Content: "# Exact **Markdown**"}, err: errors.New("reader unavailable")}
+				return model, nil
+			}}
+			if err := ui.Search(nil); !errors.Is(err, test.wantErr) {
+				t.Errorf("Search error = %v, want stderr failure %v", err, test.wantErr)
+			}
+			if stdout.String() != "# Exact **Markdown**\n" {
+				t.Errorf("stdout = %q, want Markdown delivered despite stderr failure", stdout.String())
+			}
+		})
+	}
+}
+
+func TestHuhUISearchRetainsBothFallbackOutputErrors(t *testing.T) {
+	stdoutErr := errors.New("stdout unavailable")
+	stderrErr := errors.New("stderr unavailable")
+	ui := HuhUI{stdout: failingReaderOutput{err: stdoutErr}, stderr: failingReaderOutput{err: stderrErr}, runSearch: func(initial tea.Model) (tea.Model, error) {
+		model := initial.(searchModel)
+		model.fallback = &articleReaderResultMsg{article: Article{Content: "# Guide"}, err: errors.New("reader unavailable")}
+		return model, nil
+	}}
+	if err := ui.Search(nil); !errors.Is(err, stdoutErr) || !errors.Is(err, stderrErr) {
+		t.Fatalf("Search error = %v, want both stdout and stderr failures", err)
+	}
+}
+
 func TestHuhUISearchKeepsCancellationAndProgramErrors(t *testing.T) {
 	wantErr := errors.New("terminal unavailable")
 	for _, name := range []string{"cancel", "program failure", "invalid model"} {

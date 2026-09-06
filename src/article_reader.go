@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -71,7 +72,14 @@ func writeArticleReaderFallback(result articleReaderResultMsg, stdout io.Writer,
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	fmt.Fprintf(stderr, "warning: Markdown reader failed: %v; printing article source\n", result.err)
+	warning := fmt.Sprintf("warning: Markdown reader failed: %v; printing article source\n", result.err)
+	n, warningErr := io.WriteString(stderr, warning)
+	if warningErr == nil && n != len(warning) {
+		warningErr = io.ErrShortWrite
+	}
+	if warningErr != nil {
+		warningErr = fmt.Errorf("write reader warning: %w", warningErr)
+	}
 	content := result.article.Content
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
@@ -81,7 +89,7 @@ func writeArticleReaderFallback(result articleReaderResultMsg, stdout io.Writer,
 		err = io.ErrShortWrite
 	}
 	if err != nil {
-		return fmt.Errorf("write article source: %w", err)
+		err = fmt.Errorf("write article source: %w", err)
 	}
-	return nil
+	return errors.Join(warningErr, err)
 }
