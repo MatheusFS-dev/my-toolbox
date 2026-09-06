@@ -16,17 +16,15 @@ const (
 	toolboxWindowsInstallerURL = "https://matheusfs-dev.github.io/my-toolbox/install.ps1"
 )
 
-// update checks for a newer release and replaces the installation through the bootstrap installer.
-//
-// The installer is downloaded before managed files are removed. Unix performs
-// the removal and reinstall synchronously. Windows schedules both operations
-// through the detached cleanup helper because the running executable is locked.
+// update checks for a newer release and stages it through the bootstrap installer.
+// The active version remains available while the installer validates and publishes
+// its replacement, including on Windows where the running executable is locked.
 //
 // Args: None.
 //
 // Returns:
 //   - error: Release lookup, version validation, installer download, managed
-//     removal, installer execution, or status-output failure.
+//     path validation, installer execution, or status-output failure.
 func (builtins *ToolboxBuiltins) update() error {
 	var release struct {
 		TagName string `json:"tag_name"`
@@ -70,20 +68,59 @@ func (builtins *ToolboxBuiltins) update() error {
 	if err != nil {
 		return err
 	}
-	if builtins.platform != "windows-amd64" {
-		defer os.Remove(installerPath)
-	}
-	statusPath, err := builtins.remove(installerPath)
-	if err != nil {
-		if builtins.platform == "windows-amd64" {
-			_ = os.Remove(installerPath)
-		}
+	defer os.Remove(installerPath)
+	if err := builtins.validateUpdateInstallation(); err != nil {
 		return err
 	}
+	environment := []string{"TOOLBOX_UPDATE=1", "TOOLBOX_EXPECTED_VERSION=" + latest}
 	if builtins.platform == "windows-amd64" {
-		_, err = fmt.Fprintf(builtins.output, "Update scheduled; status will be written to %s after tb exits.\n", statusPath)
+		powershell, exists := supportedPowerShellPath()
+		if !exists {
+			return fmt.Errorf("required Windows PowerShell 5.1 or PowerShell 7 is unavailable")
+		}
+		return runClosedPath(powershell, "PowerShell", []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", installerPath}, environment, builtins.output)
 	}
-	return err
+	return runClosedInput("bash", []string{installerPath}, environment, builtins.output)
+}
+
+// validateUpdateInstallation checks installation ownership without removing files.
+func (builtins *ToolboxBuiltins) validateUpdateInstallation() error {
+	dataRoot, err := toolboxDataRoot(builtins.platform)
+	if err != nil {
+		return err
+	}
+	expectedRoot, err := filepath.Abs(filepath.Join(dataRoot, "versions", builtins.version))
+	if err != nil {
+		return fmt.Errorf("resolve installed version directory: %w", err)
+	}
+	actualRoot, err := filepath.Abs(builtins.root)
+	if err != nil {
+		return fmt.Errorf("resolve executable root: %w", err)
+	}
+	pathsMatch := actualRoot == expectedRoot
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	expectedWrapper := windowsToolboxWrapper
+	if builtins.platform == "windows-amd64" {
+		pathsMatch = strings.EqualFold(actualRoot, expectedRoot)
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		wrapper = filepath.Join(home, ".local", "bin", "tb")
+		expectedWrapper = linuxToolboxWrapper
+	}
+	if !pathsMatch {
+		return fmt.Errorf("refusing to update outside installed version directory %s", expectedRoot)
+	}
+	owned, err := isOwnedToolboxWrapper(wrapper, expectedWrapper)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return fmt.Errorf("refusing to update with unrecognized wrapper %s", wrapper)
+	}
+	return nil
 }
 
 // toolboxDataRoot resolves the managed data directory for one platform.

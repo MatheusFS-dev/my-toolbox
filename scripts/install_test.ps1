@@ -12,6 +12,8 @@ $OriginalPathExt = $env:PATHEXT
 $OriginalLastExitCode = $global:LASTEXITCODE
 $OriginalProcessorArchitecture = $env:PROCESSOR_ARCHITECTURE
 $OriginalProcessorArchitectureW6432 = $env:PROCESSOR_ARCHITEW6432
+$OriginalUpdate = $env:TOOLBOX_UPDATE
+$OriginalExpectedVersion = $env:TOOLBOX_EXPECTED_VERSION
 New-Item -ItemType Directory -Path $Payload, $Downloads, $Documents | Out-Null
 $TemporaryBefore = @(
     Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'my-toolbox-*' |
@@ -94,6 +96,17 @@ try {
                 }
                 return Get-Command $Name -ErrorAction SilentlyContinue
             }
+    }
+
+    function Write-Output {
+        param([Parameter(ValueFromPipeline = $true)]$InputObject)
+
+        process {
+            if ($UpdateCase -eq 'status' -and $InputObject -ceq '[OK] Installed my-toolbox 0.1.5.') {
+                throw 'Injected status output failure.'
+            }
+            Microsoft.PowerShell.Utility\Write-Output -InputObject $InputObject
+        }
     }
 
     function Assert-StagedReaderInvocation {
@@ -233,6 +246,92 @@ try {
             }
         }
     }
+    $global:ToolboxInstallerFixtureArchive = $Archive
+
+    foreach ($UpdateCase in @('failed', 'missing', 'mismatch', 'missing-expected', 'completion', 'status', 'current-locked', 'same', 'success')) {
+        $CaseRoot = Join-Path $TestRoot "update-$UpdateCase"
+        $env:LOCALAPPDATA = Join-Path $CaseRoot 'localappdata'
+        $global:ToolboxInstallerTestDocuments = Join-Path $CaseRoot 'Documents'
+        $Data = Join-Path $env:LOCALAPPDATA 'my-toolbox'
+        $OldVersion = Join-Path $Data 'versions\0.1.4'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OldVersion), (Join-Path $Data 'bin'), $global:ToolboxInstallerTestDocuments | Out-Null
+        Copy-Item -LiteralPath $Payload -Destination $OldVersion -Recurse
+        Set-Content -LiteralPath (Join-Path $OldVersion 'version.txt') -Value '0.1.4' -Encoding ascii
+        Set-Content -LiteralPath (Join-Path $Data 'current.txt') -Value '0.1.4' -Encoding ascii
+        Set-Content -LiteralPath (Join-Path $Data 'bin\tb.cmd') -Value 'old wrapper' -Encoding ascii
+        Copy-Item -LiteralPath (Join-Path $Payload 'completions') -Destination (Join-Path $Data 'completions') -Recurse
+        if ($UpdateCase -eq 'completion') {
+            New-Item -ItemType Directory -Path (Join-Path $global:ToolboxInstallerTestDocuments 'PowerShell') | Out-Null
+            Set-Content -LiteralPath (Join-Path $global:ToolboxInstallerTestDocuments 'PowerShell\profile.ps1') -Value '# >>> my-toolbox completion >>>' -Encoding ascii
+        }
+        $Before = Get-InstallerSnapshot $CaseRoot
+        $OldVersionBefore = Get-InstallerSnapshot $OldVersion
+        $WrapperBefore = [IO.File]::ReadAllText((Join-Path $Data 'bin\tb.cmd'))
+        $CurrentBefore = [IO.File]::ReadAllText((Join-Path $Data 'current.txt'))
+        $env:PATH = 'C:\Windows\System32'
+        $global:ToolboxInstallerTestUserPath = 'C:\Persisted\Update'
+        $env:TOOLBOX_UPDATE = '1'
+        $env:TOOLBOX_EXPECTED_VERSION = switch ($UpdateCase) {
+            'same' { '0.1.4' }
+            'mismatch' { '0.1.6' }
+            'missing-expected' { '' }
+            default { '0.1.5' }
+        }
+        $global:ToolboxInstallerFixtureArchive = if ($UpdateCase -eq 'missing') { $MissingReaderArchive } else { $Archive }
+        $UpdateChecks = [Collections.Generic.List[string]]::new()
+        $CurrentLock = $null
+        if ($UpdateCase -eq 'current-locked') {
+            $CurrentLock = [IO.File]::Open((Join-Path $Data 'current.txt'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        }
+        $Failure = ''
+        try {
+            Invoke-TestInstaller -UserPathWriter { throw 'Update unexpectedly changed user PATH.' } -ReaderValidator {
+                param([string]$ReaderPath, [string[]]$ReaderArguments)
+                if ($ReaderPath -notlike (Join-Path $Data 'versions\.install-0.1.5-*\libexec\tb-markdown-reader.exe') -or
+                    $ReaderArguments.Count -ne 1 -or $ReaderArguments[0] -cne '--tb-self-check') {
+                    throw 'Update did not validate the staged reader.'
+                }
+                if ((Get-InstallerSnapshot $OldVersion) -cne $OldVersionBefore -or
+                    [IO.File]::ReadAllText((Join-Path $Data 'current.txt')) -cne $CurrentBefore -or
+                    [IO.File]::ReadAllText((Join-Path $Data 'bin\tb.cmd')) -cne $WrapperBefore -or
+                    (Test-Path -LiteralPath (Join-Path $Data 'versions\0.1.5'))) {
+                    throw 'Update changed the active installation before reader validation.'
+                }
+                $UpdateChecks.Add($ReaderPath)
+                if ($UpdateCase -eq 'failed') { return 23 }
+                return 0
+            } | Out-Null
+        } catch {
+            $Failure = $_.Exception.Message
+        } finally {
+            if ($null -ne $CurrentLock) { $CurrentLock.Dispose() }
+        }
+        if ($UpdateCase -in @('success', 'same')) {
+            if ($Failure.Length -gt 0) { throw "Update $UpdateCase failed: $Failure" }
+            if ($UpdateCase -eq 'same') {
+                if ((Get-InstallerSnapshot $CaseRoot) -cne $Before -or $UpdateChecks.Count -ne 0) {
+                    throw 'Same-version update changed the installation.'
+                }
+            } elseif ($UpdateChecks.Count -ne 1 -or
+                (Get-Content -LiteralPath (Join-Path $Data 'current.txt') -Raw).Trim() -cne '0.1.5' -or
+                -not (Test-Path -LiteralPath (Join-Path $Data 'versions\0.1.5\libexec\tb-markdown-reader.exe')) -or
+                (Get-InstallerSnapshot $OldVersion) -cne $OldVersionBefore -or
+                [IO.File]::ReadAllText((Join-Path $Data 'bin\tb.cmd')) -cne $WrapperBefore) {
+                throw 'Successful update did not validate, switch current, and retain the previous version and wrapper.'
+            }
+        } else {
+            $Stage = switch ($UpdateCase) { 'mismatch' { 2 }; 'missing-expected' { 1 }; { $_ -in @('completion', 'status', 'current-locked') } { 7 }; default { 5 } }
+            if (-not $Failure.Contains("[FAIL] Stage $Stage/7:") -or (Get-InstallerSnapshot $CaseRoot) -cne $Before) {
+                throw "Update $UpdateCase did not preserve the installation at stage $Stage. Error: $Failure"
+            }
+        }
+        if ($env:PATH -cne 'C:\Windows\System32' -or $global:ToolboxInstallerTestUserPath -cne 'C:\Persisted\Update' -or
+            @(Get-ChildItem -LiteralPath (Join-Path $Data 'versions') -Force -Filter '.install-*').Count -ne 0) {
+            throw 'Update changed PATH or leaked staging files.'
+        }
+    }
+    $env:TOOLBOX_UPDATE = $null
+    $env:TOOLBOX_EXPECTED_VERSION = $null
     $global:ToolboxInstallerFixtureArchive = $Archive
 
     $env:LOCALAPPDATA = ''
@@ -557,6 +656,8 @@ try {
         throw "Missing article library did not fail validation explicitly. Error: $Failure"
     }
 } finally {
+    $env:TOOLBOX_UPDATE = $OriginalUpdate
+    $env:TOOLBOX_EXPECTED_VERSION = $OriginalExpectedVersion
     Remove-Variable -Name ToolboxInstallerFixtureArchive -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ToolboxInstallerTestUserPath -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ToolboxInstallerTestDocuments -Scope Global -ErrorAction SilentlyContinue

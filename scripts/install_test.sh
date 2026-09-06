@@ -18,6 +18,12 @@ printf '%s\n' '#!/bin/sh' \
     '[ "$#" -eq 1 ] && [ "$1" = --tb-self-check ] || exit 91' \
     'case "$0" in */versions/.install-0.1.5.*/libexec/tb-markdown-reader) ;; *) exit 92 ;; esac' \
     '[ -z "${READER_CHECK_LOG:-}" ] || printf "%s\n" "$0" "$@" > "$READER_CHECK_LOG"' \
+    'if [ -n "${UPDATE_ACTIVE_ROOT:-}" ]; then' \
+    '  [ -f "$UPDATE_ACTIVE_ROOT/versions/0.1.4/tb" ] || exit 93' \
+    '  [ "$(sed -n "1p" "$UPDATE_ACTIVE_ROOT/current.txt")" = 0.1.4 ] || exit 94' \
+    '  cmp "$HOME/.local/bin/tb" "$UPDATE_WRAPPER_BEFORE" || exit 95' \
+    '  [ ! -e "$UPDATE_ACTIVE_ROOT/versions/0.1.5" ] || exit 96' \
+    'fi' \
     'exit "${READER_EXIT_CODE:-0}"' > "$test_root/payload/libexec/tb-markdown-reader"
 # Extraction must repair an archive whose reader is not executable.
 chmod 600 "$test_root/payload/libexec/tb-markdown-reader"
@@ -65,7 +71,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 case "$url" in
-    */releases/latest) printf '%s\n' '{"tag_name":"v0.1.5"}' ;;
+    */releases/latest) printf '{"tag_name":"%s"}\n' "${FIXTURE_RELEASE_TAG:-v0.1.5}" ;;
     */toolbox-linux-amd64.tar.gz.sha256) cp "$FIXTURE_DOWNLOADS/toolbox-linux-amd64.tar.gz.sha256" "$output" ;;
     */toolbox-linux-amd64.tar.gz) cp "$FIXTURE_DOWNLOADS/toolbox-linux-amd64.tar.gz" "$output" ;;
     *) printf 'Unexpected fixture URL: %s\n' "$url" >&2; exit 1 ;;
@@ -73,6 +79,15 @@ esac
 SH
 cat > "$test_root/bin/mv" <<'SH'
 #!/bin/sh
+if [ "${FAIL_AFTER_CURRENT_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
+    case "$1" in
+        */current.txt.new)
+            /bin/mv "$@" || exit 1
+            kill -TERM "$PPID"
+            exit 0
+            ;;
+    esac
+fi
 if [ "${FAIL_CURRENT_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
     case "$2" in
         */current.txt) exit 1 ;;
@@ -173,6 +188,77 @@ if [ -e "$test_root/reader-check.log" ] || ! grep -F 'is already installed' "$te
     printf 'Installer changed the existing current-file shortcut.\n' >&2
     exit 1
 fi
+
+for update_case in failed missing mismatch missing-expected version-move current-move activation-signal completion same success; do
+    update_home="$test_root/update-$update_case-home"
+    cp -Rp "$reader_home" "$update_home"
+    for update_profile in .bashrc .zshrc; do
+        sed "s|$reader_home|$update_home|g" "$update_home/$update_profile" > "$test_root/profile-candidate"
+        cp "$test_root/profile-candidate" "$update_home/$update_profile"
+    done
+    update_data="$update_home/.local/share/my-toolbox"
+    mv "$update_data/versions/0.1.5" "$update_data/versions/0.1.4"
+    printf '0.1.4\n' > "$update_data/versions/0.1.4/version.txt"
+    printf '0.1.4\n' > "$update_data/current.txt"
+    update_expected=0.1.5
+    update_downloads="$test_root/downloads"
+    update_reader_exit=0
+    update_fail_version=0
+    update_fail_current=0
+    update_fail_after_current=0
+    update_failure_stage=5
+    case "$update_case" in
+        failed) update_reader_exit=23 ;;
+        missing) update_downloads="$test_root/reader-missing-downloads" ;;
+        mismatch) update_expected=0.1.6; update_failure_stage=2 ;;
+        missing-expected) update_expected=; update_failure_stage=1 ;;
+        version-move) update_fail_version=1; update_failure_stage=6 ;;
+        current-move) update_fail_current=1; update_failure_stage=7 ;;
+        activation-signal) update_fail_after_current=1; update_failure_stage=7 ;;
+        completion)
+            printf 'unrelated\n# >>> my-toolbox completion >>>\n' > "$update_home/.bashrc"
+            update_failure_stage=7
+            ;;
+        same) update_expected=0.1.4; update_downloads="$test_root/nonexistent-downloads" ;;
+    esac
+    cp -Rp "$update_home" "$update_home.before"
+    update_status=0
+    HOME="$update_home" ZDOTDIR="$update_home" TMPDIR="$test_root/tmp" \
+        TOOLBOX_UPDATE=1 TOOLBOX_EXPECTED_VERSION="$update_expected" \
+        UPDATE_ACTIVE_ROOT="$update_data" UPDATE_WRAPPER_BEFORE="$update_home.before/.local/bin/tb" \
+        FIXTURE_DOWNLOADS="$update_downloads" READER_EXIT_CODE="$update_reader_exit" \
+        READER_CHECK_LOG="$test_root/update-$update_case-reader.log" \
+        FAIL_VERSION_MOVE="$update_fail_version" FAIL_CURRENT_MOVE="$update_fail_current" \
+        FAIL_AFTER_CURRENT_MOVE="$update_fail_after_current" \
+        PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/update-$update_case.out" 2>&1 || update_status=$?
+    case "$update_case" in
+        success)
+            [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
+            [ -f "$test_root/update-$update_case-reader.log" ] || { printf 'Update bypassed staged reader validation.\n' >&2; exit 1; }
+            [ "$(cat "$update_data/current.txt")" = 0.1.5 ] || { printf 'Update did not switch current version.\n' >&2; exit 1; }
+            [ -f "$update_data/versions/0.1.5/libexec/tb-markdown-reader" ] || exit 1
+            diff -r "$update_home.before/.local/share/my-toolbox/versions/0.1.4" "$update_data/versions/0.1.4"
+            cmp "$update_home.before/.local/bin/tb" "$update_home/.local/bin/tb"
+            ;;
+        same)
+            [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
+            diff -r "$update_home.before" "$update_home"
+            [ ! -e "$test_root/update-$update_case-reader.log" ] || exit 1
+            ;;
+        *)
+            if [ "$update_status" -eq 0 ] || ! grep -F "[FAIL] Stage $update_failure_stage/7:" "$test_root/update-$update_case.out" >/dev/null; then
+                printf 'Update %s did not fail safely at stage %s.\n' "$update_case" "$update_failure_stage" >&2
+                cat "$test_root/update-$update_case.out" >&2
+                exit 1
+            fi
+            diff -r "$update_home.before" "$update_home"
+            ;;
+    esac
+    if find "$test_root/tmp" "$update_data/versions" -mindepth 1 -name '.install-*' -print | grep . >/dev/null; then
+        printf 'Update left a staging directory behind.\n' >&2
+        exit 1
+    fi
+done
 
 make_prerequisite_bin() {
     destination=$1

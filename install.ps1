@@ -31,6 +31,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'MatheusFS-dev/my-toolbox'
+$UpdateMode = $env:TOOLBOX_UPDATE -eq '1'
+$ExpectedVersion = [string]$env:TOOLBOX_EXPECTED_VERSION
 $LocalAppData = [string]$env:LOCALAPPDATA
 $DataRoot = if ([string]::IsNullOrWhiteSpace($LocalAppData)) { '' } else { Join-Path $LocalAppData 'my-toolbox' }
 $VersionsRoot = if ($DataRoot.Length -eq 0) { '' } else { Join-Path $DataRoot 'versions' }
@@ -47,6 +49,7 @@ $CurrentStageName = ''
 $PublishedVersion = $false
 $PublishedWrapper = $false
 $Activated = $false
+$SavedCurrent = $null
 $SavedWrapper = $null
 $CompletionPublished = $false
 $CompletionReplaced = $false
@@ -683,7 +686,21 @@ try {
     if ($PrerequisiteFailures.Count -gt 0) {
         throw ($PrerequisiteFailures -join [Environment]::NewLine)
     }
-    if (Test-Path -LiteralPath $CurrentFile) {
+    if ($UpdateMode) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
+            throw 'TOOLBOX_EXPECTED_VERSION is required for updates.'
+        }
+        if (-not (Test-Path -LiteralPath $CurrentFile -PathType Leaf) -or -not (Test-Path -LiteralPath $WrapperPath -PathType Leaf)) {
+            throw 'An active toolbox installation is required for updates.'
+        }
+        $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
+        if ($CurrentVersion -eq $ExpectedVersion) {
+            Write-Status -Kind OK -Message "Toolbox $CurrentVersion is already current."
+            $InstallSucceeded = $true
+            return
+        }
+    }
+    if (-not $UpdateMode -and (Test-Path -LiteralPath $CurrentFile)) {
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         Write-Status -Kind INFO -Message "my-toolbox $CurrentVersion is already installed. Run tb update to upgrade."
         Complete-Stage
@@ -707,6 +724,9 @@ try {
         throw "Release tag is not a safe three-part version: $Tag"
     }
     $Version = $Tag.Substring(1)
+    if ($UpdateMode -and $Version -cne $ExpectedVersion) {
+        throw "Latest release $Version does not match expected version $ExpectedVersion."
+    }
     $Archive = 'toolbox-windows-amd64.zip'
     $VersionRoot = Join-Path $VersionsRoot $Version
     if (Test-Path -LiteralPath $VersionRoot) {
@@ -784,37 +804,48 @@ try {
 
     Start-Stage -Number 6 -Name 'installation'
     New-Item -ItemType Directory -Force -Path $VersionsRoot, $WrapperRoot | Out-Null
-    $TemporaryWrapper = Join-Path $WrapperRoot ('.tb-' + [Guid]::NewGuid() + '.cmd')
-    @(
-        '@echo off',
-        'setlocal',
-        'set /p TOOLBOX_VERSION=<"%LOCALAPPDATA%\my-toolbox\current.txt"',
-        '"%LOCALAPPDATA%\my-toolbox\versions\%TOOLBOX_VERSION%\tb.exe" %*'
-    ) | Set-Content -LiteralPath $TemporaryWrapper -Encoding ascii
-    if (Test-Path -LiteralPath $WrapperPath -PathType Container) {
-        throw "Wrapper path is an existing directory: $WrapperPath"
-    }
-    if (Test-Path -LiteralPath $WrapperPath) {
-        $SavedWrapperCandidate = Join-Path $WrapperRoot ('.tb-previous-' + [Guid]::NewGuid() + '.cmd')
-        Move-Item -LiteralPath $WrapperPath -Destination $SavedWrapperCandidate
-        $SavedWrapper = $SavedWrapperCandidate
+    if (-not $UpdateMode) {
+        $TemporaryWrapper = Join-Path $WrapperRoot ('.tb-' + [Guid]::NewGuid() + '.cmd')
+        @(
+            '@echo off',
+            'setlocal',
+            'set /p TOOLBOX_VERSION=<"%LOCALAPPDATA%\my-toolbox\current.txt"',
+            '"%LOCALAPPDATA%\my-toolbox\versions\%TOOLBOX_VERSION%\tb.exe" %*'
+        ) | Set-Content -LiteralPath $TemporaryWrapper -Encoding ascii
+        if (Test-Path -LiteralPath $WrapperPath -PathType Container) {
+            throw "Wrapper path is an existing directory: $WrapperPath"
+        }
+        if (Test-Path -LiteralPath $WrapperPath) {
+            $SavedWrapperCandidate = Join-Path $WrapperRoot ('.tb-previous-' + [Guid]::NewGuid() + '.cmd')
+            Move-Item -LiteralPath $WrapperPath -Destination $SavedWrapperCandidate
+            $SavedWrapper = $SavedWrapperCandidate
+        }
     }
     $PublishedVersion = $true
     Move-Item -LiteralPath $StagingPayload -Destination $VersionRoot
     $StagingPayload = $null
-    $PublishedWrapper = $true
-    Move-Item -LiteralPath $TemporaryWrapper -Destination $WrapperPath
-    $TemporaryWrapper = $null
+    if (-not $UpdateMode) {
+        $PublishedWrapper = $true
+        Move-Item -LiteralPath $TemporaryWrapper -Destination $WrapperPath
+        $TemporaryWrapper = $null
+    }
     Complete-Stage
 
     Start-Stage -Number 7 -Name 'activation'
     Enable-ToolboxCompletion
     $TemporaryCurrent = Join-Path $DataRoot 'current.txt.new'
     Set-Content -LiteralPath $TemporaryCurrent -Value $Version -Encoding ascii
+    if ($UpdateMode) {
+        $SavedCurrent = Join-Path $DataRoot ('.current-previous-' + [Guid]::NewGuid())
+        [IO.File]::Replace($TemporaryCurrent, $CurrentFile, $SavedCurrent)
+    } else {
+        Move-Item -LiteralPath $TemporaryCurrent -Destination $CurrentFile
+    }
     $Activated = $true
-    Move-Item -LiteralPath $TemporaryCurrent -Destination $CurrentFile
     $TemporaryCurrent = $null
-    Enable-ToolboxPath
+    if (-not $UpdateMode) {
+        Enable-ToolboxPath
+    }
     Write-Status -Kind OK -Message "Installed my-toolbox $Version."
     Complete-Stage
     $InstallSucceeded = $true
@@ -845,8 +876,15 @@ try {
             }
             Move-Item -LiteralPath $SavedCompletionRoot -Destination $CompletionRoot
         }
-        if ($Activated -and (Test-Path -LiteralPath $CurrentFile)) {
-            Remove-Item -LiteralPath $CurrentFile -Force
+        if ($Activated) {
+            if ($null -ne $SavedCurrent -and (Test-Path -LiteralPath $SavedCurrent)) {
+                # PowerShell 5.1 binds a null backup argument as an invalid empty path.
+                $TemporaryCurrent = Join-Path $DataRoot 'current.txt.new'
+                [IO.File]::Replace($SavedCurrent, $CurrentFile, $TemporaryCurrent)
+                $SavedCurrent = $null
+            } elseif (Test-Path -LiteralPath $CurrentFile) {
+                Remove-Item -LiteralPath $CurrentFile -Force
+            }
         }
         if ($PublishedWrapper -and (Test-Path -LiteralPath $WrapperPath)) {
             Remove-Item -LiteralPath $WrapperPath -Force
@@ -865,6 +903,9 @@ try {
     }
     if ($null -ne $TemporaryCurrent -and (Test-Path -LiteralPath $TemporaryCurrent)) {
         Remove-Item -LiteralPath $TemporaryCurrent -Force
+    }
+    if ($null -ne $SavedCurrent -and (Test-Path -LiteralPath $SavedCurrent)) {
+        Remove-Item -LiteralPath $SavedCurrent -Force
     }
     if ($null -ne $TemporaryWrapper -and (Test-Path -LiteralPath $TemporaryWrapper)) {
         Remove-Item -LiteralPath $TemporaryWrapper -Force
