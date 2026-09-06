@@ -78,6 +78,9 @@ pub enum Action {
     /// Raw mouse event forwarded from crossterm.
     Mouse(MouseEvent),
 
+    /// Clear only the copy feedback created by this attempt.
+    CodeCopyFeedbackExpired { generation: u64 },
+
     /// A background mermaid render completed; entry is ready to be stored.
     ///
     /// Boxed to avoid inflating every `Action` variant by the size of `MermaidEntry`.

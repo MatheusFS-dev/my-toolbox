@@ -2,6 +2,7 @@ mod action;
 mod app;
 mod cast;
 mod checklinks;
+mod clipboard;
 mod config;
 mod event;
 mod export;

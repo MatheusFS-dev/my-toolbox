@@ -197,6 +197,44 @@ pub fn measure(spans: &[ratatui::text::Span<'_>]) -> u16 {
     crate::cast::u16_sat(total)
 }
 
+/// Hard-wrap code without consuming indentation, repeated spaces, or trailing spaces.
+/// Tabs expand to four-column tab stops for display; the parser payload is untouched.
+pub fn hard_wrap_spans(spans: &[ratatui::text::Span<'_>], max_width: u16) -> Vec<WrappedLine> {
+    if max_width == 0 {
+        return vec![pack_row(&[])];
+    }
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut width = 0usize;
+    let mut source_column = 0usize;
+    for span in spans {
+        for ch in span.content.chars() {
+            if ch == '\n' {
+                rows.push(pack_row(&row));
+                row.clear();
+                width = 0;
+                source_column = 0;
+                continue;
+            }
+            let count = if ch == '\t' { 4 - source_column % 4 } else { 1 };
+            let ch = if ch == '\t' { ' ' } else { ch };
+            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            for _ in 0..count {
+                if cw > 0 && width > 0 && width + cw > usize::from(max_width) {
+                    rows.push(pack_row(&row));
+                    row.clear();
+                    width = 0;
+                }
+                row.push((ch, span.style));
+                width += cw;
+                source_column += cw;
+            }
+        }
+    }
+    rows.push(pack_row(&row));
+    rows
+}
+
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 /// Count the number of hard lines (newline-delimited segments) in `spans`.
@@ -374,6 +412,24 @@ mod tests {
         style::{Modifier, Style},
         text::Span,
     };
+
+    #[test]
+    fn toolbox_hard_wrap_preserves_every_space_and_style() {
+        let style = Style::default().fg(ratatui::style::Color::Red);
+        let rows = hard_wrap_spans(&[Span::styled("    ab  cd  ", style)], 4);
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| r.spans.iter().map(|s| s.content.as_str()).collect())
+            .collect();
+        assert_eq!(text, ["    ", "ab  ", "cd  "]);
+        assert!(rows.iter().flat_map(|r| &r.spans).all(|s| s.style == style));
+        let rows = hard_wrap_spans(&[Span::raw("a\t b\n\n界e\u{301}")], 4);
+        let text: Vec<String> = rows
+            .iter()
+            .map(|r| r.spans.iter().map(|s| s.content.as_str()).collect())
+            .collect();
+        assert_eq!(text, ["a   ", " b", "", "界e\u{301}"]);
+    }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 

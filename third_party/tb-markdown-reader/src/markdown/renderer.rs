@@ -182,6 +182,9 @@ struct MdRenderer {
     /// `Some(lang)` when inside a fenced block — `None` for indented blocks.
     code_block_lang: Option<String>,
     code_block_content: Vec<String>,
+    code_block_raw: String,
+    code_block_indented: bool,
+    pending_code: Option<crate::markdown::CodeBlock>,
     in_heading: bool,
     heading_level: u8,
     in_blockquote: bool,
@@ -253,6 +256,9 @@ impl MdRenderer {
             in_code_block: false,
             code_block_lang: None,
             code_block_content: Vec::new(),
+            code_block_raw: String::new(),
+            code_block_indented: false,
+            pending_code: None,
             in_heading: false,
             heading_level: 0,
             in_blockquote: false,
@@ -365,6 +371,10 @@ impl MdRenderer {
                     }
                 }
                 lines.len().hash(&mut h);
+                if let Some(code) = &self.pending_code {
+                    code.language.hash(&mut h);
+                    code.raw.hash(&mut h);
+                }
                 TextBlockId(h.finish())
             };
             // wrapped_height starts at the logical line count — a no-wrap
@@ -375,6 +385,7 @@ impl MdRenderer {
             // set to 0 here as sentinels that the fixup will overwrite.
             self.blocks.push(DocBlock::Text {
                 id,
+                code: self.pending_code.take(),
                 text: Text::from(lines),
                 links,
                 heading_anchors,
@@ -678,12 +689,13 @@ impl MdRenderer {
             Tag::CodeBlock(kind) => {
                 let lang = match &kind {
                     CodeBlockKind::Fenced(lang) => {
-                        let s = lang.trim().to_lowercase();
+                        let s = lang.split_whitespace().next().unwrap_or("").to_lowercase();
                         if s.is_empty() { None } else { Some(s) }
                     }
                     CodeBlockKind::Indented => None,
                 };
                 self.open_verbatim_block(lang, span);
+                self.code_block_indented = matches!(kind, CodeBlockKind::Indented);
             }
             // Leading `---`/`+++` frontmatter. Accumulated exactly like a
             // fenced code block — the delimiters are not part of the event
@@ -819,6 +831,7 @@ impl MdRenderer {
                 self.flush_text_block();
             }
             TagEnd::CodeBlock => {
+                self.code_block_content = self.code_block_raw.lines().map(str::to_owned).collect();
                 let lang = self.code_block_lang.as_deref();
                 let is_mermaid = lang == Some("mermaid")
                     || (lang.is_none_or(str::is_empty)
@@ -857,6 +870,7 @@ impl MdRenderer {
                 self.code_block_lang = None;
             }
             TagEnd::MetadataBlock(_) => {
+                self.code_block_content = self.code_block_raw.lines().map(str::to_owned).collect();
                 // `span.end` is the byte just past the closing delimiter, so the
                 // next block's source anchor is the line after it — same
                 // reasoning as `TagEnd::CodeBlock` above.
@@ -941,29 +955,24 @@ impl MdRenderer {
     /// `render_code_block`, so they share this entry point rather than
     /// duplicating the bookkeeping. `span` is the opening tag's byte range.
     fn open_verbatim_block(&mut self, lang: Option<String>, span: &Range<usize>) {
-        self.in_code_block = true;
-        self.code_block_lang = lang;
-        self.code_block_content.clear();
-        // Record the fence's byte offset and resolve its source line.
-        self.code_block_fence_offset = Some(span.start);
-        self.code_block_start_line = byte_offset_to_line(span.start, &self.line_boundaries);
-        // Only flush if there are pending inline spans — an unconditional
-        // flush_line() would push an empty line into self.lines, which then
-        // creates a spurious empty DocBlock::Text when the preceding element
-        // already called flush_text_block() (per-element granularity).
+        // Isolate code from pending prose while avoiding a spurious empty line.
         if !self.current_spans.is_empty() {
             self.flush_line();
         }
+        self.flush_text_block();
+        self.in_code_block = true;
+        self.code_block_lang = lang;
+        self.code_block_content.clear();
+        self.code_block_raw.clear();
+        self.code_block_indented = false;
+        // Record the fence's byte offset and resolve its source line.
+        self.code_block_fence_offset = Some(span.start);
+        self.code_block_start_line = byte_offset_to_line(span.start, &self.line_boundaries);
     }
 
     fn handle_text(&mut self, text: &str) {
         if self.in_code_block {
-            for line in text.split('\n') {
-                self.code_block_content.push(line.to_string());
-            }
-            if self.code_block_content.last().is_some_and(String::is_empty) {
-                self.code_block_content.pop();
-            }
+            self.code_block_raw.push_str(text);
         } else {
             if self.in_heading {
                 self.heading_text.push_str(text);
@@ -1054,11 +1063,9 @@ impl MdRenderer {
             .max(label.map_or(0, str::len));
         let inner_width = max_width + 1;
 
-        // Join lines with newlines so syntect sees a complete source text.
-        // highlight_code returns one TokenLine per source line.
-        let source = self.code_block_content.join("\n");
+        // Highlight the parser payload, including any final empty code row.
         let token_lines = highlight_code(
-            &source,
+            &self.code_block_raw,
             self.code_block_lang.as_deref(),
             self.syntax_theme_name,
             // `tokens.syntax.code_fg` — default foreground for unhighlighted tokens.
@@ -1067,6 +1074,29 @@ impl MdRenderer {
             // with popups and the status bar; see `Syntax` doc in tokens.rs.
             self.tokens.surface.raised,
         );
+
+        if label.is_none() {
+            self.pending_code = Some(crate::markdown::CodeBlock {
+                block_id: self.blocks.len(),
+                language: self.code_block_lang.clone(),
+                raw: self.code_block_raw.clone(),
+                highlighted: token_lines
+                    .iter()
+                    .map(|tokens| {
+                        Line::from(
+                            tokens
+                                .iter()
+                                .map(|(text, style)| Span::styled(text.clone(), *style))
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect(),
+                border_style,
+                body_style: Style::default()
+                    .fg(self.tokens.syntax.code_fg)
+                    .bg(self.tokens.surface.raised),
+            });
+        }
 
         // Blank line before the box — maps to whatever was current before the block.
         self.push_blank_line();
@@ -1148,8 +1178,9 @@ impl MdRenderer {
 
             self.lines.push(Line::from(spans));
             // Content line i (0-indexed) lives one source line after the fence.
-            self.current_source_lines
-                .push(code_start_line + 1 + crate::cast::u32_sat(i));
+            self.current_source_lines.push(
+                code_start_line + u32::from(!self.code_block_indented) + crate::cast::u32_sat(i),
+            );
         }
 
         // Bottom border maps to the line after the last content line.
@@ -1329,6 +1360,124 @@ mod tests {
 
     fn default_palette() -> Palette {
         Palette::from_theme(Theme::Default)
+    }
+
+    #[test]
+    fn toolbox_code_card_header_names_language_and_preserves_copy_at_narrow_width() {
+        let blocks = render_markdown(
+            "```RuSt extra\n    ab  cd  \n```\n",
+            &default_palette(),
+            Theme::Default,
+            MathMode::Text,
+        );
+        for width in [10, 11, 20, 40] {
+            let mut layouts = std::collections::HashMap::new();
+            crate::markdown::update_text_layouts(&blocks, &mut layouts, width);
+            let layout = layouts.values().next().unwrap();
+            let rows: Vec<String> = layout
+                .wrapped
+                .iter()
+                .map(|row| row.spans.iter().map(|span| span.content.as_str()).collect())
+                .collect();
+            let header = rows.iter().find(|row| row.starts_with('╭')).unwrap();
+            assert!(header.contains("[ Copy ]"), "width {width}: {rows:?}");
+            assert!(layout.wrapped.iter().all(|row| row.width <= width));
+            if width == 40 {
+                assert!(header.contains("rust"), "{header}");
+                assert!(!header.contains("extra"), "{header}");
+            }
+        }
+    }
+
+    #[test]
+    fn toolbox_code_payload_is_exact_and_specialized_blocks_are_not_copyable() {
+        let md = "---\ntitle: Test\n---\n\nBefore\n\n```RuSt more\n\tlet x = 1;  \n\n```\n\n    indented  \n    next\n\n```mermaid\ngraph LR\nA-->B\n```\n\n```rust\nlast\n```\n";
+        let blocks = render_markdown(md, &default_palette(), Theme::Default, MathMode::Text);
+        let codes: Vec<_> = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, block)| match block {
+                DocBlock::Text {
+                    code: Some(code), ..
+                } => {
+                    assert_eq!(code.block_id, index);
+                    Some(code)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(codes.len(), 3);
+        assert_eq!(codes[0].language.as_deref(), Some("rust"));
+        assert_eq!(codes[0].raw, "\tlet x = 1;  \n\n");
+        assert_eq!(
+            codes[0].highlighted.len(),
+            2,
+            "the trailing empty code row must remain visible"
+        );
+        assert_eq!(codes[1].language, None);
+        assert_eq!(codes[1].raw, "indented  \nnext\n");
+        assert_eq!(codes[2].raw, "last\n");
+        for code in codes {
+            assert!(!code.raw.contains("```"));
+            assert!(!code.raw.contains('\u{1b}'));
+            assert!(!code.raw.contains("[ Copy ]"));
+        }
+        assert!(blocks.iter().any(|b| matches!(b, DocBlock::Mermaid { .. })));
+    }
+
+    #[test]
+    fn toolbox_empty_unclosed_and_repeated_code_blocks_keep_distinct_payloads() {
+        for (md, want) in [
+            ("```\n```\n", ""),
+            ("```text\nno final newline", "no final newline"),
+            ("    a\n\n    b\n", "a\n\nb\n"),
+        ] {
+            let blocks = render_markdown(md, &default_palette(), Theme::Default, MathMode::Text);
+            let DocBlock::Text {
+                code: Some(code), ..
+            } = &blocks[0]
+            else {
+                panic!("expected copyable code");
+            };
+            assert_eq!(code.raw, want);
+        }
+        let blocks = render_markdown(
+            "```\nsame\n```\n\n```\nsame\n```",
+            &default_palette(),
+            Theme::Default,
+            MathMode::Text,
+        );
+        let ids: Vec<_> = blocks
+            .iter()
+            .filter_map(|b| match b {
+                DocBlock::Text { code: Some(c), .. } => Some(c.block_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, [0, 1]);
+    }
+
+    #[test]
+    fn toolbox_code_layout_cache_distinguishes_language_and_payload() {
+        let blocks = render_markdown(
+            "```unknown-a\nlet x = 1;\n```\n\n```unknown-b\nlet x = 1;\n```\n",
+            &default_palette(),
+            Theme::Default,
+            MathMode::Text,
+        );
+        let ids: Vec<_> = blocks
+            .iter()
+            .filter_map(|block| match block {
+                DocBlock::Text {
+                    id, code: Some(_), ..
+                } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_ne!(
+            ids[0], ids[1],
+            "different syntax must not share a wrap cache entry"
+        );
     }
 
     /// Helper: render a fenced code block and extract all rendered lines

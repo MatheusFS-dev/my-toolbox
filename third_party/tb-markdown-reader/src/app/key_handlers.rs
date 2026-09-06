@@ -32,6 +32,10 @@ impl App {
                 | KeyCode::Enter
         );
         match self.focus {
+            Focus::Viewer if code == KeyCode::Char('c') => {
+                self.pending_chord = None;
+                self.copy_first_visible_code();
+            }
             Focus::Viewer if navigation || matches!(code, KeyCode::Char('f' | 'o')) => {
                 self.handle_viewer_key(code, modifiers);
             }

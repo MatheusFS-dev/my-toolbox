@@ -86,6 +86,19 @@ pub struct TableBlockId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextBlockId(pub u64);
 
+/// Copyable code with its parser payload kept separate from display styling.
+#[derive(Debug, Clone)]
+pub struct CodeBlock {
+    /// Document-order block index; identical snippets remain independent.
+    pub block_id: usize,
+    pub language: Option<String>,
+    /// Concatenated pulldown-cmark Text events, including the final newline.
+    pub raw: String,
+    pub highlighted: Vec<ratatui::text::Line<'static>>,
+    pub border_style: ratatui::style::Style,
+    pub body_style: ratatui::style::Style,
+}
+
 /// One cell's content as a sequence of styled spans.
 pub type CellSpans = Vec<Span<'static>>;
 
@@ -140,6 +153,8 @@ pub enum DocBlock {
         /// Notably, does NOT include `source_lines` — so shifting line numbers
         /// from an upstream edit do not invalidate downstream cache entries.
         id: TextBlockId,
+        /// Present only for ordinary fenced or indented code, never metadata or Mermaid.
+        code: Option<CodeBlock>,
         text: Text<'static>,
         links: Vec<LinkInfo>,
         heading_anchors: Vec<HeadingAnchor>,
@@ -381,12 +396,23 @@ pub fn update_text_layouts(
     for block in blocks {
         if let DocBlock::Text {
             id,
+            code,
             text,
             source_lines,
             wrapped_height,
             ..
         } = block
         {
+            if let Some(code) = code {
+                let layout = crate::ui::markdown_view::layout_code_card(code, content_width);
+                let new_height = crate::cast::u32_sat(layout.wrapped.len());
+                if new_height != wrapped_height.get() {
+                    wrapped_height.set(new_height);
+                    changed = true;
+                }
+                text_layouts.insert(*id, layout);
+                continue;
+            }
             // Build the wrapped layout for this block. Each logical line in
             // `text.lines` may expand to multiple `WrappedLine` rows; we track
             // which logical line each wrapped row came from in `physical_to_logical`.
@@ -684,6 +710,7 @@ pub fn source_line_at(
 /// # use std::cell::Cell;
 /// let block = DocBlock::Text {
 ///     id: TextBlockId(0),
+///     code: None,
 ///     text: Text::from(vec![
 ///         Line::from(Span::raw("a")),
 ///         Line::from(Span::raw("b")),
@@ -1196,6 +1223,7 @@ mod tests {
         let id = TextBlockId(h.finish());
         DocBlock::Text {
             id,
+            code: None,
             text: ratatui::text::Text::from(lines),
             links: vec![],
             heading_anchors: vec![],

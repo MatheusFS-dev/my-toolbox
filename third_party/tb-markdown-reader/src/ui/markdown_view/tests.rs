@@ -264,6 +264,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines_clamp),
             links: vec![],
             heading_anchors: vec![],
@@ -323,6 +324,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines_wrap),
             links: vec![],
             heading_anchors: vec![],
@@ -427,6 +429,7 @@ mod unit {
         };
         DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines),
             links: Vec::<LinkInfo>::new(),
             heading_anchors: Vec::<HeadingAnchor>::new(),
@@ -718,6 +721,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines_height),
             links: vec![],
             heading_anchors: vec![],
@@ -765,6 +769,7 @@ mod unit {
         for &width in &[20u16, 40, 80, 120] {
             let block = DocBlock::Text {
                 id: block_id,
+                code: None,
                 text: Text::from(vec![Line::from(Span::raw(content.clone()))]),
                 links: vec![],
                 heading_anchors: vec![],
@@ -816,6 +821,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_line_30),
             links: vec![],
             heading_anchors: vec![],
@@ -909,6 +915,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines_recomp),
             links: vec![link],
             heading_anchors: vec![],
@@ -1005,6 +1012,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_line_gutter),
             links: vec![],
             heading_anchors: vec![],
@@ -1067,6 +1075,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines_link),
             links: vec![link],
             heading_anchors: vec![],
@@ -1127,6 +1136,7 @@ mod unit {
         };
         let block = DocBlock::Text {
             id: block_id,
+            code: None,
             text: Text::from(text_lines_needle),
             links: vec![],
             heading_anchors: vec![],

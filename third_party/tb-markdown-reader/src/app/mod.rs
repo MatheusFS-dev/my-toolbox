@@ -33,7 +33,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // They use `use super::*;` to access all types and free functions from this
 // module without repeating imports.
 
+mod code_copy;
 mod file_ops;
+pub use code_copy::{CodeCopyFeedback, CodeCopyHitbox};
 mod key_handlers;
 mod mermaid_modal;
 mod search;
@@ -374,6 +376,10 @@ pub struct GotoLineState {
 #[allow(clippy::struct_field_names)]
 pub struct App {
     pub mode: AppMode,
+    pub clipboard: Box<dyn crate::clipboard::ClipboardSink>,
+    pub code_copy_hitboxes: Vec<CodeCopyHitbox>,
+    pub code_copy_feedback: Option<CodeCopyFeedback>,
+    code_copy_generation: u64,
     /// Set to `false` to break the event loop and exit.
     pub running: bool,
     /// Which panel is currently focused.
@@ -607,6 +613,10 @@ impl App {
 
         let mut app = Self {
             mode,
+            clipboard: Box::<crate::clipboard::SystemClipboard>::default(),
+            code_copy_hitboxes: Vec::new(),
+            code_copy_feedback: None,
+            code_copy_generation: 0,
             running: true,
             focus: initial_focus,
             pre_config_focus: initial_focus,
@@ -983,11 +993,21 @@ impl App {
                     | Action::Mouse(_)
                     | Action::MermaidReady(_, _)
                     | Action::MathReady(_, _, _)
+                    | Action::CodeCopyFeedbackExpired { .. }
             )
         {
             return;
         }
         match action {
+            Action::CodeCopyFeedbackExpired { generation } => {
+                if self
+                    .code_copy_feedback
+                    .as_ref()
+                    .is_some_and(|feedback| feedback.generation == generation)
+                {
+                    self.code_copy_feedback = None;
+                }
+            }
             Action::RawKey(key) => self.handle_key(key.code, key.modifiers),
             Action::Quit => self.running = false,
             Action::FocusLeft => self.focus_tree_or_viewer(),
@@ -1334,6 +1354,9 @@ impl App {
                     && contains(viewer_rect, col, row)
                 {
                     self.focus = Focus::Viewer;
+                    if self.try_copy_code_click(col, row) {
+                        return;
+                    }
                     self.try_follow_link_click(viewer_rect, col, row);
                 }
             }

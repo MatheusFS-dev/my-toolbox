@@ -96,6 +96,7 @@ struct MathDraw {
 /// * `focused` – whether the viewer panel currently has keyboard focus.
 #[allow(clippy::many_single_char_names, clippy::too_many_lines)]
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
+    app.code_copy_hitboxes.clear();
     let p = app.palette;
 
     let active_tab = app.tabs.active_tab();
@@ -476,7 +477,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
                         }
                     } else {
                         match doc_block {
-                            DocBlock::Text { id, text, .. } => {
+                            DocBlock::Text { id, code, text, .. } => {
                                 // Look up the pre-wrapped layout for this block. On the
                                 // very first draw the cache may not be populated yet
                                 // (race between width-change path and first paint); call
@@ -492,7 +493,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
 
                                 // Build ratatui Lines from the pre-wrapped output.
                                 // Single-source conversion via `WrappedLine::to_ratatui_line`.
-                                let wrapped_lines: Vec<ratatui::text::Line<'static>> = tab
+                                let mut wrapped_lines: Vec<ratatui::text::Line<'static>> = tab
                                     .view
                                     .text_layouts
                                     .get(id)
@@ -507,6 +508,45 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
                                         // Cache absent — fall back to logical lines (no wrap).
                                         text.lines.clone()
                                     });
+
+                                if let Some(code) = code {
+                                    let feedback =
+                                        app.code_copy_feedback.as_ref().filter(|feedback| {
+                                            feedback.tab_id == tab.id
+                                                && feedback.block_id == code.block_id
+                                                && feedback.text_id == *id
+                                        });
+                                    let label =
+                                        feedback.map(|feedback| feedback.label(effective_width));
+                                    if let Some(header) = wrapped_lines.get_mut(1) {
+                                        *header = super::code_header(code, effective_width, label);
+                                    }
+                                    let header_row = block_start + 1;
+                                    if header_row >= scroll_offset
+                                        && header_row < viewport_end
+                                        && effective_width >= 10
+                                    {
+                                        let button_width = crate::cast::u16_sat(
+                                            label.unwrap_or(super::code::COPY_BUTTON).len(),
+                                        );
+                                        app.code_copy_hitboxes.push(crate::app::CodeCopyHitbox {
+                                            tab_id: tab.id,
+                                            block_id: code.block_id,
+                                            text_id: *id,
+                                            rect: Rect::new(
+                                                inner.x + gutter_width + effective_width
+                                                    - 1
+                                                    - button_width,
+                                                inner.y
+                                                    + crate::cast::u16_from_u32(
+                                                        header_row - scroll_offset,
+                                                    ),
+                                                button_width,
+                                                1,
+                                            ),
+                                        });
+                                    }
+                                }
 
                                 // Apply search match highlights on the wrapped lines.
                                 // `highlight_matches` operates on logical lines from the

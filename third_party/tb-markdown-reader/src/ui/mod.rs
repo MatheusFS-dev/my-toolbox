@@ -50,6 +50,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.tab_close_rects.clear();
     app.tab_picker_rects.clear();
     app.search_result_rects.clear();
+    app.code_copy_hitboxes.clear();
 
     // The search modal is a full-screen overlay rendered after all other panels,
     // so it gets no dedicated layout slot.  The outer layout has only two rows:
@@ -194,6 +195,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Search modal is drawn last so it floats above all other panels.
     if app.search.active {
         search_modal::draw(f, app);
+    }
+
+    // Copy controls are interactive only while the viewer is unobscured.
+    if app.show_help
+        || app.search.active
+        || app.tab_picker.is_some()
+        || app.link_picker.is_some()
+        || app.outline_picker.is_some()
+        || app.table_modal.is_some()
+        || app.mermaid_modal.is_some()
+        || app.config_popup.is_some()
+        || app.copy_menu.is_some()
+        || matches!(app.focus, Focus::Editor | Focus::HybridEditor)
+    {
+        app.code_copy_hitboxes.clear();
     }
 }
 

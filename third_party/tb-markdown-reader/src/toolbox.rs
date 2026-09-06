@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 
 pub const FOOTER: &str =
-    "Esc/q:back j/k:scroll d/u:page gg/G:ends f:links o:outline Enter:open/close";
+    "Esc/q:back j/k:scroll d/u:page gg/G:ends c:copy f:links o:outline Enter:open/close";
 
 /// Resolve and read the single embedded Markdown document before terminal setup.
 pub fn read_embedded_file(path: &Path) -> Result<(PathBuf, String)> {

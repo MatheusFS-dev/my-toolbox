@@ -605,6 +605,7 @@ mod tests {
         let id = text_block_id(&lines);
         DocBlock::Text {
             id,
+            code: None,
             text: Text::from(lines),
             links: vec![],
             heading_anchors: vec![],

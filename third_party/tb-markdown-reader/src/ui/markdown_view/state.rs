@@ -185,14 +185,18 @@ impl MarkdownViewState {
         let mut abs_links: Vec<AbsoluteLink> = Vec::new();
         let mut abs_anchors: Vec<AbsoluteAnchor> = Vec::new();
         let mut block_offset = 0u32;
-        for block in &self.rendered {
+        for (block_id, block) in self.rendered.iter_mut().enumerate() {
             if let DocBlock::Text {
                 id,
+                code,
                 links,
                 heading_anchors,
                 ..
             } = block
             {
+                if let Some(code) = code {
+                    code.block_id = block_id;
+                }
                 // Build a closure that maps a logical line index to its first
                 // visual row within the block using the pre-wrap cache.
                 let visual_row_of_logical = |logical: u32| -> u32 {
@@ -781,6 +785,7 @@ mod splice_tests {
             .collect();
         DocBlock::Text {
             id,
+            code: None,
             text: Text::from(lines),
             links: vec![],
             heading_anchors: vec![],

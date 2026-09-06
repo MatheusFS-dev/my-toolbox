@@ -26,6 +26,237 @@ fn embedded_app() -> App {
     )
 }
 
+#[derive(Default)]
+struct TestClipboard {
+    payloads: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    fail: bool,
+}
+
+impl crate::clipboard::ClipboardSink for TestClipboard {
+    fn copy(&mut self, text: &str) -> anyhow::Result<()> {
+        self.payloads.borrow_mut().push(text.to_owned());
+        if self.fail {
+            anyhow::bail!("clipboard unavailable");
+        }
+        Ok(())
+    }
+}
+
+fn code_copy_app(fail: bool) -> (App, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+    let mut app = App::new_embedded(
+        PathBuf::from("/toolbox/code.md"),
+        "```rust\n\tlet x = 1;  \n```\n\n```text\nsecond\n```\n".to_owned(),
+    );
+    let sink = TestClipboard {
+        fail,
+        ..TestClipboard::default()
+    };
+    let payloads = sink.payloads.clone();
+    app.clipboard = Box::new(sink);
+    (app, payloads)
+}
+
+fn code_copy_click(app: &mut App, x: u16, y: u16) {
+    app.handle_action(Action::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    }));
+}
+
+#[test]
+fn toolbox_code_copy_hitboxes_rebuild_after_scroll_resize_and_empty_frame() {
+    let (mut app, payloads) = code_copy_app(false);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 10)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.code_copy_hitboxes.len(), 2);
+    assert_eq!(app.code_copy_hitboxes[0].rect, Rect::new(31, 1, 8, 1));
+    assert_eq!(app.code_copy_hitboxes[1].rect, Rect::new(31, 6, 8, 1));
+    app.tabs.active_tab_mut().unwrap().view.scroll_offset = 3;
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.code_copy_hitboxes.len(), 1);
+    assert_eq!(app.code_copy_hitboxes[0].rect, Rect::new(31, 3, 8, 1));
+    code_copy_click(&mut app, 31, 1);
+    assert!(payloads.borrow().is_empty());
+    terminal.backend_mut().resize(20, 10);
+    terminal.resize(Rect::new(0, 0, 20, 10)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.code_copy_hitboxes[0].rect, Rect::new(11, 3, 8, 1));
+    code_copy_click(&mut app, 31, 3);
+    assert!(payloads.borrow().is_empty());
+    code_copy_click(&mut app, 11, 3);
+    assert_eq!(*payloads.borrow(), ["second\n"]);
+    app.tabs.active_tab_mut().unwrap().view.content.clear();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert!(app.code_copy_hitboxes.is_empty());
+}
+
+#[test]
+fn toolbox_code_copy_spliced_cards_keep_document_order_identity() {
+    let (mut app, payloads) = code_copy_app(false);
+    let replacement = crate::markdown::renderer::render_markdown(
+        "```text\ninserted\n```\n",
+        &app.palette,
+        app.theme,
+        app.math_mode,
+    );
+    app.tabs
+        .active_tab_mut()
+        .unwrap()
+        .view
+        .splice_blocks(1..1, replacement);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let ids: Vec<_> = app
+        .code_copy_hitboxes
+        .iter()
+        .map(|hit| hit.block_id)
+        .collect();
+    assert_eq!(ids, [0, 1, 2]);
+    code_copy_click(&mut app, 31, 11);
+    assert_eq!(*payloads.borrow(), ["second\n"]);
+}
+
+#[test]
+fn toolbox_code_copy_controls_are_not_active_under_overlays() {
+    let (mut app, payloads) = code_copy_app(false);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
+    app.mode = AppMode::Normal;
+    app.show_help = true;
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert!(app.code_copy_hitboxes.is_empty());
+    code_copy_click(&mut app, 31, 2);
+    assert!(payloads.borrow().is_empty());
+}
+
+#[test]
+fn toolbox_code_copy_narrow_keyboard_feedback_and_hidden_headers() {
+    let (mut app, payloads) = code_copy_app(false);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(10, 20)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(app.code_copy_hitboxes[0].rect, Rect::new(1, 1, 8, 1));
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let header: String = (0..10)
+        .map(|x| terminal.backend().buffer()[(x, 1)].symbol())
+        .collect();
+    assert_eq!(header, "╭[Copied]╮");
+    assert_eq!(*payloads.borrow(), ["\tlet x = 1;  \n"]);
+    terminal.backend_mut().resize(9, 20);
+    terminal.resize(Rect::new(0, 0, 9, 20)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert!(app.code_copy_hitboxes.is_empty());
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    assert_eq!(payloads.borrow().len(), 2);
+}
+
+#[test]
+fn toolbox_code_copy_keyboard_uses_first_intersecting_card_and_preserves_raw() {
+    let (mut app, payloads) = code_copy_app(false);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    app.tabs.active_tab_mut().unwrap().view.scroll_offset = 2;
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    assert_eq!(
+        app.code_copy_hitboxes.len(),
+        1,
+        "first header is above viewport"
+    );
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    assert_eq!(*payloads.borrow(), ["\tlet x = 1;  \n"]);
+    assert_eq!(app.focus, Focus::Viewer);
+    assert!(app.code_copy_feedback.as_ref().unwrap().success);
+    app.tabs.active_tab_mut().unwrap().view.scroll_offset = 5;
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    assert_eq!(*payloads.borrow(), ["\tlet x = 1;  \n", "second\n"]);
+    app.mode = AppMode::Normal;
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    assert_eq!(app.focus, Focus::Config);
+    assert_eq!(payloads.borrow().len(), 2);
+}
+
+#[test]
+fn toolbox_code_copy_failure_and_outside_clicks_are_local() {
+    let (mut app, payloads) = code_copy_app(true);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    for (x, y) in [(30, 1), (39, 1), (31, 0), (31, 2), (0, 19)] {
+        code_copy_click(&mut app, x, y);
+    }
+    assert!(payloads.borrow().is_empty());
+    assert!(app.code_copy_feedback.is_none());
+    code_copy_click(&mut app, 31, 6);
+    assert_eq!(*payloads.borrow(), ["second\n"]);
+    assert!(!app.code_copy_feedback.as_ref().unwrap().success);
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let row = |y| {
+        (0..40)
+            .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+            .collect::<String>()
+    };
+    assert!(row(1).contains("[ Copy ]"));
+    assert!(row(6).contains("[ Failed ]"));
+}
+
+#[tokio::test]
+async fn toolbox_code_copy_timer_expiry_ignores_stale_generations() {
+    let (mut app, _) = code_copy_app(false);
+    app.tabs.view_height = 20;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    app.action_tx = Some(tx);
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    let old = app.code_copy_feedback.as_ref().unwrap().generation;
+    app.handle_key(KeyCode::Char('c'), KeyModifiers::NONE);
+    let current = app.code_copy_feedback.as_ref().unwrap().generation;
+    assert_ne!(old, current);
+    app.handle_action(Action::CodeCopyFeedbackExpired { generation: old });
+    assert_eq!(app.code_copy_feedback.as_ref().unwrap().generation, current);
+    let mut expired = Vec::new();
+    for _ in 0..2 {
+        let action = tokio::time::timeout(std::time::Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let Action::CodeCopyFeedbackExpired { generation } = action else {
+            panic!("expected timer action");
+        };
+        expired.push(generation);
+    }
+    assert!(expired.contains(&old) && expired.contains(&current));
+    app.handle_action(Action::CodeCopyFeedbackExpired {
+        generation: current,
+    });
+    assert!(app.code_copy_feedback.is_none());
+}
+
+#[test]
+fn toolbox_code_copy_click_shows_feedback_on_the_clicked_card() {
+    let mut app = App::new_embedded(
+        PathBuf::from("/toolbox/code.md"),
+        "```rust\nlet x = 1;\n```\n\n```rust\nlet x = 1;\n```\n".to_string(),
+    );
+    app.clipboard = Box::new(TestClipboard::default());
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 20)).unwrap();
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 32,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+    let rows: Vec<String> = (0..19)
+        .map(|y| {
+            (0..40)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    assert!(rows[1].contains("Copied!"), "{rows:?}");
+    assert!(rows[6].contains("[ Copy ]"), "{rows:?}");
+}
+
 #[test]
 fn toolbox_embedded_initialization_is_isolated_and_prerenders_one_document() {
     let mut app = embedded_app();
@@ -67,7 +298,7 @@ fn toolbox_embedded_layout_has_only_viewer_and_exact_footer() {
     let footer: String = (0..120).map(|x| buffer[(x, 23)].symbol()).collect();
     assert_eq!(
         footer.trim(),
-        "Esc/q:back j/k:scroll d/u:page gg/G:ends f:links o:outline Enter:open/close"
+        "Esc/q:back j/k:scroll d/u:page gg/G:ends c:copy f:links o:outline Enter:open/close"
     );
 }
 
@@ -287,6 +518,7 @@ fn make_text_block(lines: &[&str]) -> DocBlock {
     let id = TextBlockId(h.finish());
     DocBlock::Text {
         id,
+        code: None,
         text: Text::from(text_lines),
         links: Vec::new(),
         heading_anchors: Vec::new(),
@@ -898,6 +1130,7 @@ fn enter_edit_mode_uses_cursor_for_source_line() {
     };
     let block = DocBlock::Text {
         id: block_id,
+        code: None,
         text: Text::from(text_lines),
         links: Vec::<LinkInfo>::new(),
         heading_anchors: Vec::<HeadingAnchor>::new(),
