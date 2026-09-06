@@ -66,11 +66,18 @@ Invoke-Check 'allow absent encoded flags' {
 }
 # Supplying a process-environment snapshot also represents an explicitly empty
 # variable on PowerShell versions where setting an empty env value removes it.
-foreach ($EncodedFlags in @('', '-C target-feature=-crt-static')) {
-    Invoke-Check "reject present encoded flags [$EncodedFlags]" {
-        Assert-Rejected {
-            Assert-ReaderRustFlagsEnvironment @{ CARGO_ENCODED_RUSTFLAGS = $EncodedFlags }
-        } 'Unset CARGO_ENCODED_RUSTFLAGS'
+foreach ($VariableName in @('CARGO_ENCODED_RUSTFLAGS', 'cargo_encoded_rustflags', 'CaRgO_EnCoDeD_RuStFlAgS')) {
+    foreach ($EncodedFlags in @('', '-C target-feature=-crt-static')) {
+        Invoke-Check "reject present $VariableName [$EncodedFlags]" {
+            # Use the actual environment dictionary type/comparer. Clearing
+            # this detached snapshot does not change the process environment.
+            $EnvironmentVariables = [Environment]::GetEnvironmentVariables()
+            $EnvironmentVariables.Clear()
+            $EnvironmentVariables.Add($VariableName, $EncodedFlags)
+            Assert-Rejected {
+                Assert-ReaderRustFlagsEnvironment $EnvironmentVariables
+            } 'Unset CARGO_ENCODED_RUSTFLAGS'
+        }
     }
 }
 if ($Failures.Count -gt 0) {

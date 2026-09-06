@@ -4,9 +4,12 @@ function Assert-ReaderRustFlagsEnvironment {
     )
 
     # Cargo uses encoded flags whenever the variable exists, including an
-    # explicitly empty value. Inspect the environment keys, not its value.
-    if ($EnvironmentVariables.Contains('CARGO_ENCODED_RUSTFLAGS')) {
-        throw 'Unset CARGO_ENCODED_RUSTFLAGS before building the reader.'
+    # explicitly empty value. Windows variable names are case-insensitive even
+    # when the dictionary returned by GetEnvironmentVariables is case-sensitive.
+    foreach ($VariableName in $EnvironmentVariables.Keys) {
+        if ($VariableName -ieq 'CARGO_ENCODED_RUSTFLAGS') {
+            throw 'Unset CARGO_ENCODED_RUSTFLAGS before building the reader.'
+        }
     }
 }
 
