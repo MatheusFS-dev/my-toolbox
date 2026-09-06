@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+test "$1" = build
+shift
+test "$1" = --locked
+shift
+test "$1" = --release
+shift
+test "$1" = --target
+target=$2
+shift 2
+test "$1" = --manifest-path
+test -f "$2"
+shift 2
+test "$1" = --target-dir
+target_directory=$2
+test "$#" -eq 2
+mkdir -p "$target_directory/$target/release"
+cp "$TB_TEST_READER_FIXTURE" "$target_directory/$target/release/tb-markdown-reader"
+chmod 755 "$target_directory/$target/release/tb-markdown-reader"
+printf 'cargo build\n' >> "$TB_TEST_CARGO_LOG"

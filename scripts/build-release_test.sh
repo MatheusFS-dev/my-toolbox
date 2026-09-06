@@ -37,18 +37,96 @@ ln -s README.md "$test_symlink"
 # fixture keeps this regression test focused on the archives users download.
 mkdir -p "$temporary_root/bin" "$temporary_root/dist"
 ln -s "$repository_root/scripts/testdata/go" "$temporary_root/bin/go"
+reader_directory="$temporary_root/readers"
+for platform in linux-amd64 linux-arm64 windows-amd64; do
+    reader_name=tb-markdown-reader
+    if [ "$platform" = windows-amd64 ]; then reader_name=tb-markdown-reader.exe; fi
+    mkdir -p "$reader_directory/$platform/libexec"
+    cp "$repository_root/scripts/testdata/reader" "$reader_directory/$platform/libexec/$reader_name"
+    printf '\n# %s\n' "$platform" >> "$reader_directory/$platform/libexec/$reader_name"
+    chmod 755 "$reader_directory/$platform/libexec/$reader_name"
+done
 mkdir -p "$temporary_root/stale"
 printf 'stale\n' > "$temporary_root/stale/stale-entry.txt"
 (
     cd "$temporary_root/stale"
     zip -q "$temporary_root/dist/toolbox-windows-amd64.zip" stale-entry.txt
 )
-PATH="$temporary_root/bin:$PATH" sh "$repository_root/scripts/build-release.sh" \
-    0.1.4 "$temporary_root/dist"
+for platform in linux-amd64 linux-arm64; do
+    tar -C "$temporary_root/stale" -czf "$temporary_root/dist/toolbox-$platform.tar.gz" stale-entry.txt
+done
+
+# Every invalid input must leave existing output intact and never invoke Go.
+export TB_TEST_GO_CALL_LOG="$temporary_root/go-calls"
+output_before=$(cksum "$temporary_root/dist/"*)
+expect_invalid() {
+    if PATH="$temporary_root/bin:$PATH" sh "$repository_root/scripts/build-release.sh" "$@" > "$temporary_root/error" 2>&1; then
+        printf 'Release unexpectedly accepted invalid arguments: %s\n' "$*" >&2
+        exit 1
+    fi
+    if [ -e "$TB_TEST_GO_CALL_LOG" ]; then
+        printf 'Release invoked Go before completing input validation.\n' >&2
+        exit 1
+    fi
+    if [ "$(cksum "$temporary_root/dist/"*)" != "$output_before" ] ||
+        [ "$(find "$temporary_root/dist" -type f | wc -l)" -ne 3 ]; then
+        printf 'Invalid release input changed existing output.\n' >&2
+        exit 1
+    fi
+}
+expect_invalid
+expect_invalid 0.1.4 "$temporary_root/dist"
+expect_invalid 0.1.4 "$temporary_root/dist" "$reader_directory" extra
+for invalid_version in '' v0.1.4 01.1.4 0.01.4 0.1.04 0.1 0.1.4.2; do
+    expect_invalid "$invalid_version" "$temporary_root/dist" "$reader_directory"
+done
+expect_invalid 0.1.4 '' "$reader_directory"
+expect_invalid 0.1.4 "$temporary_root/dist/toolbox-windows-amd64.zip" "$reader_directory"
+expect_invalid 0.1.4 "$temporary_root/dist" ''
+expect_invalid 0.1.4 "$temporary_root/dist" "$temporary_root/missing-readers"
+expect_invalid 0.1.4 "$temporary_root/dist" "$repository_root/scripts/testdata/reader"
+for platform in linux-amd64 linux-arm64 windows-amd64; do
+    reader_name=tb-markdown-reader
+    if [ "$platform" = windows-amd64 ]; then reader_name=tb-markdown-reader.exe; fi
+    reader="$reader_directory/$platform/libexec/$reader_name"
+    mv "$reader" "$temporary_root/reader-saved"
+    expect_invalid 0.1.4 "$temporary_root/dist" "$reader_directory"
+    mkdir "$reader"
+    expect_invalid 0.1.4 "$temporary_root/dist" "$reader_directory"
+    rmdir "$reader"
+    ln -s "$temporary_root/reader-saved" "$reader"
+    expect_invalid 0.1.4 "$temporary_root/dist" "$reader_directory"
+    rm "$reader"
+    touch "$reader"
+    chmod 755 "$reader"
+    expect_invalid 0.1.4 "$temporary_root/dist" "$reader_directory"
+    mv "$temporary_root/reader-saved" "$reader"
+    if [ "$platform" != windows-amd64 ]; then
+        chmod 644 "$reader"
+        expect_invalid 0.1.4 "$temporary_root/dist" "$reader_directory"
+        chmod 755 "$reader"
+    fi
+done
+
+# Resolve relative paths with spaces and an inherited CDPATH. Reader-directory
+# sources and build products must never leak into the release payload.
+mkdir -p "$reader_directory/third_party/src" "$reader_directory/target"
+touch "$reader_directory/Cargo.toml" "$reader_directory/Cargo.lock" "$reader_directory/target/debug-reader"
+touch "$reader_directory/linux-amd64/libexec/unrelated-reader-asset"
+ln -s "$reader_directory" "$temporary_root/reader link"
+(
+    cd "$temporary_root"
+    TB_TEST_READER_FAIL=1 CDPATH="$temporary_root" PATH="$temporary_root/bin:$PATH" sh "$repository_root/scripts/build-release.sh" \
+        0.1.4 dist './reader link'
+)
 
 for platform in linux-amd64 linux-arm64; do
     archive="$temporary_root/dist/toolbox-$platform.tar.gz"
     entries=$(tar -tzf "$archive")
+    if printf '%s\n' "$entries" | grep -E '^stale-entry.txt$|^libexec/unrelated-reader-asset$' >/dev/null; then
+        printf '%s contains a stale or unrelated entry.\n' "$archive" >&2
+        exit 1
+    fi
 
     # The updater rejects a root directory header because it resolves to the
     # extraction destination itself. Release archives must omit that header.
@@ -65,12 +143,26 @@ for platform in linux-amd64 linux-arm64; do
         exit 1
     fi
 
-    for required_entry in tb commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
+    if printf '%s\n' "$entries" | grep -E '(^|/)(third_party|target)/|(^|/)Cargo\.(toml|lock)$|\.rs$' >/dev/null; then
+        printf '%s contains reader sources or build products.\n' "$archive" >&2
+        exit 1
+    fi
+    for required_entry in tb libexec/ libexec/tb-markdown-reader libexec/tb-markdown-reader-LICENSE commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
         if ! printf '%s\n' "$entries" | grep -Fx "$required_entry" >/dev/null; then
             printf '%s is missing %s.\n' "$archive" "$required_entry" >&2
             exit 1
         fi
     done
+    mkdir "$temporary_root/extracted-$platform"
+    tar -xzf "$archive" -C "$temporary_root/extracted-$platform" libexec/tb-markdown-reader
+    extracted_reader="$temporary_root/extracted-$platform/libexec/tb-markdown-reader"
+    if [ ! -x "$extracted_reader" ] || ! cmp "$reader_directory/$platform/libexec/tb-markdown-reader" "$extracted_reader"; then
+        printf '%s contains an invalid or non-executable reader.\n' "$archive" >&2
+        exit 1
+    fi
+    tar -xOf "$archive" libexec/tb-markdown-reader-LICENSE |
+        cmp "$repository_root/third_party/tb-markdown-reader/LICENSE" -
+    "$extracted_reader" --tb-self-check
     for tomli_asset in $tomli_assets; do
         if ! printf '%s\n' "$entries" | grep -Fx "$tomli_asset" >/dev/null; then
             printf '%s is missing required Tomli asset %s.\n' \
@@ -102,12 +194,20 @@ if printf '%s\n' "$windows_entries" | grep -Fx 'stale-entry.txt' >/dev/null; the
     printf 'Windows release retained an entry from an older archive.\n' >&2
     exit 1
 fi
-for required_entry in tb.exe commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
+if printf '%s\n' "$windows_entries" | grep -E '(^|/)(third_party|target)/|(^|/)Cargo\.(toml|lock)$|\.rs$' >/dev/null; then
+    printf 'Windows release contains reader sources or build products.\n' >&2
+    exit 1
+fi
+for required_entry in tb.exe libexec/ libexec/tb-markdown-reader.exe libexec/tb-markdown-reader-LICENSE commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$required_entry" >/dev/null; then
         printf '%s is missing %s.\n' "$windows_archive" "$required_entry" >&2
         exit 1
     fi
 done
+unzip -p "$windows_archive" libexec/tb-markdown-reader.exe > "$temporary_root/windows-reader"
+cmp "$reader_directory/windows-amd64/libexec/tb-markdown-reader.exe" "$temporary_root/windows-reader"
+unzip -p "$windows_archive" libexec/tb-markdown-reader-LICENSE |
+    cmp "$repository_root/third_party/tb-markdown-reader/LICENSE" -
 for tomli_asset in $tomli_assets; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$tomli_asset" >/dev/null; then
         printf '%s is missing required Tomli asset %s.\n' \

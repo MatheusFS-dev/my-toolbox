@@ -51,7 +51,7 @@ The toolbox gathers all required answers before it runs selected tools, executes
 
 ## What's New in v1.3.0
 
-Version 1.3.0 introduces `tb search`, a searchable library of bundled Markdown guides. Its full-screen Tokyo Night reader supports responsive Markdown rendering, wrapped syntax-highlighted code cards, mouse scrolling, and copy controls that work through both native and terminal clipboards. Search results cover article titles, headings, and body text, and Escape returns to the preserved query and selection.
+Version 1.3.0 introduces `tb search`, a searchable library of bundled Markdown guides. The bundled full-screen reader uses GitHub Dark colors and supports wrapped syntax-highlighted code cards, tables, Mermaid diagrams, math, mouse scrolling, and code-copy controls. Search results cover article titles, headings, and body text; Escape or `q` returns to the preserved query and selection.
 
 ## Installation
 
@@ -85,7 +85,9 @@ On Windows, the installer adds `%LOCALAPPDATA%\my-toolbox\bin` to the user `PATH
 
 The installers publish top-level `tb` completion assets for Bash, Zsh, Windows PowerShell 5.1, and PowerShell 7. On Linux, marked source blocks are added only for detected Bash or Zsh executables; a missing shell is left untouched. On Windows, both PowerShell `CurrentUserAllHosts` profiles are updated. Open a new shell session after installation to activate completion.
 
-Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` downloads the bootstrap installer, removes the managed toolbox installation, and runs the installer again. If installation fails after removal, rerun the installation command for your platform to restore `tb`.
+Every release includes `tb-markdown-reader` for its platform. Rust and a separate upstream reader installation are not required to install, run, or update the toolbox. Both installers validate the bundled reader with its self-check before activating the release.
+
+Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` stages it alongside the active version, verifies the archive and bundled reader, then switches `current.txt` to activate it. The previous version is retained. If staging, validation, or activation fails, the active version, wrapper, and current-version pointer are preserved.
 
 ## Usage
 
@@ -119,7 +121,25 @@ SELECT TOOLS
 
 The example is shortened to show the row layout. The live selector wraps to the current terminal width, capped at 72 columns. Its title and controls remain visible while tool rows scroll; selected markers and names are green, while descriptions remain gray.
 
-Run `tb search` to browse the bundled Markdown guides. Type to filter by title, headings, or body text; use Up and Down to choose a result and Enter to open it. The full-screen reader renders Markdown in Tokyo Night colors and wraps long code lines to the terminal width. Scroll with the mouse wheel or use Up and Down, Page Up and Page Down, Home, and End; click a code block's Copy control or press `c` to copy visible code, then press Escape to return to the preserved search.
+Run `tb search` to browse the bundled Markdown guides. Type to filter by title, headings, or body text; use Up and Down to choose a result and Enter to open it. Search pauses while the bundled reader occupies the terminal. Escape or `q` closes the reader, including any open reader panel, and resumes the same query, selection, and results position.
+
+The reader renders headings, emphasis, lists, task lists, tables, links, and YAML/TOML frontmatter in GitHub Dark colors. Code cards use syntax highlighting and wrap long lines to the terminal width. Mermaid diagrams render as terminal text, math uses Unicode approximations, and ordinary Markdown images display their alternative text.
+
+| Reader control | Action |
+| --- | --- |
+| Mouse wheel, Up/Down, or `k`/`j` | Navigate through the document |
+| Page Up/Page Down | Move one document page |
+| `u`/`d` | Move half a document page |
+| `gg`/`G` | Jump to the document beginning/end |
+| Home/End | Move to the current line's beginning/end |
+| `f` / `o` | Open or dismiss the internal-link picker / heading outline |
+| Enter | Open or close the selected table or Mermaid panel; follow a picker selection |
+| Click `[ Copy ]` / press `c` | Copy that code card / the first code card intersecting the viewport |
+| Escape or `q` | Return to search |
+
+Copying includes the whole code block, preserving its whitespace and trailing newline when present, without Markdown fences, color escapes, or display wrapping. The reader tries the native clipboard first, then emits OSC 52 for terminals that support clipboard writes. Mermaid diagrams and frontmatter are not code-copy cards.
+
+If the bundled reader cannot be located, prepared, or started, or exits with an error, `tb search` closes its interface, writes a warning to stderr, and prints the selected article's raw Markdown to stdout. It appends a newline only when the source lacks one and exits successfully if both outputs can be written.
 
 `tb list` excludes direct-only commands, while `tb help` includes them. Running `tb` without arguments is invalid and directs you to `tb list`. Help output uses ANSI styling only when standard output is a terminal; redirected output remains plain text with the same hierarchy.
 
@@ -241,27 +261,41 @@ Uninstallation does not remove tools, plugins, agent configurations, or generate
 
 ## Development
 
-Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3.9 or newer. Both are development-only dependencies; released users need neither globally. Run the core test suites and installer test with:
+Development and release builds require Go 1.25.8, as declared in `go.mod`, and Python 3.9 or newer. Building or testing the bundled reader also requires Rust and Cargo; its build workflow uses the stable Rust toolchain. These build dependencies are not required for bootstrap installation. Run the core test suites and installer tests with:
 
 ```sh
 go test ./...
+cargo test --locked --manifest-path third_party/tb-markdown-reader/Cargo.toml
 python3 -m pip install -r packages/monitor_runtime/requirements.txt
 PYTHONPATH=packages/monitor_runtime python3 -m unittest discover -s packages/monitor_runtime/tests -v
 python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
 python3 -m unittest discover -s packages/others/tests -v
 sh scripts/install_test.sh
+sh scripts/build-release_test.sh
+sh scripts/build-markdown-reader_test.sh
 bash scripts/terminal-setup_test.sh
 ```
 
-CI additionally validates release/version scripts, shell completion, PowerShell 5.1 and 7 installers, the Windows terminal hotkey, WSL Shift+Enter bindings, shell syntax, ShellCheck, race detection, and cross-platform builds.
+CI additionally validates release/version scripts, shell completion, PowerShell 5.1 and 7 installers and reader-build checks, the Windows terminal hotkey, WSL Shift+Enter bindings, shell syntax, ShellCheck, race detection, and cross-platform builds. The [reader build workflow](.github/workflows/markdown-reader.yml) builds and self-checks each reader on its native platform: Linux MUSL binaries must have no ELF interpreter or dynamic dependencies, and Windows MSVC binaries must have no dynamic VC/UCRT imports.
 
-Create release archives by passing a canonical three-part version and an output directory:
+Create release archives by passing a canonical three-part version, an output directory, and a directory containing all three verified native readers:
 
 ```sh
-scripts/build-release.sh 0.1.123 dist
+scripts/build-release.sh 0.1.123 dist readers
 ```
 
-The build produces Linux x64, Linux ARM64, and Windows x64 archives, corresponding SHA-256 files, and `version.txt`. Release, Pages, and submodule automation is defined under `.github/workflows`; repository secrets and settings are configured separately.
+The reader directory must contain these files, with executable permissions on Linux readers:
+
+```text
+readers/
+  linux-amd64/libexec/tb-markdown-reader
+  linux-arm64/libexec/tb-markdown-reader
+  windows-amd64/libexec/tb-markdown-reader.exe
+```
+
+The release workflow assembles that directory from the native build artifacts. For local native builds, use [build-markdown-reader.sh](scripts/build-markdown-reader.sh) with the matching MUSL target and an output directory, or [build-markdown-reader.ps1](scripts/build-markdown-reader.ps1) with an output directory on Windows x64; the workflow records the required compiler and binary-inspection setup.
+
+The build produces Linux x64, Linux ARM64, and Windows x64 archives, corresponding SHA-256 files, and `version.txt`. Each archive includes its compiled reader under `libexec`; the reader's Rust sources and Cargo build artifacts are excluded. Release, Pages, and submodule automation is defined under `.github/workflows`; repository secrets and settings are configured separately.
 
 ## Contributing
 
@@ -279,6 +313,8 @@ Contributions are welcome:
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
+
+The bundled reader is a local fork of `leboiko/markdown-reader` 1.35.1 under the [MIT License](third_party/tb-markdown-reader/LICENSE). Its pinned upstream commit and import details are recorded in [UPSTREAM.md](third_party/tb-markdown-reader/UPSTREAM.md).
 
 ## Collaborators
 

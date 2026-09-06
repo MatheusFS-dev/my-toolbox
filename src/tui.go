@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -12,7 +14,11 @@ import (
 )
 
 // HuhUI renders interactive selection, article search, and typed forms.
-type HuhUI struct{}
+type HuhUI struct {
+	stdout    io.Writer
+	stderr    io.Writer
+	runSearch func(tea.Model) (tea.Model, error)
+}
 
 // Search opens the bundled article browser.
 //
@@ -20,16 +26,29 @@ type HuhUI struct{}
 //   - articles: Loaded release articles to browse.
 //
 // Returns:
-//   - error: ErrCancelled for Ctrl+C or Escape, or a rendering error.
-func (HuhUI) Search(articles []Article) error {
-	program := tea.NewProgram(newSearchModel(articles, maxPresentationWidth, 24))
-	finalModel, err := program.Run()
+//   - error: ErrCancelled for Ctrl+C or Escape, a terminal error, or a fallback
+//     output error. Reader failures return nil when raw Markdown is delivered.
+func (ui HuhUI) Search(articles []Article) error {
+	run := ui.runSearch
+	if run == nil {
+		run = func(model tea.Model) (tea.Model, error) {
+			output := ui.stderr
+			if output == nil {
+				output = os.Stderr
+			}
+			return tea.NewProgram(model, tea.WithOutput(output)).Run()
+		}
+	}
+	finalModel, err := run(newSearchModel(articles, maxPresentationWidth, 24))
 	if err != nil {
 		return err
 	}
 	model, valid := finalModel.(searchModel)
 	if !valid {
 		return fmt.Errorf("article search returned an invalid model")
+	}
+	if model.fallback != nil {
+		return writeArticleReaderFallback(*model.fallback, ui.stdout, ui.stderr)
 	}
 	return model.resultError()
 }

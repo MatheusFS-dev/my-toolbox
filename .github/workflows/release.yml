@@ -16,7 +16,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  markdown-reader:
+    uses: ./.github/workflows/markdown-reader.yml
+    with:
+      toolbox_sha: ${{ inputs.toolbox_sha }}
+    permissions:
+      contents: read
+
   release:
+    needs: markdown-reader
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +56,7 @@ jobs:
           sh scripts/install_test.sh
           bash scripts/terminal-setup_test.sh
           sh scripts/build-release_test.sh
+          sh scripts/build-markdown-reader_test.sh
       - name: Reject an already released commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -70,12 +79,23 @@ jobs:
         run: |
           VERSION=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | sh scripts/next-release-version.sh)
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reader-*
+          path: reader-artifacts
+          merge-multiple: true
+      - name: Assemble native reader payloads
+        run: |
+          mkdir readers
+          for platform in linux-amd64 linux-arm64 windows-amd64; do
+            tar -xf "reader-artifacts/reader-$platform.tar" -C readers
+          done
       - name: Build release archives
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           chmod +x scripts/build-release.sh
-          scripts/build-release.sh "$VERSION" dist
+          scripts/build-release.sh "$VERSION" dist readers
       - name: Publish exact commit
         env:
           GH_TOKEN: ${{ github.token }}

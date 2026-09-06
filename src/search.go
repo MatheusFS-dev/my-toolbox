@@ -17,6 +17,7 @@ type Article struct {
 	Category     string
 	Title        string
 	RelativePath string
+	SourcePath   string
 	Content      string
 	Headings     []string
 	bodyText     string
@@ -57,7 +58,15 @@ func loadArticles(root string, warnings io.Writer) ([]Article, error) {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".md") {
 			return nil
 		}
-		content, readErr := os.ReadFile(path)
+		sourcePath, sourceErr := filepath.Abs(path)
+		if sourceErr == nil {
+			sourcePath, sourceErr = filepath.EvalSymlinks(sourcePath)
+		}
+		if sourceErr != nil {
+			fmt.Fprintf(warnings, "warning: skip article %s: %v\n", warningPath(root, path), sourceErr)
+			return nil
+		}
+		content, readErr := os.ReadFile(sourcePath)
 		if readErr != nil {
 			fmt.Fprintf(warnings, "warning: skip article %s: %v\n", warningPath(root, path), readErr)
 			return nil
@@ -90,6 +99,7 @@ func loadArticles(root string, warnings io.Writer) ([]Article, error) {
 			Category:     filepath.Base(filepath.Dir(path)),
 			Title:        title,
 			RelativePath: filepath.ToSlash(relative),
+			SourcePath:   sourcePath,
 			Content:      string(content),
 			Headings:     indexedHeadings,
 			bodyText:     strings.Join(paragraphs, " "),

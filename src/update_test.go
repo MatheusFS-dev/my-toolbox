@@ -1,5 +1,3 @@
-//go:build !windows
-
 package main
 
 import (
@@ -11,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -59,33 +58,48 @@ func TestCompareVersionsRejectsUnsafeAndOlderReleases(t *testing.T) {
 	}
 }
 
-func TestUpdateDownloadsInstallerBeforeRemovingCurrentInstallationAndReinstalls(t *testing.T) {
+func TestUpdateRunsInstallerWithActiveInstallationAndClosedInput(t *testing.T) {
 	home := t.TempDir()
 	dataBase := filepath.Join(home, "data")
 	dataRoot := filepath.Join(dataBase, "my-toolbox")
 	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
 	wrapper := filepath.Join(home, ".local", "bin", "tb")
+	platform := "linux-amd64"
+	expectedWrapper := linuxToolboxWrapper
+	if runtime.GOOS == "windows" {
+		platform = "windows-amd64"
+		wrapper = filepath.Join(dataRoot, "bin", "tb.cmd")
+		expectedWrapper = windowsToolboxWrapper
+		t.Setenv("LOCALAPPDATA", dataBase)
+	}
 	marker := filepath.Join(home, "installed")
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", dataBase)
+	t.Setenv("TOOLBOX_UPDATE", "0")
+	t.Setenv("TOOLBOX_EXPECTED_VERSION", "stale")
 	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(wrapper, []byte(linuxToolboxWrapper), 0o755); err != nil {
+	if err := os.WriteFile(wrapper, []byte(expectedWrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	installer := fmt.Sprintf("#!/bin/sh\nset -eu\n[ ! -e %q ]\nprintf installed > %q\n", dataRoot, marker)
+	installer := fmt.Sprintf("#!/bin/sh\nset -eu\n[ -d %q ]\n[ -f %q ]\n[ \"$TOOLBOX_UPDATE\" = 1 ]\n[ \"$TOOLBOX_EXPECTED_VERSION\" = 0.1.2 ]\nif read -r input; then exit 91; fi\nprintf installed > %q\n", versionRoot, wrapper, marker)
+	installerURL := toolboxLinuxInstallerURL
+	if runtime.GOOS == "windows" {
+		installerURL = toolboxWindowsInstallerURL
+		installer = fmt.Sprintf("$ErrorActionPreference = 'Stop'\nif (-not (Test-Path -LiteralPath '%s') -or -not (Test-Path -LiteralPath '%s')) { exit 92 }\nif ($env:TOOLBOX_UPDATE -cne '1' -or $env:TOOLBOX_EXPECTED_VERSION -cne '0.1.2') { exit 93 }\nif ([Console]::In.ReadToEnd() -cne '') { exit 94 }\n[IO.File]::WriteAllText('%s', 'installed')\n", strings.ReplaceAll(versionRoot, "'", "''"), strings.ReplaceAll(wrapper, "'", "''"), strings.ReplaceAll(marker, "'", "''"))
+	}
 	requests := []string{}
-	builtins := NewToolboxBuiltins(versionRoot, "linux-amd64", "0.1.1", io.Discard)
+	builtins := NewToolboxBuiltins(versionRoot, platform, "0.1.1", io.Discard)
 	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
 		requests = append(requests, request.URL.String())
 		switch request.URL.String() {
 		case "https://api.github.com/repos/MatheusFS-dev/my-toolbox/releases/latest":
 			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil
-		case toolboxLinuxInstallerURL:
+		case installerURL:
 			return responseWithBody(installer), nil
 		default:
 			t.Fatalf("unexpected update URL: %s", request.URL)
@@ -98,7 +112,7 @@ func TestUpdateDownloadsInstallerBeforeRemovingCurrentInstallationAndReinstalls(
 	}
 	if !reflect.DeepEqual(requests, []string{
 		"https://api.github.com/repos/MatheusFS-dev/my-toolbox/releases/latest",
-		toolboxLinuxInstallerURL,
+		installerURL,
 	}) {
 		t.Fatalf("update requests = %v", requests)
 	}
@@ -106,8 +120,58 @@ func TestUpdateDownloadsInstallerBeforeRemovingCurrentInstallationAndReinstalls(
 	if err != nil || string(content) != "installed" {
 		t.Fatalf("installer marker = %q, %v", content, err)
 	}
-	if _, err := os.Stat(dataRoot); !os.IsNotExist(err) {
-		t.Fatalf("old installation still exists: %v", err)
+	if _, err := os.Stat(versionRoot); err != nil {
+		t.Fatalf("update removed the active version: %v", err)
+	}
+	if content, err := os.ReadFile(wrapper); err != nil || string(content) != expectedWrapper {
+		t.Fatalf("update changed the wrapper: %q, %v", content, err)
+	}
+}
+
+func TestUpdatePreservesCurrentInstallationWhenInstallerFails(t *testing.T) {
+	home := t.TempDir()
+	dataBase := filepath.Join(home, "data")
+	dataRoot := filepath.Join(dataBase, "my-toolbox")
+	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
+	wrapper := filepath.Join(home, ".local", "bin", "tb")
+	platform := "linux-amd64"
+	expectedWrapper := linuxToolboxWrapper
+	if runtime.GOOS == "windows" {
+		platform = "windows-amd64"
+		wrapper = filepath.Join(dataRoot, "bin", "tb.cmd")
+		expectedWrapper = windowsToolboxWrapper
+		t.Setenv("LOCALAPPDATA", dataBase)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", dataBase)
+	files := map[string]string{
+		filepath.Join(versionRoot, "tb"):          "active executable",
+		filepath.Join(versionRoot, "version.txt"): "0.1.1\n",
+		filepath.Join(dataRoot, "current.txt"):    "0.1.1\n",
+		wrapper:                                   expectedWrapper,
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builtins := NewToolboxBuiltins(versionRoot, platform, "0.1.1", io.Discard)
+	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/releases/latest") {
+			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil
+		}
+		return responseWithBody("exit 23\n"), nil
+	})}
+	if err := builtins.update(); err == nil || !strings.Contains(err.Error(), "exit status 23") {
+		t.Fatalf("update() error = %v", err)
+	}
+	for path, want := range files {
+		if content, err := os.ReadFile(path); err != nil || string(content) != want {
+			t.Fatalf("failed update changed %s: %q, %v", path, content, err)
+		}
 	}
 }
 
@@ -136,11 +200,17 @@ func TestUpdatePreservesCurrentInstallationWhenInstallerDownloadFails(t *testing
 	}
 }
 
-func TestUpdateRefusesUnrecognizedWrapperBeforeRemovingCurrentInstallation(t *testing.T) {
+func TestUpdateRefusesUnrecognizedWrapperWithoutChangingCurrentInstallation(t *testing.T) {
 	home := t.TempDir()
 	dataBase := filepath.Join(home, "data")
 	versionRoot := filepath.Join(dataBase, "my-toolbox", "versions", "0.1.1")
 	wrapper := filepath.Join(home, ".local", "bin", "tb")
+	platform := "linux-amd64"
+	if runtime.GOOS == "windows" {
+		platform = "windows-amd64"
+		wrapper = filepath.Join(dataBase, "my-toolbox", "bin", "tb.cmd")
+		t.Setenv("LOCALAPPDATA", dataBase)
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", dataBase)
 	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
@@ -152,7 +222,7 @@ func TestUpdateRefusesUnrecognizedWrapperBeforeRemovingCurrentInstallation(t *te
 	if err := os.WriteFile(wrapper, []byte("user-owned executable"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	builtins := NewToolboxBuiltins(versionRoot, "linux-amd64", "0.1.1", io.Discard)
+	builtins := NewToolboxBuiltins(versionRoot, platform, "0.1.1", io.Discard)
 	builtins.client = &http.Client{Transport: roundTripFunction(func(request *http.Request) (*http.Response, error) {
 		if strings.HasSuffix(request.URL.Path, "/releases/latest") {
 			return responseWithBody(`{"tag_name":"v0.1.2"}`), nil

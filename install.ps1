@@ -6,12 +6,33 @@ param(
     [Parameter(DontShow = $true)]
     [scriptblock]$DocumentsPathReader = { [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments) },
     [Parameter(DontShow = $true)]
-    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue }
+    [scriptblock]$CommandReader = { param([string]$Name) Get-Command $Name -ErrorAction SilentlyContinue },
+    [Parameter(DontShow = $true)]
+    [scriptblock]$ReaderValidator = {
+        param([string]$ReaderPath, [string[]]$ReaderArguments)
+
+        $Process = [Diagnostics.Process]::new()
+        try {
+            $Process.StartInfo.FileName = $ReaderPath
+            $Process.StartInfo.Arguments = $ReaderArguments -join ' '
+            $Process.StartInfo.UseShellExecute = $false
+            $Process.StartInfo.CreateNoWindow = $true
+            if (-not $Process.Start()) {
+                throw 'Bundled Markdown reader could not start.'
+            }
+            $Process.WaitForExit()
+            return $Process.ExitCode
+        } finally {
+            $Process.Dispose()
+        }
+    }
 )
 
 $ErrorActionPreference = 'Stop'
 
 $Repository = 'MatheusFS-dev/my-toolbox'
+$UpdateMode = $env:TOOLBOX_UPDATE -eq '1'
+$ExpectedVersion = [string]$env:TOOLBOX_EXPECTED_VERSION
 $LocalAppData = [string]$env:LOCALAPPDATA
 $DataRoot = if ([string]::IsNullOrWhiteSpace($LocalAppData)) { '' } else { Join-Path $LocalAppData 'my-toolbox' }
 $VersionsRoot = if ($DataRoot.Length -eq 0) { '' } else { Join-Path $DataRoot 'versions' }
@@ -23,11 +44,13 @@ $TemporaryRoot = $null
 $TemporaryCurrent = $null
 $TemporaryWrapper = $null
 $StagingPayload = $null
+$TransactionLock = $null
 $CurrentStage = 0
 $CurrentStageName = ''
 $PublishedVersion = $false
 $PublishedWrapper = $false
 $Activated = $false
+$SavedCurrent = $null
 $SavedWrapper = $null
 $CompletionPublished = $false
 $CompletionReplaced = $false
@@ -587,6 +610,10 @@ function Expand-ToolboxArchive {
             }
             $UnixType = (($Entry.ExternalAttributes -shr 16) -band 0xF000)
             if ($UnixType -eq 0xA000) {
+                if ($EntryPath -eq (Join-Path $Root 'libexec') -or
+                    $EntryPath -eq (Join-Path $Root 'libexec\tb-markdown-reader.exe')) {
+                    throw 'Downloaded payload has an unsafe bundled reader path.'
+                }
                 $SymbolicLinks += [pscustomobject]@{ Entry = $Entry; Path = $EntryPath; Name = $ArchiveName }
                 continue
             }
@@ -660,7 +687,30 @@ try {
     if ($PrerequisiteFailures.Count -gt 0) {
         throw ($PrerequisiteFailures -join [Environment]::NewLine)
     }
-    if (Test-Path -LiteralPath $CurrentFile) {
+    New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+    try {
+        # The kernel closes and deletes this exclusive handle after a crash.
+        $TransactionLock = [IO.FileStream]::new((Join-Path $DataRoot '.install.lock'),
+            [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None,
+            1, [IO.FileOptions]::DeleteOnClose)
+    } catch [IO.IOException] {
+        throw 'Another toolbox installer is running; retry when it finishes.'
+    }
+    if ($UpdateMode) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
+            throw 'TOOLBOX_EXPECTED_VERSION is required for updates.'
+        }
+        if (-not (Test-Path -LiteralPath $CurrentFile -PathType Leaf) -or -not (Test-Path -LiteralPath $WrapperPath -PathType Leaf)) {
+            throw 'An active toolbox installation is required for updates.'
+        }
+        $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
+        if ($CurrentVersion -eq $ExpectedVersion) {
+            Write-Status -Kind OK -Message "Toolbox $CurrentVersion is already current."
+            $InstallSucceeded = $true
+            return
+        }
+    }
+    if (-not $UpdateMode -and (Test-Path -LiteralPath $CurrentFile)) {
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         Write-Status -Kind INFO -Message "my-toolbox $CurrentVersion is already installed. Run tb update to upgrade."
         Complete-Stage
@@ -684,6 +734,9 @@ try {
         throw "Release tag is not a safe three-part version: $Tag"
     }
     $Version = $Tag.Substring(1)
+    if ($UpdateMode -and $Version -cne $ExpectedVersion) {
+        throw "Latest release $Version does not match expected version $ExpectedVersion."
+    }
     $Archive = 'toolbox-windows-amd64.zip'
     $VersionRoot = Join-Path $VersionsRoot $Version
     if (Test-Path -LiteralPath $VersionRoot) {
@@ -719,6 +772,7 @@ try {
     Expand-ToolboxArchive -ArchivePath $ArchivePath -Destination $Payload
     $Required = @(
         'tb.exe',
+        'libexec\tb-markdown-reader.exe',
         'commands.json',
         'version.txt',
         'completions\_tb',
@@ -745,41 +799,65 @@ try {
     if ($PayloadVersion -ne $Version) {
         throw "Downloaded payload version $PayloadVersion does not match release $Version."
     }
+    $ReaderDirectory = Get-Item -LiteralPath (Join-Path $Payload 'libexec') -Force
+    $StagedReader = Get-Item -LiteralPath (Join-Path $Payload 'libexec\tb-markdown-reader.exe') -Force
+    if (-not $ReaderDirectory.PSIsContainer -or
+        ($ReaderDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        ($StagedReader.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Downloaded payload has an unsafe bundled reader path.'
+    }
+    $ReaderExitCode = & $ReaderValidator $StagedReader.FullName @('--tb-self-check')
+    if ($ReaderExitCode -ne 0) {
+        throw "Bundled Markdown reader self-check failed with exit code $ReaderExitCode."
+    }
     Complete-Stage
 
     Start-Stage -Number 6 -Name 'installation'
     New-Item -ItemType Directory -Force -Path $VersionsRoot, $WrapperRoot | Out-Null
-    $TemporaryWrapper = Join-Path $WrapperRoot ('.tb-' + [Guid]::NewGuid() + '.cmd')
-    @(
-        '@echo off',
-        'setlocal',
-        'set /p TOOLBOX_VERSION=<"%LOCALAPPDATA%\my-toolbox\current.txt"',
-        '"%LOCALAPPDATA%\my-toolbox\versions\%TOOLBOX_VERSION%\tb.exe" %*'
-    ) | Set-Content -LiteralPath $TemporaryWrapper -Encoding ascii
-    if (Test-Path -LiteralPath $WrapperPath -PathType Container) {
-        throw "Wrapper path is an existing directory: $WrapperPath"
+    if (-not $UpdateMode) {
+        $TemporaryWrapper = Join-Path $WrapperRoot ('.tb-' + [Guid]::NewGuid() + '.cmd')
+        @(
+            '@echo off',
+            'setlocal',
+            'set /p TOOLBOX_VERSION=<"%LOCALAPPDATA%\my-toolbox\current.txt"',
+            '"%LOCALAPPDATA%\my-toolbox\versions\%TOOLBOX_VERSION%\tb.exe" %*'
+        ) | Set-Content -LiteralPath $TemporaryWrapper -Encoding ascii
+        if (Test-Path -LiteralPath $WrapperPath -PathType Container) {
+            throw "Wrapper path is an existing directory: $WrapperPath"
+        }
+        if (Test-Path -LiteralPath $WrapperPath) {
+            $SavedWrapperCandidate = Join-Path $WrapperRoot ('.tb-previous-' + [Guid]::NewGuid() + '.cmd')
+            Move-Item -LiteralPath $WrapperPath -Destination $SavedWrapperCandidate
+            $SavedWrapper = $SavedWrapperCandidate
+        }
     }
-    if (Test-Path -LiteralPath $WrapperPath) {
-        $SavedWrapperCandidate = Join-Path $WrapperRoot ('.tb-previous-' + [Guid]::NewGuid() + '.cmd')
-        Move-Item -LiteralPath $WrapperPath -Destination $SavedWrapperCandidate
-        $SavedWrapper = $SavedWrapperCandidate
-    }
+    # Directory.Move is an atomic rename that rejects an existing destination.
+    # Ownership is recorded only after that rename succeeds.
+    [IO.Directory]::Move($StagingPayload, $VersionRoot)
     $PublishedVersion = $true
-    Move-Item -LiteralPath $StagingPayload -Destination $VersionRoot
     $StagingPayload = $null
-    $PublishedWrapper = $true
-    Move-Item -LiteralPath $TemporaryWrapper -Destination $WrapperPath
-    $TemporaryWrapper = $null
+    if (-not $UpdateMode) {
+        $PublishedWrapper = $true
+        Move-Item -LiteralPath $TemporaryWrapper -Destination $WrapperPath
+        $TemporaryWrapper = $null
+    }
     Complete-Stage
 
     Start-Stage -Number 7 -Name 'activation'
     Enable-ToolboxCompletion
     $TemporaryCurrent = Join-Path $DataRoot 'current.txt.new'
     Set-Content -LiteralPath $TemporaryCurrent -Value $Version -Encoding ascii
+    if ($UpdateMode) {
+        $SavedCurrent = Join-Path $DataRoot ('.current-previous-' + [Guid]::NewGuid())
+        [IO.File]::Replace($TemporaryCurrent, $CurrentFile, $SavedCurrent)
+    } else {
+        Move-Item -LiteralPath $TemporaryCurrent -Destination $CurrentFile
+    }
     $Activated = $true
-    Move-Item -LiteralPath $TemporaryCurrent -Destination $CurrentFile
     $TemporaryCurrent = $null
-    Enable-ToolboxPath
+    if (-not $UpdateMode) {
+        Enable-ToolboxPath
+    }
     Write-Status -Kind OK -Message "Installed my-toolbox $Version."
     Complete-Stage
     $InstallSucceeded = $true
@@ -788,6 +866,7 @@ try {
     Write-Status -Kind FAIL -Message "Stage $CurrentStage/7: $CurrentStageName"
     throw "$Failure. $($_.Exception.Message)"
 } finally {
+    try {
     if (-not $InstallSucceeded) {
         foreach ($ProfileState in $PublishedProfiles) {
             if ($ProfileState.Existed) {
@@ -810,8 +889,15 @@ try {
             }
             Move-Item -LiteralPath $SavedCompletionRoot -Destination $CompletionRoot
         }
-        if ($Activated -and (Test-Path -LiteralPath $CurrentFile)) {
-            Remove-Item -LiteralPath $CurrentFile -Force
+        if ($Activated) {
+            if ($null -ne $SavedCurrent -and (Test-Path -LiteralPath $SavedCurrent)) {
+                # PowerShell 5.1 binds a null backup argument as an invalid empty path.
+                $TemporaryCurrent = Join-Path $DataRoot 'current.txt.new'
+                [IO.File]::Replace($SavedCurrent, $CurrentFile, $TemporaryCurrent)
+                $SavedCurrent = $null
+            } elseif (Test-Path -LiteralPath $CurrentFile) {
+                Remove-Item -LiteralPath $CurrentFile -Force
+            }
         }
         if ($PublishedWrapper -and (Test-Path -LiteralPath $WrapperPath)) {
             Remove-Item -LiteralPath $WrapperPath -Force
@@ -831,6 +917,9 @@ try {
     if ($null -ne $TemporaryCurrent -and (Test-Path -LiteralPath $TemporaryCurrent)) {
         Remove-Item -LiteralPath $TemporaryCurrent -Force
     }
+    if ($null -ne $SavedCurrent -and (Test-Path -LiteralPath $SavedCurrent)) {
+        Remove-Item -LiteralPath $SavedCurrent -Force
+    }
     if ($null -ne $TemporaryWrapper -and (Test-Path -LiteralPath $TemporaryWrapper)) {
         Remove-Item -LiteralPath $TemporaryWrapper -Force
     }
@@ -839,5 +928,8 @@ try {
     }
     if ($null -ne $TemporaryRoot -and (Test-Path -LiteralPath $TemporaryRoot)) {
         Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force
+    }
+    } finally {
+        if ($null -ne $TransactionLock) { $TransactionLock.Dispose() }
     }
 }

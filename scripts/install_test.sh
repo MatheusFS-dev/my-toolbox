@@ -11,6 +11,26 @@ cp -R "$repository_root/completions" "$test_root/payload/completions"
 printf '%s\n' '0.1.5' > "$test_root/payload/version.txt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$test_root/payload/tb"
 chmod 755 "$test_root/payload/tb"
+mkdir -p "$test_root/payload/libexec"
+# Fixture arguments and environment variables expand when the staged reader runs.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/bin/sh' \
+    '[ "$#" -eq 1 ] && [ "$1" = --tb-self-check ] || exit 91' \
+    'case "$0" in */versions/.install-0.1.5.*/libexec/tb-markdown-reader) ;; *) exit 92 ;; esac' \
+    '[ -z "${READER_CHECK_LOG:-}" ] || printf "%s\n" "$0" "$@" > "$READER_CHECK_LOG"' \
+    'if [ -n "${UPDATE_ACTIVE_ROOT:-}" ]; then' \
+    '  [ -f "$UPDATE_ACTIVE_ROOT/versions/0.1.4/tb" ] || exit 93' \
+    '  [ "$(sed -n "1p" "$UPDATE_ACTIVE_ROOT/current.txt")" = 0.1.4 ] || exit 94' \
+    '  cmp "$HOME/.local/bin/tb" "$UPDATE_WRAPPER_BEFORE" || exit 95' \
+    '  [ ! -e "$UPDATE_ACTIVE_ROOT/versions/0.1.5" ] || exit 96' \
+    'fi' \
+    'if [ -n "${READER_READY_FILE:-}" ]; then' \
+    '  : > "$READER_READY_FILE"' \
+    '  while [ ! -e "$READER_RELEASE_FILE" ]; do sleep 0.02; done' \
+    'fi' \
+    'exit "${READER_EXIT_CODE:-0}"' > "$test_root/payload/libexec/tb-markdown-reader"
+# Extraction must repair an archive whose reader is not executable.
+chmod 600 "$test_root/payload/libexec/tb-markdown-reader"
 python3 - "$repository_root/commands.json" "$test_root/payload" <<'PY'
 import json
 import pathlib
@@ -55,7 +75,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 case "$url" in
-    */releases/latest) printf '%s\n' '{"tag_name":"v0.1.5"}' ;;
+    */releases/latest) printf '{"tag_name":"%s"}\n' "${FIXTURE_RELEASE_TAG:-v0.1.5}" ;;
     */toolbox-linux-amd64.tar.gz.sha256) cp "$FIXTURE_DOWNLOADS/toolbox-linux-amd64.tar.gz.sha256" "$output" ;;
     */toolbox-linux-amd64.tar.gz) cp "$FIXTURE_DOWNLOADS/toolbox-linux-amd64.tar.gz" "$output" ;;
     *) printf 'Unexpected fixture URL: %s\n' "$url" >&2; exit 1 ;;
@@ -63,6 +83,17 @@ esac
 SH
 cat > "$test_root/bin/mv" <<'SH'
 #!/bin/sh
+move_option=
+if [ "$1" = -T ]; then move_option=-T; shift; fi
+if [ "${FAIL_AFTER_CURRENT_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
+    case "$1" in
+        */current.txt.new)
+            /bin/mv "$@" || exit 1
+            kill -TERM "$PPID"
+            exit 0
+            ;;
+    esac
+fi
 if [ "${FAIL_CURRENT_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
     case "$2" in
         */current.txt) exit 1 ;;
@@ -71,15 +102,238 @@ fi
 if [ "${FAIL_VERSION_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
     case "$2" in
         */versions/0.1.5)
-            mkdir -p "$2"
-            printf 'partial\n' > "$2/partial"
+            /bin/mv ${move_option:+"$move_option"} "$@" || exit 1
             exit 1
             ;;
     esac
 fi
-exec /bin/mv "$@"
+if [ "${FOREIGN_VERSION_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
+    case "$2" in
+        */versions/0.1.5)
+            mkdir -p "$2"
+            cp "$2/../0.1.4/tb" "$2/tb"
+            printf '0.1.5\n' > "$2/../../current.txt"
+            exit 1
+            ;;
+    esac
+fi
+exec /bin/mv ${move_option:+"$move_option"} "$@"
 SH
 chmod 755 "$test_root/bin/uname" "$test_root/bin/curl" "$test_root/bin/mv"
+
+for reader_case in missing failed symlink directory-symlink; do
+    reader_payload="$test_root/reader-$reader_case-payload"
+    reader_downloads="$test_root/reader-$reader_case-downloads"
+    reader_exit_code=0
+    mkdir -p "$reader_downloads"
+    cp -R "$test_root/payload" "$reader_payload"
+    case "$reader_case" in
+        missing) rm "$reader_payload/libexec/tb-markdown-reader" ;;
+        failed) reader_exit_code=23 ;;
+        symlink)
+            mv "$reader_payload/libexec/tb-markdown-reader" "$reader_payload/reader-target"
+            ln -s ../reader-target "$reader_payload/libexec/tb-markdown-reader"
+            ;;
+        directory-symlink)
+            mv "$reader_payload/libexec" "$reader_payload/reader-target"
+            ln -s reader-target "$reader_payload/libexec"
+            ;;
+    esac
+    tar -C "$reader_payload" -czf "$reader_downloads/toolbox-linux-amd64.tar.gz" .
+    (
+        cd "$reader_downloads"
+        sha256sum toolbox-linux-amd64.tar.gz > toolbox-linux-amd64.tar.gz.sha256
+    )
+    for installation_state in fresh existing; do
+        reader_home="$test_root/reader-$reader_case-$installation_state-home"
+        reader_data="$reader_home/.local/share/my-toolbox"
+        mkdir -p "$reader_home"
+        if [ "$installation_state" = existing ]; then
+            # The bootstrap stages only without current.txt; retain an older
+            # version and all surrounding installation files on this path.
+            mkdir -p "$reader_data/versions/0.1.4" "$reader_data/completions" "$reader_home/.local/bin"
+            printf '%s\n' 'old executable' > "$reader_data/versions/0.1.4/tb"
+            printf '%s\n' 'old wrapper' > "$reader_home/.local/bin/tb"
+            printf '%s\n' 'old completion' > "$reader_data/completions/tb.bash"
+            printf '%s\n' 'old bash profile' > "$reader_home/.bashrc"
+            printf '%s\n' 'old zsh profile' > "$reader_home/.zshrc"
+            cp -Rp "$reader_home" "$reader_home.before"
+        fi
+        if HOME="$reader_home" ZDOTDIR="$reader_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$reader_downloads" READER_EXIT_CODE="$reader_exit_code" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/reader.out" 2>&1; then
+            printf 'Installer accepted %s reader for %s installation.\n' "$reader_case" "$installation_state" >&2
+            exit 1
+        fi
+        if ! grep -F '[FAIL] Stage 5/7: extraction/validation' "$test_root/reader.out" >/dev/null ||
+            ! grep -F 'reader' "$test_root/reader.out" >/dev/null; then
+            printf 'Reader failure did not identify staged reader validation.\n' >&2
+            cat "$test_root/reader.out" >&2
+            exit 1
+        fi
+        if [ -e "$reader_data/current.txt" ] || [ -e "$reader_data/versions/0.1.5" ] ||
+            find "$reader_data/versions" "$test_root/tmp" -mindepth 1 -name '.install-*' -print | grep . >/dev/null; then
+            printf 'Reader validation failure left publication or staging files.\n' >&2
+            exit 1
+        fi
+        if [ "$installation_state" = existing ]; then
+            diff -r "$reader_home.before" "$reader_home"
+        elif [ -e "$reader_home/.local/bin" ] || [ -e "$reader_data/completions" ] ||
+            [ -e "$reader_home/.bashrc" ] || [ -e "$reader_home/.zshrc" ]; then
+            printf 'Fresh reader validation failure published installation files.\n' >&2
+            exit 1
+        fi
+    done
+done
+
+reader_home="$test_root/reader-success-home"
+reader_data="$reader_home/.local/share/my-toolbox"
+mkdir -p "$reader_home"
+HOME="$reader_home" ZDOTDIR="$reader_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" READER_CHECK_LOG="$test_root/reader-check.log" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/reader-success.out" 2>&1
+if [ ! -f "$test_root/reader-check.log" ] ||
+    [ "$(sed -n '2p' "$test_root/reader-check.log")" != --tb-self-check ] ||
+    [ "$(stat -c '%a' "$reader_data/versions/0.1.5/libexec/tb-markdown-reader")" != 755 ]; then
+    printf 'Installer did not validate the staged reader and repair its mode to 755.\n' >&2
+    exit 1
+fi
+# An active installation still takes the existing completion repair shortcut.
+cp -Rp "$reader_home" "$reader_home.before"
+rm "$test_root/reader-check.log"
+HOME="$reader_home" ZDOTDIR="$reader_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/reader-missing-downloads" READER_EXIT_CODE=23 READER_CHECK_LOG="$test_root/reader-check.log" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/reader-current.out" 2>&1
+diff -r "$reader_home.before" "$reader_home"
+if [ -e "$test_root/reader-check.log" ] || ! grep -F 'is already installed' "$test_root/reader-current.out" >/dev/null; then
+    printf 'Installer changed the existing current-file shortcut.\n' >&2
+    exit 1
+fi
+
+for update_case in failed missing mismatch missing-expected version-move current-move activation-signal completion same success; do
+    update_home="$test_root/update-$update_case-home"
+    cp -Rp "$reader_home" "$update_home"
+    for update_profile in .bashrc .zshrc; do
+        sed "s|$reader_home|$update_home|g" "$update_home/$update_profile" > "$test_root/profile-candidate"
+        cp "$test_root/profile-candidate" "$update_home/$update_profile"
+    done
+    update_data="$update_home/.local/share/my-toolbox"
+    mv "$update_data/versions/0.1.5" "$update_data/versions/0.1.4"
+    printf '0.1.4\n' > "$update_data/versions/0.1.4/version.txt"
+    printf '0.1.4\n' > "$update_data/current.txt"
+    update_expected=0.1.5
+    update_downloads="$test_root/downloads"
+    update_reader_exit=0
+    update_fail_version=0
+    update_fail_current=0
+    update_fail_after_current=0
+    update_failure_stage=5
+    case "$update_case" in
+        failed) update_reader_exit=23 ;;
+        missing) update_downloads="$test_root/reader-missing-downloads" ;;
+        mismatch) update_expected=0.1.6; update_failure_stage=2 ;;
+        missing-expected) update_expected=; update_failure_stage=1 ;;
+        version-move) update_fail_version=1; update_failure_stage=6 ;;
+        current-move) update_fail_current=1; update_failure_stage=7 ;;
+        activation-signal) update_fail_after_current=1; update_failure_stage=7 ;;
+        completion)
+            printf 'unrelated\n# >>> my-toolbox completion >>>\n' > "$update_home/.bashrc"
+            update_failure_stage=7
+            ;;
+        same) update_expected=0.1.4; update_downloads="$test_root/nonexistent-downloads" ;;
+    esac
+    cp -Rp "$update_home" "$update_home.before"
+    update_status=0
+    HOME="$update_home" ZDOTDIR="$update_home" TMPDIR="$test_root/tmp" \
+        TOOLBOX_UPDATE=1 TOOLBOX_EXPECTED_VERSION="$update_expected" \
+        UPDATE_ACTIVE_ROOT="$update_data" UPDATE_WRAPPER_BEFORE="$update_home.before/.local/bin/tb" \
+        FIXTURE_DOWNLOADS="$update_downloads" READER_EXIT_CODE="$update_reader_exit" \
+        READER_CHECK_LOG="$test_root/update-$update_case-reader.log" \
+        FAIL_VERSION_MOVE="$update_fail_version" FAIL_CURRENT_MOVE="$update_fail_current" \
+        FAIL_AFTER_CURRENT_MOVE="$update_fail_after_current" \
+        PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/update-$update_case.out" 2>&1 || update_status=$?
+    case "$update_case" in
+        success)
+            [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
+            [ -f "$test_root/update-$update_case-reader.log" ] || { printf 'Update bypassed staged reader validation.\n' >&2; exit 1; }
+            [ "$(cat "$update_data/current.txt")" = 0.1.5 ] || { printf 'Update did not switch current version.\n' >&2; exit 1; }
+            [ -f "$update_data/versions/0.1.5/libexec/tb-markdown-reader" ] || exit 1
+            diff -r "$update_home.before/.local/share/my-toolbox/versions/0.1.4" "$update_data/versions/0.1.4"
+            cmp "$update_home.before/.local/bin/tb" "$update_home/.local/bin/tb"
+            ;;
+        same)
+            [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
+            diff -r "$update_home.before" "$update_home"
+            [ ! -e "$test_root/update-$update_case-reader.log" ] || exit 1
+            ;;
+        *)
+            if [ "$update_status" -eq 0 ] || ! grep -F "[FAIL] Stage $update_failure_stage/7:" "$test_root/update-$update_case.out" >/dev/null; then
+                printf 'Update %s did not fail safely at stage %s.\n' "$update_case" "$update_failure_stage" >&2
+                cat "$test_root/update-$update_case.out" >&2
+                exit 1
+            fi
+            diff -r "$update_home.before" "$update_home"
+            ;;
+    esac
+    if find "$test_root/tmp" "$update_data/versions" -mindepth 1 -name '.install-*' -print | grep . >/dev/null; then
+        printf 'Update left a staging directory behind.\n' >&2
+        exit 1
+    fi
+done
+
+python3 - "$test_root" "$repository_root" "$reader_home" <<'PY'
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+test_root, repository, installed_home = map(Path, sys.argv[1:])
+for scenario in ("concurrent", "crashed", "foreign"):
+    case_home = test_root / ("ownership-" + scenario)
+    shutil.copytree(installed_home, case_home)
+    for profile in (".bashrc", ".zshrc"):
+        path = case_home / profile
+        path.write_text(path.read_text().replace(str(installed_home), str(case_home)))
+    data = case_home / ".local/share/my-toolbox"
+    (data / "versions/0.1.5").rename(data / "versions/0.1.4")
+    (data / "versions/0.1.4/version.txt").write_text("0.1.4\n")
+    (data / "current.txt").write_text("0.1.4\n")
+    environment = dict(os.environ, HOME=str(case_home), ZDOTDIR=str(case_home),
+                       TMPDIR=str(case_home), TOOLBOX_UPDATE="1",
+                       TOOLBOX_EXPECTED_VERSION="0.1.5", FIXTURE_DOWNLOADS=str(test_root / "downloads"),
+                       PATH=str(test_root / "bin") + ":/usr/bin:/bin")
+    command = ["/bin/sh", str(repository / "install.sh")]
+    if scenario == "foreign":
+        result = subprocess.run(command, env=dict(environment, FOREIGN_VERSION_MOVE="1"), capture_output=True, timeout=20)
+        assert result.returncode != 0, "Colliding publication unexpectedly succeeded"
+        assert (data / "versions/0.1.5/tb").is_file(), "Rollback deleted another transaction's active binary"
+    else:
+        ready = test_root / (scenario + ".ready")
+        release = test_root / (scenario + ".release")
+        with (test_root / (scenario + ".out")).open("wb") as output:
+            first = subprocess.Popen(command, env=dict(environment, READER_READY_FILE=str(ready),
+                                                       READER_RELEASE_FILE=str(release)), stdout=output, stderr=output)
+            try:
+                deadline = time.monotonic() + 20
+                while not ready.exists() and first.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                assert ready.exists(), "First updater did not reach staged validation"
+                if scenario == "crashed":
+                    first.kill()
+                    first.wait(timeout=10)
+                second_log = test_root / (scenario + ".second-reader")
+                second = subprocess.run(command, env=dict(environment, READER_CHECK_LOG=str(second_log)),
+                                        capture_output=True, timeout=20)
+                if scenario == "concurrent":
+                    assert second.returncode != 0 and not second_log.exists(), "Concurrent updater entered the locked transaction"
+                    release.touch()
+                    assert first.wait(timeout=20) == 0, "The active updater failed after a rejected concurrent transaction"
+                else:
+                    assert second.returncode == 0, "A crashed updater permanently blocked later updates: " + second.stderr.decode()
+            finally:
+                release.touch()
+                if first.poll() is None:
+                    first.terminate()
+                first.wait(timeout=10)
+    current = (data / "current.txt").read_text().strip()
+    assert current == "0.1.5" and (data / "versions" / current / "tb").is_file(), "Current points to a missing binary"
+PY
 
 make_prerequisite_bin() {
     destination=$1

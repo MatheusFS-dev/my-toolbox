@@ -2,6 +2,8 @@
 set -eu
 
 repository="MatheusFS-dev/my-toolbox"
+update_mode=${TOOLBOX_UPDATE:-0}
+expected_version=${TOOLBOX_EXPECTED_VERSION:-}
 home_root=${HOME:-}
 if [ -n "${XDG_DATA_HOME:-}" ]; then
     data_root="$XDG_DATA_HOME/my-toolbox"
@@ -20,11 +22,14 @@ temporary_root=
 temporary_current=
 temporary_wrapper=
 staging_payload=
+transaction_lock=
 current_stage=0
 current_stage_name=
 published_version=0
+version_owner=
 published_wrapper=0
 activated=0
+saved_current=
 saved_wrapper=
 saved_wrapper_candidate=
 completion_published=0
@@ -75,6 +80,31 @@ start_stage() {
 
 complete_stage() {
     status_line OK "Stage $current_stage/7: $current_stage_name"
+}
+
+acquire_transaction_lock() {
+    lock_root="$data_root/.install-locks"
+    mkdir -p "$lock_root"
+    transaction_lock="$lock_root/$$"
+    # A PID-specific record is published before inspecting competitors. At
+    # least one of two overlapping entrants must therefore observe the other.
+    # Records left by killed processes can be removed without touching a new
+    # owner's record, unlike reclaiming one shared lock directory.
+    rm -d "$transaction_lock" 2>/dev/null || :
+    mkdir "$transaction_lock"
+    for contender in "$lock_root"/*; do
+        [ -d "$contender" ] || continue
+        owner=${contender##*/}
+        [ "$owner" != "$$" ] || continue
+        case "$owner" in
+            ''|*[!0-9]*) printf 'Unrecognized installer lock: %s\n' "$contender" >&2; return 1 ;;
+        esac
+        if kill -0 "$owner" 2>/dev/null || [ -d "/proc/$owner" ]; then
+            printf 'Another toolbox installer is running (PID %s); retry when it finishes.\n' "$owner" >&2
+            return 1
+        fi
+        rm -d "$contender" 2>/dev/null || :
+    done
 }
 
 inventory_required_commands() {
@@ -539,7 +569,14 @@ on_exit() {
             rm -rf "$completion_root"
         fi
         if [ "$activated" -eq 1 ]; then
-            rm -f "$current_file"
+            if [ -n "$saved_current" ]; then
+                if ! cmp -s "$saved_current" "$current_file"; then
+                    mv "$saved_current" "$current_file"
+                    saved_current=
+                fi
+            else
+                rm -f "$current_file"
+            fi
         fi
         if [ "$published_wrapper" -eq 1 ]; then
             rm -f "$wrapper_path"
@@ -549,12 +586,19 @@ on_exit() {
         elif [ -n "$saved_wrapper" ] && [ -e "$saved_wrapper" ]; then
             mv "$saved_wrapper" "$wrapper_path"
         fi
-        if [ "$published_version" -eq 1 ]; then
+        if [ "$published_version" -eq 1 ] && [ -f "$version_root/.install-owner" ] &&
+            [ "$(sed -n '1p' "$version_root/.install-owner")" = "$version_owner" ]; then
             rm -rf "$version_root"
         fi
     fi
+    if [ "$exit_status" -eq 0 ] && [ "$published_version" -eq 1 ]; then
+        rm -f "$version_root/.install-owner"
+    fi
     if [ -n "$temporary_current" ] && [ -e "$temporary_current" ]; then
         rm -f "$temporary_current"
+    fi
+    if [ -n "$saved_current" ] && [ -e "$saved_current" ]; then
+        rm -f "$saved_current"
     fi
     if [ -n "$temporary_wrapper" ] && [ -e "$temporary_wrapper" ]; then
         rm -f "$temporary_wrapper"
@@ -574,6 +618,10 @@ on_exit() {
     if [ "$exit_status" -ne 0 ] && [ "$current_stage" -ne 0 ]; then
         status_line FAIL "Stage $current_stage/7: $current_stage_name" >&2
     fi
+    if [ -n "$transaction_lock" ]; then
+        rm -d "$transaction_lock" 2>/dev/null || :
+        rm -d "$data_root/.install-locks" 2>/dev/null || :
+    fi
     exit "$exit_status"
 }
 trap 'on_exit "$?"' 0
@@ -589,7 +637,20 @@ printf '%s\n' \
 
 start_stage 1 prerequisites
 verify_prerequisites || exit 1
-if [ -f "$current_file" ]; then
+acquire_transaction_lock
+if [ "$update_mode" = 1 ]; then
+    [ -n "$expected_version" ] || { printf 'TOOLBOX_EXPECTED_VERSION is required for updates.\n' >&2; exit 1; }
+    if [ ! -f "$current_file" ] || [ ! -f "$wrapper_path" ]; then
+        printf 'An active toolbox installation is required for updates.\n' >&2
+        exit 1
+    fi
+    current_version=$(sed -n '1p' "$current_file")
+    if [ "$current_version" = "$expected_version" ]; then
+        status_line OK "Toolbox $current_version is already current."
+        exit 0
+    fi
+fi
+if [ "$update_mode" != 1 ] && [ -f "$current_file" ]; then
     current_version=$(sed -n '1p' "$current_file")
     status_line INFO "my-toolbox $current_version is already installed. Run tb update to upgrade."
     complete_stage
@@ -619,6 +680,10 @@ case "$version" in *.*.*) ;; *) printf 'Release tag is not a safe three-part ver
 for component in "$major" "$minor" "$patch"; do
     case "$component" in ''|*[!0-9]*|0[0-9]*) printf 'Release tag is not a safe three-part version: %s\n' "$tag" >&2; exit 1 ;; esac
 done
+if [ "$update_mode" = 1 ] && [ "$version" != "$expected_version" ]; then
+    printf 'Latest release %s does not match expected version %s.\n' "$version" "$expected_version" >&2
+    exit 1
+fi
 version_root="$versions_root/$version"
 [ ! -e "$version_root" ] || {
     printf 'Version directory already exists without an active installation: %s\n' "$version_root" >&2
@@ -645,6 +710,7 @@ mkdir -p "$versions_root"
 staging_payload=$(mktemp -d "$versions_root/.install-$version.XXXXXX")
 tar -xzf "$temporary_root/$archive" -C "$staging_payload"
 for required in tb commands.json version.txt \
+    libexec/tb-markdown-reader \
     completions/_tb \
     completions/tb.bash \
     completions/tb.ps1 \
@@ -680,44 +746,65 @@ done
     printf 'Downloaded payload version does not match release %s.\n' "$version" >&2
     exit 1
 }
+staged_reader="$staging_payload/libexec/tb-markdown-reader"
+if [ ! -d "$staging_payload/libexec" ] || [ -L "$staging_payload/libexec" ] ||
+    [ ! -f "$staged_reader" ] || [ -L "$staged_reader" ]; then
+    printf 'Downloaded payload has an unsafe bundled reader path.\n' >&2
+    exit 1
+fi
+chmod 755 "$staged_reader"
+if ! "$staged_reader" --tb-self-check; then
+    printf 'Bundled Markdown reader self-check failed.\n' >&2
+    exit 1
+fi
 complete_stage
 
 start_stage 6 installation
 mkdir -p "$versions_root" "$wrapper_root"
-temporary_wrapper=$(mktemp "$wrapper_root/.tb.XXXXXX")
-{
-    printf '%s\n' '#!/bin/sh'
-    printf '%s\n' 'set -eu'
-    # Wrapper variables must remain literal until the installed wrapper runs.
-    # shellcheck disable=SC2016
-    printf '%s\n' 'data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"'
-    printf '%s\n' 'current='
-    # shellcheck disable=SC2016
-    printf '%s\n' 'IFS= read -r current < "$data_root/current.txt"'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'exec "$data_root/versions/$current/tb" "$@"'
-} > "$temporary_wrapper"
-chmod 755 "$temporary_wrapper"
-if [ -d "$wrapper_path" ]; then
-    printf 'Wrapper path is an existing directory: %s.\n' "$wrapper_path" >&2
-    exit 1
+if [ "$update_mode" != 1 ]; then
+    temporary_wrapper=$(mktemp "$wrapper_root/.tb.XXXXXX")
+    {
+        printf '%s\n' '#!/bin/sh'
+        printf '%s\n' 'set -eu'
+        # Wrapper variables must remain literal until the installed wrapper runs.
+        # shellcheck disable=SC2016
+        printf '%s\n' 'data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"'
+        printf '%s\n' 'current='
+        # shellcheck disable=SC2016
+        printf '%s\n' 'IFS= read -r current < "$data_root/current.txt"'
+        # shellcheck disable=SC2016
+        printf '%s\n' 'exec "$data_root/versions/$current/tb" "$@"'
+    } > "$temporary_wrapper"
+    chmod 755 "$temporary_wrapper"
+    if [ -d "$wrapper_path" ]; then
+        printf 'Wrapper path is an existing directory: %s.\n' "$wrapper_path" >&2
+        exit 1
+    fi
+    if [ -e "$wrapper_path" ] || [ -L "$wrapper_path" ]; then
+        saved_wrapper_candidate=$(mktemp "$wrapper_root/.tb.previous.XXXXXX")
+        rm -f "$saved_wrapper_candidate"
+        mv "$wrapper_path" "$saved_wrapper_candidate"
+        saved_wrapper=$saved_wrapper_candidate
+    fi
 fi
-if [ -e "$wrapper_path" ] || [ -L "$wrapper_path" ]; then
-    saved_wrapper_candidate=$(mktemp "$wrapper_root/.tb.previous.XXXXXX")
-    rm -f "$saved_wrapper_candidate"
-    mv "$wrapper_path" "$saved_wrapper_candidate"
-    saved_wrapper=$saved_wrapper_candidate
-fi
+version_owner=$staging_payload
+printf '%s\n' "$version_owner" > "$staging_payload/.install-owner"
 published_version=1
-mv "$staging_payload" "$version_root"
+mv -T "$staging_payload" "$version_root"
 staging_payload=
-published_wrapper=1
-mv "$temporary_wrapper" "$wrapper_path"
-temporary_wrapper=
+if [ "$update_mode" != 1 ]; then
+    published_wrapper=1
+    mv "$temporary_wrapper" "$wrapper_path"
+    temporary_wrapper=
+fi
 complete_stage
 
 start_stage 7 activation
 activate_completions
+if [ "$update_mode" = 1 ]; then
+    saved_current=$(mktemp "$data_root/.current.previous.XXXXXX")
+    cp -p "$current_file" "$saved_current"
+fi
 temporary_current="$data_root/current.txt.new"
 printf '%s\n' "$version" > "$temporary_current"
 activated=1

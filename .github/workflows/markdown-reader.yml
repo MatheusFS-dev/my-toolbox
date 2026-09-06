@@ -1,0 +1,79 @@
+name: Build markdown reader
+
+on:
+  workflow_call:
+    inputs:
+      toolbox_sha:
+        description: Toolbox commit to build (defaults to the calling workflow commit)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+            rust-target: x86_64-unknown-linux-musl
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            rust-target: aarch64-unknown-linux-musl
+          - platform: windows-amd64
+            runner: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.toolbox_sha || github.sha }}
+      - name: Install Rust target
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustup target add '${{ matrix.rust-target }}'
+      - name: Install MUSL and ELF inspection tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools binutils
+      - name: Provide PE import inspection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install llvm --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM installation failed.' }
+          $LLVMDirectory = Join-Path $env:ProgramFiles 'LLVM/bin'
+          if (-not (Test-Path (Join-Path $LLVMDirectory 'llvm-readobj.exe'))) {
+            throw 'LLVM installation did not provide llvm-readobj.exe.'
+          }
+          $LLVMDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build and verify native Linux reader
+        if: runner.os == 'Linux'
+        env:
+          CC: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          sh scripts/build-markdown-reader.sh '${{ matrix.rust-target }}' 'readers/${{ matrix.platform }}'
+          'readers/${{ matrix.platform }}/libexec/tb-markdown-reader' --tb-self-check
+      - name: Build and verify native Windows reader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ./scripts/build-markdown-reader.ps1 'readers/${{ matrix.platform }}'
+          & './readers/${{ matrix.platform }}/libexec/tb-markdown-reader.exe' --tb-self-check
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged reader self-check failed.' }
+      # upload-artifact does not preserve executable modes. The tar preserves
+      # the exact platform/libexec layout and mode through upload/download.
+      - name: Bundle reader artifact
+        shell: bash
+        run: tar -C readers -cf 'reader-${{ matrix.platform }}.tar' '${{ matrix.platform }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reader-${{ matrix.platform }}
+          path: reader-${{ matrix.platform }}.tar
+          if-no-files-found: error

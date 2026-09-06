@@ -260,68 +260,34 @@ func TestSearchModelScrollsResultsAndKeepsFocusedArticleVisible(t *testing.T) {
 	}
 }
 
-func TestSearchModelOpensReaderAndEscapeRestoresSearchState(t *testing.T) {
-	article := testIndexedArticle("git/reset.md", "Reset Git", []string{"Safety"}, "Keep backups before rewriting history.")
-	model := newSearchModel([]Article{article}, 60, 14)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
-	model = updated.(searchModel)
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	model = updated.(searchModel)
-	if !model.reading || !strings.Contains(model.View().Content, "Reset") || !strings.Contains(model.reader.GetContent(), "Keep backups") {
-		t.Fatalf("reader state = reading %t, view %q", model.reading, model.View().Content)
-	}
-	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	model = updated.(searchModel)
-	if command != nil || model.reading || !model.input.Focused() || model.input.Value() != "g" || len(model.results) != 1 {
-		t.Fatalf("restored state = reading %t, query %q, results %d", model.reading, model.input.Value(), len(model.results))
-	}
-}
-
-func TestSearchReaderScrollsAndRerendersOnResize(t *testing.T) {
-	lines := []string{"# Long Guide"}
-	for index := 0; index < 80; index++ {
-		lines = append(lines, "", "Paragraph with enough words to wrap across a narrow reader viewport and continue well beyond the old seventy-two-column presentation limit.")
-	}
-	article := Article{Category: "test", Title: "Long Guide", RelativePath: "test/long.md", Content: strings.Join(lines, "\n")}
+func TestSearchModelResizesResultsAndKeepsThePresentationWidthCap(t *testing.T) {
+	article := Article{Category: "test", Title: "A guide title long enough to wrap at narrow widths", Content: "Text."}
 	model := newSearchModel([]Article{article}, 40, 10)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
 	model = updated.(searchModel)
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	model = updated.(searchModel)
-	if model.reader.YOffset() == 0 {
-		t.Fatal("page down did not scroll reader")
-	}
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-	model = updated.(searchModel)
-	if !model.reader.AtBottom() {
-		t.Fatal("end did not move reader to bottom")
-	}
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyHome})
-	model = updated.(searchModel)
-	if model.reader.YOffset() != 0 {
-		t.Fatalf("home offset = %d", model.reader.YOffset())
-	}
-	updated, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
-	model = updated.(searchModel)
-	if model.width != maxPresentationWidth || model.reader.Width() != 120 {
-		t.Fatalf("resized width = %d, reader width = %d", model.width, model.reader.Width())
-	}
-	usesWideReader := false
-	for _, line := range strings.Split(ansi.Strip(model.reader.GetContent()), "\n") {
-		if lipgloss.Width(strings.TrimSpace(line)) > maxPresentationWidth {
-			usesWideReader = true
-			break
-		}
-	}
-	if !usesWideReader {
-		t.Fatalf("reader content did not expand beyond %d columns", maxPresentationWidth)
+	if model.width != maxPresentationWidth || model.resultsViewport.Width() != maxPresentationWidth {
+		t.Fatalf("resized search width = %d, viewport width = %d", model.width, model.resultsViewport.Width())
 	}
 	updated, _ = model.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
 	model = updated.(searchModel)
-	for _, line := range strings.Split(model.View().Content, "\n") {
+	for _, line := range strings.Split(model.resultsViewport.View(), "\n") {
 		if lipgloss.Width(line) > 30 {
-			t.Fatalf("reader line width = %d, want at most 30: %q", lipgloss.Width(line), line)
+			t.Fatalf("search line width = %d, want at most 30: %q", lipgloss.Width(line), line)
 		}
+	}
+}
+
+func TestSearchModelEscapeCancelsAndEnterWithoutResultsDoesNothing(t *testing.T) {
+	model := newSearchModel(nil, 50, 10)
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(searchModel)
+	if command != nil || model.resultError() != nil {
+		t.Fatal("Enter without a result changed search")
+	}
+	updated, command = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(searchModel)
+	if command == nil || !errors.Is(model.resultError(), ErrCancelled) {
+		t.Fatal("Escape did not cancel search")
 	}
 }
 

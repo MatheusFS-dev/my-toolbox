@@ -1,0 +1,565 @@
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::{Deserialize, Serialize};
+
+use crate::theme::Theme;
+
+const APP_NAME: &str = "tb-markdown-reader";
+const CONFIG_FILE: &str = "config.toml";
+
+/// Default value for [`Config::mermaid_max_height`].
+///
+/// 30 lines is a comfortable default — large enough to show a typical diagram
+/// without consuming the entire viewport.
+fn default_mermaid_max_height() -> u32 {
+    30
+}
+
+/// Default value for [`Config::use_hybrid_by_default`].
+///
+/// Returns `true` so that lowercase `i` opens hybrid live-preview mode for
+/// new installs.  Users who prefer the old fullscreen edtui behaviour can set
+/// `use_hybrid_by_default = false` in `config.toml` to restore the pre-1.33.0
+/// mapping while regressions are still being filed.
+fn default_use_hybrid_by_default() -> bool {
+    true
+}
+
+/// Default value for [`Config::show_file_tree`].
+///
+/// Returns `true` so existing users keep seeing the file tree at launch.
+fn default_show_file_tree() -> bool {
+    true
+}
+
+/// Which side of the viewer the file-tree panel is rendered on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TreePosition {
+    #[default]
+    Left,
+    Right,
+}
+
+/// Controls how mermaid diagrams are rendered in the viewer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MermaidMode {
+    /// Try image rendering (when graphics are available), then figurehead
+    /// Unicode box-drawing text, then raw source as a last resort.
+    ///
+    /// For diagram types with known image-render issues (e.g. `stateDiagram`),
+    /// figurehead is tried first; the image pipeline is skipped for those types.
+    Auto,
+    /// Always use figurehead Unicode text rendering. Never spawns image tasks.
+    ///
+    /// The default mode. CPU-lighter than `Auto`, works inside tmux and any
+    /// terminal without graphics protocol support.  Existing config files with
+    /// `mermaid_mode = "auto"` keep that setting; only users with no explicit
+    /// `mermaid_mode` in their TOML are affected by this default change.
+    #[default]
+    Text,
+    /// Only use the image pipeline when a graphics protocol is available.
+    ///
+    /// Falls back directly to raw source when graphics are not available —
+    /// figurehead is not tried. Useful when you want images or nothing.
+    Image,
+}
+
+/// Which layered-layout backend to use when rendering text-mode flowchart and
+/// state diagrams via `mermaid-text`.
+///
+/// `mermaid-text` ships two backends. `Sugiyama` (the historical default since
+/// the library's 0.17.0 release) is `ascii-dag`-backed with proper crossing
+/// minimisation and Brandes-Köpf coordinate assignment — it tends to produce
+/// the cleanest layouts for flat dependency graphs. `Native` is the in-house
+/// layered layout that has fuller coverage of subgraph-heavy diagrams,
+/// parallel-edge groups, and nested direction overrides.
+///
+/// `Auto` is a conservative selector that picks `Native` only for the one
+/// shape where Sugiyama is known to render less compactly — a `subgraph`
+/// block with an inner `direction` override — and falls back to `Sugiyama`
+/// for every other diagram.  It is opt-in for now; the plan is to promote it
+/// to the default once it has a release cycle of real-world exercise.
+///
+/// This setting only affects text-mode flowchart and state diagrams; sequence,
+/// pie, ER, mindmap and the various beta diagram types have their own
+/// pipelines and are unaffected. Image-mode rendering (which goes through
+/// `mermaid-rs-renderer`) is also unaffected.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MermaidTextBackend {
+    /// Conservative selector — `Native` for subgraphs with inner `direction`
+    /// overrides, `Sugiyama` everywhere else.
+    Auto,
+    /// `ascii-dag`-backed Sugiyama layout. The historical default.
+    #[default]
+    Sugiyama,
+    /// In-house layered layout with fuller subgraph and parallel-edge coverage.
+    Native,
+}
+
+/// Default value for [`Config::math_max_height`].
+///
+/// 20 lines is generous for a single formula — even a tall matrix or a stacked
+/// fraction rasterises well under it — while bounding the damage a pathological
+/// expression can do to the viewport.
+fn default_math_max_height() -> u32 {
+    20
+}
+
+/// Controls how block-level LaTeX math (`$$…$$`) is rendered in the viewer.
+///
+/// Inline math (`$…$`) is always Unicode: it has to sit on a text baseline
+/// inside a wrapped paragraph, where a terminal image cannot be placed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MathMode {
+    /// Convert to a Unicode approximation and draw it in a bordered `math`
+    /// block. The default, and the only behaviour before 1.35.0 — works in
+    /// every terminal, inside tmux, and costs nothing.
+    #[default]
+    Text,
+    /// Typeset the formula with RaTeX and draw it as a real image when the
+    /// terminal supports a graphics protocol; fall back to `Text` when it does
+    /// not (including inside tmux) or when the formula fails to parse.
+    ///
+    /// This is what makes nested fractions, matrices, and stacked limits keep
+    /// their two-dimensional structure instead of flattening to `((a)/(b))/(c)`.
+    Image,
+}
+
+/// How to render the inline preview for a content-search result.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchPreview {
+    /// Show the full matched line (trimmed).  More readable; may wrap on narrow
+    /// terminals.
+    #[default]
+    FullLine,
+    /// Show an ~80-character window centred on the first match occurrence.
+    /// Compact, uniform row height.
+    Snippet,
+}
+
+/// All persisted user settings.
+///
+/// `#[serde(default)]` on every field ensures that config files written by
+/// older versions of the app (missing newer fields) still parse correctly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub show_line_numbers: bool,
+    /// Whether the file tree is visible when the app starts.
+    ///
+    /// Runtime toggles via `H` do not rewrite this startup default.
+    #[serde(default = "default_show_file_tree")]
+    pub show_file_tree: bool,
+    #[serde(default)]
+    pub tree_position: TreePosition,
+    #[serde(default)]
+    pub search_preview: SearchPreview,
+    /// How mermaid diagrams are rendered. See [`MermaidMode`] for details.
+    #[serde(default)]
+    pub mermaid_mode: MermaidMode,
+    /// Maximum height of a mermaid diagram block in display lines.
+    ///
+    /// Diagrams taller than this are clamped. Tune this if your most common
+    /// diagrams are either clipped or consuming too much viewport space.
+    /// The minimum is always 8 lines regardless of this setting.
+    ///
+    /// There is no UI widget for this field — edit `config.toml` directly.
+    #[serde(default = "default_mermaid_max_height")]
+    pub mermaid_max_height: u32,
+    /// Which layered-layout backend to use when rendering text-mode flowchart
+    /// and state diagrams.  See [`MermaidTextBackend`] for the trade-offs.
+    #[serde(default)]
+    pub mermaid_text_backend: MermaidTextBackend,
+    /// How block-level LaTeX math (`$$…$$`) is rendered. See [`MathMode`].
+    ///
+    /// Defaults to `Text` (Unicode approximation), so upgrading changes
+    /// nothing until you opt in with `math_mode = "image"`.
+    #[serde(default)]
+    pub math_mode: MathMode,
+    /// Maximum height of an image-rendered math block in display lines.
+    ///
+    /// Only consulted when `math_mode = "image"`. There is no UI widget for
+    /// this field — edit `config.toml` directly.
+    #[serde(default = "default_math_max_height")]
+    pub math_max_height: u32,
+    /// When `true` (the default), `i` opens hybrid live-preview mode and `I`
+    /// opens the legacy fullscreen edtui.  Set to `false` to restore the
+    /// pre-1.33.0 behaviour (`i` → fullscreen, `I` → hybrid) as an opt-out
+    /// while regressions are being filed.
+    #[serde(default = "default_use_hybrid_by_default")]
+    pub use_hybrid_by_default: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            theme: Theme::default(),
+            show_line_numbers: false,
+            show_file_tree: default_show_file_tree(),
+            tree_position: TreePosition::default(),
+            search_preview: SearchPreview::default(),
+            mermaid_mode: MermaidMode::default(),
+            mermaid_max_height: default_mermaid_max_height(),
+            mermaid_text_backend: MermaidTextBackend::default(),
+            math_mode: MathMode::default(),
+            math_max_height: default_math_max_height(),
+            use_hybrid_by_default: default_use_hybrid_by_default(),
+        }
+    }
+}
+
+impl Config {
+    /// Load settings from disk, returning defaults on any I/O or parse failure.
+    pub fn load() -> Self {
+        let Some(path) = config_path() else {
+            return Self::default();
+        };
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        toml::from_str(&text).unwrap_or_default()
+    }
+
+    /// Persist settings to disk. Silently swallows any I/O error.
+    pub fn save(&self) {
+        let Some(path) = config_path() else {
+            return;
+        };
+        if let Some(parent) = path.parent()
+            && fs::create_dir_all(parent).is_err()
+        {
+            return;
+        }
+        let Ok(text) = toml::to_string_pretty(self) else {
+            return;
+        };
+        // Write atomically: a partial write (crash, or a concurrent reader) must
+        // never leave a truncated/corrupt config behind. Write to a unique
+        // sibling temp file, then rename — rename is atomic on the same
+        // filesystem, so a reader sees either the old file or the complete new
+        // one, never a tear. The temp name is per-process-and-call unique so
+        // concurrent savers never clobber each other's temp file.
+        static SAVE_SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SAVE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_file_name(format!(".{CONFIG_FILE}.{}.{seq}.tmp", std::process::id()));
+        if fs::write(&tmp, text).is_err() {
+            return;
+        }
+        if fs::rename(&tmp, &path).is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+    }
+
+    /// Return a [`MermaidMode`] label suitable for display (e.g. in the UI).
+    pub fn mermaid_mode_label(mode: MermaidMode) -> &'static str {
+        match mode {
+            MermaidMode::Auto => "Auto",
+            MermaidMode::Text => "Text only",
+            MermaidMode::Image => "Image only",
+        }
+    }
+
+    /// Return a [`MathMode`] label suitable for display (e.g. in the UI).
+    pub fn math_mode_label(mode: MathMode) -> &'static str {
+        match mode {
+            MathMode::Text => "Unicode text (default)",
+            MathMode::Image => "Typeset image (RaTeX)",
+        }
+    }
+
+    /// Return a [`MermaidTextBackend`] label suitable for display (e.g. in the UI).
+    pub fn mermaid_text_backend_label(backend: MermaidTextBackend) -> &'static str {
+        match backend {
+            MermaidTextBackend::Auto => "Backend: Auto (subgraph-aware)",
+            MermaidTextBackend::Sugiyama => "Backend: Sugiyama (default)",
+            MermaidTextBackend::Native => "Backend: Native (subgraph-friendly)",
+        }
+    }
+}
+
+/// Test-only override for the config directory. Set once per test binary so
+/// unit tests never read from — or clobber — the user's real `config.toml`.
+#[cfg(test)]
+static CONFIG_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Redirect config I/O to a throwaway per-process temp directory for the
+/// duration of the test binary. Idempotent: the first call wins, later calls
+/// are no-ops, so every test shares one isolated config dir.
+#[cfg(test)]
+pub(crate) fn use_isolated_test_config() {
+    CONFIG_DIR_OVERRIDE.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("mdr-test-cfg-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    });
+}
+
+fn config_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(dir) = CONFIG_DIR_OVERRIDE.get() {
+        return Some(dir.join(CONFIG_FILE));
+    }
+    let mut path = dirs::config_dir()?;
+    path.push(APP_NAME);
+    path.push(CONFIG_FILE);
+    Some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_uses_toolbox_reader_namespace() {
+        assert_eq!(APP_NAME, "tb-markdown-reader");
+    }
+
+    /// `SearchPreview` must round-trip through TOML with the default value.
+    #[test]
+    fn search_preview_default_round_trips() {
+        let config = Config::default();
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(deserialized.search_preview, SearchPreview::FullLine);
+    }
+
+    /// A TOML file that omits `search_preview` must deserialize to `FullLine`.
+    #[test]
+    fn search_preview_missing_field_defaults_to_full_line() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.search_preview, SearchPreview::default());
+    }
+
+    /// A TOML file without `show_file_tree` must keep the historical visible tree.
+    #[test]
+    fn show_file_tree_missing_field_defaults_to_true() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert!(config.show_file_tree);
+    }
+
+    /// An explicit `show_file_tree = false` must be honoured.
+    #[test]
+    fn show_file_tree_explicit_false_is_honoured() {
+        let toml_str = r#"
+theme = "default"
+show_file_tree = false
+"#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert!(!config.show_file_tree);
+    }
+
+    /// `show_file_tree = false` must survive a TOML round-trip.
+    #[test]
+    fn show_file_tree_false_round_trips() {
+        let config = Config {
+            show_file_tree: false,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert!(!deserialized.show_file_tree);
+    }
+
+    /// `mermaid_max_height` must survive a TOML round-trip with a custom value.
+    #[test]
+    fn mermaid_max_height_config_roundtrip() {
+        let config = Config {
+            mermaid_max_height: 25,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(deserialized.mermaid_max_height, 25);
+    }
+
+    /// A TOML file without `mermaid_max_height` must use the default (30).
+    #[test]
+    fn mermaid_max_height_missing_field_defaults_to_30() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.mermaid_max_height, 30);
+    }
+
+    /// A non-default `MermaidTextBackend` must survive a TOML round-trip.
+    /// Catches: a `Default` impl that masks the deserialised value, a
+    /// serde-rename mismatch, or a missing `#[serde(default)]` attribute.
+    #[test]
+    fn mermaid_text_backend_round_trips() {
+        let config = Config {
+            mermaid_text_backend: MermaidTextBackend::Native,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(
+            deserialized.mermaid_text_backend,
+            MermaidTextBackend::Native
+        );
+    }
+
+    /// A TOML file without `mermaid_text_backend` must default to `Sugiyama`.
+    /// This is the user-visible promise that pre-1.34.48 config files keep
+    /// rendering identically: Sugiyama has been the in-library default since
+    /// `mermaid-text` 0.17.0.
+    #[test]
+    fn mermaid_text_backend_missing_field_defaults_to_sugiyama() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.mermaid_text_backend, MermaidTextBackend::Sugiyama);
+    }
+
+    /// An explicit `mermaid_text_backend = "native"` in TOML must be honoured.
+    /// Pairs with the round-trip test to guarantee the default doesn't mask a
+    /// user-supplied value (a class of bug we have hit before).
+    #[test]
+    fn mermaid_text_backend_explicit_native_is_honoured() {
+        let toml_str = r#"
+theme = "default"
+mermaid_text_backend = "native"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.mermaid_text_backend, MermaidTextBackend::Native);
+    }
+
+    /// An explicit `mermaid_text_backend = "auto"` in TOML must deserialise to
+    /// the `Auto` variant — pins the serde rename and guards against the
+    /// new variant being silently dropped by a missing match arm.
+    #[test]
+    fn mermaid_text_backend_explicit_auto_is_honoured() {
+        let toml_str = r#"
+theme = "default"
+mermaid_text_backend = "auto"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.mermaid_text_backend, MermaidTextBackend::Auto);
+    }
+
+    /// `Auto` must survive a TOML round-trip — the persistence path is the
+    /// usual culprit when a new variant breaks down silently.
+    #[test]
+    fn mermaid_text_backend_auto_round_trips() {
+        let config = Config {
+            mermaid_text_backend: MermaidTextBackend::Auto,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(deserialized.mermaid_text_backend, MermaidTextBackend::Auto);
+    }
+
+    /// Every variant must have a distinct, non-empty label so the popup
+    /// renders a real choice for the user.  Catches a forgotten match arm
+    /// in `mermaid_text_backend_label` (which would not be flagged by the
+    /// compiler since the return type is `&'static str`).
+    #[test]
+    fn mermaid_text_backend_label_covers_all_variants() {
+        let auto = Config::mermaid_text_backend_label(MermaidTextBackend::Auto);
+        let sugiyama = Config::mermaid_text_backend_label(MermaidTextBackend::Sugiyama);
+        let native = Config::mermaid_text_backend_label(MermaidTextBackend::Native);
+        assert!(!auto.is_empty() && !sugiyama.is_empty() && !native.is_empty());
+        assert_ne!(auto, sugiyama);
+        assert_ne!(auto, native);
+        assert_ne!(sugiyama, native);
+    }
+
+    /// `MermaidMode` must round-trip through TOML.
+    #[test]
+    fn mermaid_mode_round_trips() {
+        let config = Config {
+            mermaid_mode: MermaidMode::Text,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(deserialized.mermaid_mode, MermaidMode::Text);
+    }
+
+    /// A TOML file without `mermaid_mode` must default to `Text`.
+    #[test]
+    fn mermaid_mode_missing_field_defaults_to_text() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.mermaid_mode, MermaidMode::Text);
+    }
+
+    /// `use_hybrid_by_default` must survive a TOML round-trip with the value `false`.
+    #[test]
+    fn use_hybrid_by_default_roundtrip_false() {
+        let config = Config {
+            use_hybrid_by_default: false,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert!(!deserialized.use_hybrid_by_default);
+    }
+
+    /// A TOML file without `use_hybrid_by_default` must default to `true`.
+    #[test]
+    fn use_hybrid_by_default_missing_field_defaults_to_true() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert!(config.use_hybrid_by_default);
+    }
+
+    /// The default must be `Text`, so an upgrade does not silently switch a
+    /// user's documents to the image pipeline.
+    #[test]
+    fn math_mode_missing_field_defaults_to_text() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.math_mode, MathMode::Text);
+    }
+
+    /// An explicit opt-in must be honoured and must survive a round-trip —
+    /// the usual place a new enum variant breaks down silently.
+    #[test]
+    fn math_mode_explicit_image_is_honoured_and_round_trips() {
+        let toml_str = "theme = \"default\"\nmath_mode = \"image\"\n";
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.math_mode, MathMode::Image);
+
+        let serialized = toml::to_string_pretty(&config).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(deserialized.math_mode, MathMode::Image);
+    }
+
+    /// `math_max_height` must default to 20 and survive a custom value.
+    #[test]
+    fn math_max_height_defaults_and_round_trips() {
+        let toml_str = r#"theme = "default""#;
+        let config: Config = toml::from_str(toml_str).expect("deserialization failed");
+        assert_eq!(config.math_max_height, 20);
+
+        let custom = Config {
+            math_max_height: 12,
+            ..Config::default()
+        };
+        let serialized = toml::to_string_pretty(&custom).expect("serialization failed");
+        let deserialized: Config = toml::from_str(&serialized).expect("deserialization failed");
+        assert_eq!(deserialized.math_max_height, 12);
+    }
+
+    /// Both variants need a distinct, non-empty label or the settings popup
+    /// renders an unusable choice. The compiler cannot catch a missing arm
+    /// here because the return type is `&'static str`.
+    #[test]
+    fn math_mode_label_covers_all_variants() {
+        let text = Config::math_mode_label(MathMode::Text);
+        let image = Config::math_mode_label(MathMode::Image);
+        assert!(!text.is_empty() && !image.is_empty());
+        assert_ne!(text, image);
+    }
+
+}
