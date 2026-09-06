@@ -53,6 +53,37 @@ func TestLoadArticlesSortsDeterministicallyByCategoryTitleAndPath(t *testing.T) 
 	}
 }
 
+func TestLoadArticlesRecordsAbsoluteCanonicalSourcePath(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	content := "# Original\r\n\r\nRaw **Markdown**.\n"
+	writeTestArticle(t, root, "articles/git/guide.md", content)
+	if err := os.Symlink(filepath.Join(root, "articles", "git", "guide.md"), filepath.Join(root, "articles", "git", "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	articles, err := loadArticles("articles", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(articles) != 2 {
+		t.Fatalf("loaded %d articles, want the source and its symlink", len(articles))
+	}
+	want, err := filepath.EvalSymlinks(filepath.Join(root, "articles", "git", "guide.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, article := range articles {
+		if !filepath.IsAbs(article.SourcePath) || article.SourcePath != want {
+			t.Fatalf("source path = %q, want canonical absolute path %q", article.SourcePath, want)
+		}
+		loaded, err := os.ReadFile(article.SourcePath)
+		if err != nil || string(loaded) != content || article.Content != content {
+			t.Fatalf("source does not identify loaded Markdown: content=%q error=%v", loaded, err)
+		}
+	}
+}
+
 func TestLoadArticlesWarnsAndSkipsUnreadableMarkdown(t *testing.T) {
 	root := t.TempDir()
 	writeTestArticle(t, root, "git/readable.md", "# Readable\n\nText.\n")
