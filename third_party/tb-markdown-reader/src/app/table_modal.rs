@@ -78,9 +78,11 @@ impl App {
             return;
         };
 
-        // The content inner rect (inside the 1-cell border).
-        let inner_x = viewer_rect.x + 1;
-        let inner_y = viewer_rect.y + 1;
+        // Normal mode draws a one-cell viewer border; toolbox embedded mode
+        // uses the supplied rectangle directly.
+        let border = u16::from(self.mode != super::AppMode::TbEmbedded);
+        let inner_x = viewer_rect.x + border;
+        let inner_y = viewer_rect.y + border;
 
         if row < inner_y || col < inner_x {
             return;

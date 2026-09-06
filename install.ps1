@@ -44,6 +44,7 @@ $TemporaryRoot = $null
 $TemporaryCurrent = $null
 $TemporaryWrapper = $null
 $StagingPayload = $null
+$TransactionLock = $null
 $CurrentStage = 0
 $CurrentStageName = ''
 $PublishedVersion = $false
@@ -686,6 +687,15 @@ try {
     if ($PrerequisiteFailures.Count -gt 0) {
         throw ($PrerequisiteFailures -join [Environment]::NewLine)
     }
+    New-Item -ItemType Directory -Force -Path $DataRoot | Out-Null
+    try {
+        # The kernel closes and deletes this exclusive handle after a crash.
+        $TransactionLock = [IO.FileStream]::new((Join-Path $DataRoot '.install.lock'),
+            [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None,
+            1, [IO.FileOptions]::DeleteOnClose)
+    } catch [IO.IOException] {
+        throw 'Another toolbox installer is running; retry when it finishes.'
+    }
     if ($UpdateMode) {
         if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
             throw 'TOOLBOX_EXPECTED_VERSION is required for updates.'
@@ -821,8 +831,10 @@ try {
             $SavedWrapper = $SavedWrapperCandidate
         }
     }
+    # Directory.Move is an atomic rename that rejects an existing destination.
+    # Ownership is recorded only after that rename succeeds.
+    [IO.Directory]::Move($StagingPayload, $VersionRoot)
     $PublishedVersion = $true
-    Move-Item -LiteralPath $StagingPayload -Destination $VersionRoot
     $StagingPayload = $null
     if (-not $UpdateMode) {
         $PublishedWrapper = $true
@@ -854,6 +866,7 @@ try {
     Write-Status -Kind FAIL -Message "Stage $CurrentStage/7: $CurrentStageName"
     throw "$Failure. $($_.Exception.Message)"
 } finally {
+    try {
     if (-not $InstallSucceeded) {
         foreach ($ProfileState in $PublishedProfiles) {
             if ($ProfileState.Existed) {
@@ -915,5 +928,8 @@ try {
     }
     if ($null -ne $TemporaryRoot -and (Test-Path -LiteralPath $TemporaryRoot)) {
         Remove-Item -LiteralPath $TemporaryRoot -Recurse -Force
+    }
+    } finally {
+        if ($null -ne $TransactionLock) { $TransactionLock.Dispose() }
     }
 }

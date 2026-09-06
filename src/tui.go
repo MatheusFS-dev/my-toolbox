@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -31,7 +32,11 @@ func (ui HuhUI) Search(articles []Article) error {
 	run := ui.runSearch
 	if run == nil {
 		run = func(model tea.Model) (tea.Model, error) {
-			return tea.NewProgram(model).Run()
+			output := ui.stderr
+			if output == nil {
+				output = os.Stderr
+			}
+			return tea.NewProgram(model, tea.WithOutput(output)).Run()
 		}
 	}
 	finalModel, err := run(newSearchModel(articles, maxPresentationWidth, 24))

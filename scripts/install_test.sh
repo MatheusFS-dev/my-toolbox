@@ -24,6 +24,10 @@ printf '%s\n' '#!/bin/sh' \
     '  cmp "$HOME/.local/bin/tb" "$UPDATE_WRAPPER_BEFORE" || exit 95' \
     '  [ ! -e "$UPDATE_ACTIVE_ROOT/versions/0.1.5" ] || exit 96' \
     'fi' \
+    'if [ -n "${READER_READY_FILE:-}" ]; then' \
+    '  : > "$READER_READY_FILE"' \
+    '  while [ ! -e "$READER_RELEASE_FILE" ]; do sleep 0.02; done' \
+    'fi' \
     'exit "${READER_EXIT_CODE:-0}"' > "$test_root/payload/libexec/tb-markdown-reader"
 # Extraction must repair an archive whose reader is not executable.
 chmod 600 "$test_root/payload/libexec/tb-markdown-reader"
@@ -79,6 +83,8 @@ esac
 SH
 cat > "$test_root/bin/mv" <<'SH'
 #!/bin/sh
+move_option=
+if [ "$1" = -T ]; then move_option=-T; shift; fi
 if [ "${FAIL_AFTER_CURRENT_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
     case "$1" in
         */current.txt.new)
@@ -96,13 +102,22 @@ fi
 if [ "${FAIL_VERSION_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
     case "$2" in
         */versions/0.1.5)
-            mkdir -p "$2"
-            printf 'partial\n' > "$2/partial"
+            /bin/mv ${move_option:+"$move_option"} "$@" || exit 1
             exit 1
             ;;
     esac
 fi
-exec /bin/mv "$@"
+if [ "${FOREIGN_VERSION_MOVE:-0}" -eq 1 ] && [ "$#" -eq 2 ]; then
+    case "$2" in
+        */versions/0.1.5)
+            mkdir -p "$2"
+            cp "$2/../0.1.4/tb" "$2/tb"
+            printf '0.1.5\n' > "$2/../../current.txt"
+            exit 1
+            ;;
+    esac
+fi
+exec /bin/mv ${move_option:+"$move_option"} "$@"
 SH
 chmod 755 "$test_root/bin/uname" "$test_root/bin/curl" "$test_root/bin/mv"
 
@@ -259,6 +274,66 @@ for update_case in failed missing mismatch missing-expected version-move current
         exit 1
     fi
 done
+
+python3 - "$test_root" "$repository_root" "$reader_home" <<'PY'
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+test_root, repository, installed_home = map(Path, sys.argv[1:])
+for scenario in ("concurrent", "crashed", "foreign"):
+    case_home = test_root / ("ownership-" + scenario)
+    shutil.copytree(installed_home, case_home)
+    for profile in (".bashrc", ".zshrc"):
+        path = case_home / profile
+        path.write_text(path.read_text().replace(str(installed_home), str(case_home)))
+    data = case_home / ".local/share/my-toolbox"
+    (data / "versions/0.1.5").rename(data / "versions/0.1.4")
+    (data / "versions/0.1.4/version.txt").write_text("0.1.4\n")
+    (data / "current.txt").write_text("0.1.4\n")
+    environment = dict(os.environ, HOME=str(case_home), ZDOTDIR=str(case_home),
+                       TMPDIR=str(case_home), TOOLBOX_UPDATE="1",
+                       TOOLBOX_EXPECTED_VERSION="0.1.5", FIXTURE_DOWNLOADS=str(test_root / "downloads"),
+                       PATH=str(test_root / "bin") + ":/usr/bin:/bin")
+    command = ["/bin/sh", str(repository / "install.sh")]
+    if scenario == "foreign":
+        result = subprocess.run(command, env=dict(environment, FOREIGN_VERSION_MOVE="1"), capture_output=True, timeout=20)
+        assert result.returncode != 0, "Colliding publication unexpectedly succeeded"
+        assert (data / "versions/0.1.5/tb").is_file(), "Rollback deleted another transaction's active binary"
+    else:
+        ready = test_root / (scenario + ".ready")
+        release = test_root / (scenario + ".release")
+        with (test_root / (scenario + ".out")).open("wb") as output:
+            first = subprocess.Popen(command, env=dict(environment, READER_READY_FILE=str(ready),
+                                                       READER_RELEASE_FILE=str(release)), stdout=output, stderr=output)
+            try:
+                deadline = time.monotonic() + 20
+                while not ready.exists() and first.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                assert ready.exists(), "First updater did not reach staged validation"
+                if scenario == "crashed":
+                    first.kill()
+                    first.wait(timeout=10)
+                second_log = test_root / (scenario + ".second-reader")
+                second = subprocess.run(command, env=dict(environment, READER_CHECK_LOG=str(second_log)),
+                                        capture_output=True, timeout=20)
+                if scenario == "concurrent":
+                    assert second.returncode != 0 and not second_log.exists(), "Concurrent updater entered the locked transaction"
+                    release.touch()
+                    assert first.wait(timeout=20) == 0, "The active updater failed after a rejected concurrent transaction"
+                else:
+                    assert second.returncode == 0, "A crashed updater permanently blocked later updates: " + second.stderr.decode()
+            finally:
+                release.touch()
+                if first.poll() is None:
+                    first.terminate()
+                first.wait(timeout=10)
+    current = (data / "current.txt").read_text().strip()
+    assert current == "0.1.5" and (data / "versions" / current / "tb").is_file(), "Current points to a missing binary"
+PY
 
 make_prerequisite_bin() {
     destination=$1

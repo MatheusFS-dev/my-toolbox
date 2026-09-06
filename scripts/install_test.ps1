@@ -248,7 +248,7 @@ try {
     }
     $global:ToolboxInstallerFixtureArchive = $Archive
 
-    foreach ($UpdateCase in @('failed', 'missing', 'mismatch', 'missing-expected', 'completion', 'status', 'current-locked', 'same', 'success')) {
+    foreach ($UpdateCase in @('failed', 'missing', 'mismatch', 'missing-expected', 'completion', 'status', 'current-locked', 'same', 'success', 'foreign-version')) {
         $CaseRoot = Join-Path $TestRoot "update-$UpdateCase"
         $env:LOCALAPPDATA = Join-Path $CaseRoot 'localappdata'
         $global:ToolboxInstallerTestDocuments = Join-Path $CaseRoot 'Documents'
@@ -299,6 +299,10 @@ try {
                 }
                 $UpdateChecks.Add($ReaderPath)
                 if ($UpdateCase -eq 'failed') { return 23 }
+                if ($UpdateCase -eq 'foreign-version') {
+                    Copy-Item -LiteralPath $Payload -Destination (Join-Path $Data 'versions\0.1.5') -Recurse
+                    Set-Content -LiteralPath (Join-Path $Data 'current.txt') -Value '0.1.5' -Encoding ascii
+                }
                 return 0
             } | Out-Null
         } catch {
@@ -306,7 +310,13 @@ try {
         } finally {
             if ($null -ne $CurrentLock) { $CurrentLock.Dispose() }
         }
-        if ($UpdateCase -in @('success', 'same')) {
+        if ($UpdateCase -eq 'foreign-version') {
+            if (-not $Failure.Contains('[FAIL] Stage 6/7:') -or
+                -not (Test-Path -LiteralPath (Join-Path $Data 'versions\0.1.5\tb.exe')) -or
+                (Get-Content -LiteralPath (Join-Path $Data 'current.txt') -Raw).Trim() -cne '0.1.5') {
+                throw "Rollback deleted another transaction's active binary: $Failure"
+            }
+        } elseif ($UpdateCase -in @('success', 'same')) {
             if ($Failure.Length -gt 0) { throw "Update $UpdateCase failed: $Failure" }
             if ($UpdateCase -eq 'same') {
                 if ((Get-InstallerSnapshot $CaseRoot) -cne $Before -or $UpdateChecks.Count -ne 0) {
@@ -329,6 +339,70 @@ try {
             @(Get-ChildItem -LiteralPath (Join-Path $Data 'versions') -Force -Filter '.install-*').Count -ne 0) {
             throw 'Update changed PATH or leaked staging files.'
         }
+    }
+    $UpdateCase = ''
+    $ConcurrentRoot = Join-Path $TestRoot 'concurrent-update'
+    $env:LOCALAPPDATA = Join-Path $ConcurrentRoot 'localappdata'
+    $Data = Join-Path $env:LOCALAPPDATA 'my-toolbox'
+    $OldVersion = Join-Path $Data 'versions\0.1.4'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OldVersion), (Join-Path $Data 'bin'), (Join-Path $ConcurrentRoot 'Documents') | Out-Null
+    Copy-Item -LiteralPath $Payload -Destination $OldVersion -Recurse
+    Set-Content -LiteralPath (Join-Path $Data 'current.txt') -Value '0.1.4' -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $Data 'bin\tb.cmd') -Value 'old wrapper' -Encoding ascii
+    $RunConcurrentInstaller = {
+        param([string]$Installer, [string]$CaseRoot, [string]$FixtureArchive, [string]$Name)
+        $ErrorActionPreference = 'Stop'
+        $env:LOCALAPPDATA = Join-Path $CaseRoot 'localappdata'
+        $env:TOOLBOX_UPDATE = '1'
+        $env:TOOLBOX_EXPECTED_VERSION = '0.1.5'
+        function Invoke-RestMethod { param([string]$Uri) return [pscustomobject]@{ tag_name = 'v0.1.5' } }
+        function Invoke-WebRequest {
+            param([string]$Uri, [string]$OutFile)
+            $Source = if ($Uri.EndsWith('.sha256')) { "$FixtureArchive.sha256" } else { $FixtureArchive }
+            Copy-Item -LiteralPath $Source -Destination $OutFile
+        }
+        try {
+            & $Installer -UserPathReader { '' } -UserPathWriter { throw 'Update changed user PATH.' } `
+                -DocumentsPathReader { Join-Path $CaseRoot 'Documents' } -ReaderValidator {
+                    param([string]$ReaderPath, [string[]]$ReaderArguments)
+                    Set-Content -LiteralPath (Join-Path $CaseRoot "$Name.reader") -Value $ReaderPath
+                    if ($Name -eq 'first') {
+                        while (-not (Test-Path -LiteralPath (Join-Path $CaseRoot 'release'))) { Start-Sleep -Milliseconds 20 }
+                    }
+                    return 0
+                } | Out-Null
+            [pscustomobject]@{ Succeeded = $true; Failure = '' }
+        } catch {
+            [pscustomobject]@{ Succeeded = $false; Failure = $_.Exception.Message }
+        }
+    }
+    $First = Start-Job -ScriptBlock $RunConcurrentInstaller -ArgumentList $Installer, $ConcurrentRoot, $Archive, 'first'
+    $Second = $null
+    try {
+        $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path -LiteralPath (Join-Path $ConcurrentRoot 'first.reader')) -and
+            $First.State -eq 'Running' -and [DateTime]::UtcNow -lt $Deadline) { Start-Sleep -Milliseconds 20 }
+        if (-not (Test-Path -LiteralPath (Join-Path $ConcurrentRoot 'first.reader'))) {
+            throw "First concurrent updater did not reach validation: $(Receive-Job $First)"
+        }
+        $Second = Start-Job -ScriptBlock $RunConcurrentInstaller -ArgumentList $Installer, $ConcurrentRoot, $Archive, 'second'
+        if ($null -eq (Wait-Job $Second -Timeout 30)) { throw 'Concurrent updater did not fail promptly.' }
+        $SecondResult = Receive-Job $Second
+        if ($SecondResult.Succeeded -or (Test-Path -LiteralPath (Join-Path $ConcurrentRoot 'second.reader'))) {
+            throw 'Concurrent updater entered the locked transaction.'
+        }
+        Set-Content -LiteralPath (Join-Path $ConcurrentRoot 'release') -Value ''
+        if ($null -eq (Wait-Job $First -Timeout 30)) { throw 'Active updater did not finish.' }
+        $FirstResult = Receive-Job $First
+        $Current = (Get-Content -LiteralPath (Join-Path $Data 'current.txt') -Raw).Trim()
+        if (-not $FirstResult.Succeeded -or $Current -cne '0.1.5' -or
+            -not (Test-Path -LiteralPath (Join-Path $Data "versions\$Current\tb.exe"))) {
+            throw "Concurrent update left current pointing to a missing binary: $($FirstResult.Failure)"
+        }
+    } finally {
+        Set-Content -LiteralPath (Join-Path $ConcurrentRoot 'release') -Value ''
+        @($First, $Second) | Where-Object { $null -ne $_ } | Stop-Job
+        @($First, $Second) | Where-Object { $null -ne $_ } | Remove-Job
     }
     $env:TOOLBOX_UPDATE = $null
     $env:TOOLBOX_EXPECTED_VERSION = $null

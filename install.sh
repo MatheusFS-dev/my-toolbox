@@ -22,9 +22,11 @@ temporary_root=
 temporary_current=
 temporary_wrapper=
 staging_payload=
+transaction_lock=
 current_stage=0
 current_stage_name=
 published_version=0
+version_owner=
 published_wrapper=0
 activated=0
 saved_current=
@@ -78,6 +80,31 @@ start_stage() {
 
 complete_stage() {
     status_line OK "Stage $current_stage/7: $current_stage_name"
+}
+
+acquire_transaction_lock() {
+    lock_root="$data_root/.install-locks"
+    mkdir -p "$lock_root"
+    transaction_lock="$lock_root/$$"
+    # A PID-specific record is published before inspecting competitors. At
+    # least one of two overlapping entrants must therefore observe the other.
+    # Records left by killed processes can be removed without touching a new
+    # owner's record, unlike reclaiming one shared lock directory.
+    rm -d "$transaction_lock" 2>/dev/null || :
+    mkdir "$transaction_lock"
+    for contender in "$lock_root"/*; do
+        [ -d "$contender" ] || continue
+        owner=${contender##*/}
+        [ "$owner" != "$$" ] || continue
+        case "$owner" in
+            ''|*[!0-9]*) printf 'Unrecognized installer lock: %s\n' "$contender" >&2; return 1 ;;
+        esac
+        if kill -0 "$owner" 2>/dev/null || [ -d "/proc/$owner" ]; then
+            printf 'Another toolbox installer is running (PID %s); retry when it finishes.\n' "$owner" >&2
+            return 1
+        fi
+        rm -d "$contender" 2>/dev/null || :
+    done
 }
 
 inventory_required_commands() {
@@ -559,9 +586,13 @@ on_exit() {
         elif [ -n "$saved_wrapper" ] && [ -e "$saved_wrapper" ]; then
             mv "$saved_wrapper" "$wrapper_path"
         fi
-        if [ "$published_version" -eq 1 ]; then
+        if [ "$published_version" -eq 1 ] && [ -f "$version_root/.install-owner" ] &&
+            [ "$(sed -n '1p' "$version_root/.install-owner")" = "$version_owner" ]; then
             rm -rf "$version_root"
         fi
+    fi
+    if [ "$exit_status" -eq 0 ] && [ "$published_version" -eq 1 ]; then
+        rm -f "$version_root/.install-owner"
     fi
     if [ -n "$temporary_current" ] && [ -e "$temporary_current" ]; then
         rm -f "$temporary_current"
@@ -587,6 +618,10 @@ on_exit() {
     if [ "$exit_status" -ne 0 ] && [ "$current_stage" -ne 0 ]; then
         status_line FAIL "Stage $current_stage/7: $current_stage_name" >&2
     fi
+    if [ -n "$transaction_lock" ]; then
+        rm -d "$transaction_lock" 2>/dev/null || :
+        rm -d "$data_root/.install-locks" 2>/dev/null || :
+    fi
     exit "$exit_status"
 }
 trap 'on_exit "$?"' 0
@@ -602,6 +637,7 @@ printf '%s\n' \
 
 start_stage 1 prerequisites
 verify_prerequisites || exit 1
+acquire_transaction_lock
 if [ "$update_mode" = 1 ]; then
     [ -n "$expected_version" ] || { printf 'TOOLBOX_EXPECTED_VERSION is required for updates.\n' >&2; exit 1; }
     if [ ! -f "$current_file" ] || [ ! -f "$wrapper_path" ]; then
@@ -751,8 +787,10 @@ if [ "$update_mode" != 1 ]; then
         saved_wrapper=$saved_wrapper_candidate
     fi
 fi
+version_owner=$staging_payload
+printf '%s\n' "$version_owner" > "$staging_payload/.install-owner"
 published_version=1
-mv "$staging_payload" "$version_root"
+mv -T "$staging_payload" "$version_root"
 staging_payload=
 if [ "$update_mode" != 1 ]; then
     published_wrapper=1

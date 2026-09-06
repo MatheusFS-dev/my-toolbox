@@ -286,6 +286,17 @@ fn toolbox_embedded_initialization_is_isolated_and_prerenders_one_document() {
 }
 
 #[test]
+fn toolbox_embedded_link_click_uses_borderless_viewer_coordinates() {
+    let mut app = App::new_embedded(
+        PathBuf::from("/toolbox/links.md"),
+        "[jump](#target)\n\n# Target\n".to_string(),
+    );
+    let viewer = ratatui::layout::Rect::new(0, 0, 40, 9);
+    app.try_follow_link_click(viewer, 0, 0);
+    assert!(app.tabs.active_tab().unwrap().view.cursor_line > 0);
+}
+
+#[test]
 fn toolbox_embedded_layout_has_only_viewer_and_exact_footer() {
     let mut app = embedded_app();
     let backend = ratatui::backend::TestBackend::new(120, 24);

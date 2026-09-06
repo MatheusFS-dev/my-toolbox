@@ -147,7 +147,7 @@ for platform in linux-amd64 linux-arm64; do
         printf '%s contains reader sources or build products.\n' "$archive" >&2
         exit 1
     fi
-    for required_entry in tb libexec/ libexec/tb-markdown-reader commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
+    for required_entry in tb libexec/ libexec/tb-markdown-reader libexec/tb-markdown-reader-LICENSE commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
         if ! printf '%s\n' "$entries" | grep -Fx "$required_entry" >/dev/null; then
             printf '%s is missing %s.\n' "$archive" "$required_entry" >&2
             exit 1
@@ -160,6 +160,8 @@ for platform in linux-amd64 linux-arm64; do
         printf '%s contains an invalid or non-executable reader.\n' "$archive" >&2
         exit 1
     fi
+    tar -xOf "$archive" libexec/tb-markdown-reader-LICENSE |
+        cmp "$repository_root/third_party/tb-markdown-reader/LICENSE" -
     "$extracted_reader" --tb-self-check
     for tomli_asset in $tomli_assets; do
         if ! printf '%s\n' "$entries" | grep -Fx "$tomli_asset" >/dev/null; then
@@ -196,7 +198,7 @@ if printf '%s\n' "$windows_entries" | grep -E '(^|/)(third_party|target)/|(^|/)C
     printf 'Windows release contains reader sources or build products.\n' >&2
     exit 1
 fi
-for required_entry in tb.exe libexec/ libexec/tb-markdown-reader.exe commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
+for required_entry in tb.exe libexec/ libexec/tb-markdown-reader.exe libexec/tb-markdown-reader-LICENSE commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ version.txt; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$required_entry" >/dev/null; then
         printf '%s is missing %s.\n' "$windows_archive" "$required_entry" >&2
         exit 1
@@ -204,6 +206,8 @@ for required_entry in tb.exe libexec/ libexec/tb-markdown-reader.exe commands.js
 done
 unzip -p "$windows_archive" libexec/tb-markdown-reader.exe > "$temporary_root/windows-reader"
 cmp "$reader_directory/windows-amd64/libexec/tb-markdown-reader.exe" "$temporary_root/windows-reader"
+unzip -p "$windows_archive" libexec/tb-markdown-reader-LICENSE |
+    cmp "$repository_root/third_party/tb-markdown-reader/LICENSE" -
 for tomli_asset in $tomli_assets; do
     if ! printf '%s\n' "$windows_entries" | grep -Fx "$tomli_asset" >/dev/null; then
         printf '%s is missing required Tomli asset %s.\n' \

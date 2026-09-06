@@ -74,6 +74,8 @@ build_payload() {
     reader_name=tb-markdown-reader
     if [ "$goos" = windows ]; then reader_name=tb-markdown-reader.exe; fi
     cp -p "$reader_directory/$platform/libexec/$reader_name" "$payload/libexec/$reader_name"
+    cp "$repository_root/third_party/tb-markdown-reader/LICENSE" \
+        "$payload/libexec/tb-markdown-reader-LICENSE"
     cp "$repository_root/commands.json" "$payload/commands.json"
     cp -R "$repository_root/completions" "$payload/completions"
     cp -R "$repository_root/packages" "$payload/packages"
