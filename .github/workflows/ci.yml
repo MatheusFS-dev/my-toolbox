@@ -9,6 +9,9 @@ permissions:
   contents: read
 
 jobs:
+  markdown-reader:
+    uses: ./.github/workflows/markdown-reader.yml
+
   test:
     strategy:
       fail-fast: false
@@ -61,7 +64,7 @@ jobs:
         run: |
           $PowerShellFiles = @(
             Get-ChildItem packages/scripts -Recurse -Filter *.ps1
-            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1, scripts/terminal-hotkey_test.ps1, scripts/wsl-shift-enter_test.ps1
+            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1, scripts/terminal-hotkey_test.ps1, scripts/wsl-shift-enter_test.ps1, scripts/build-markdown-reader.ps1
           )
           $PowerShellFiles | ForEach-Object {
             $Errors = $null
@@ -77,7 +80,7 @@ jobs:
       - if: runner.os == 'Windows'
         shell: powershell
         run: |
-          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1', 'scripts/terminal-hotkey_test.ps1', 'scripts/wsl-shift-enter_test.ps1')) {
+          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1', 'scripts/terminal-hotkey_test.ps1', 'scripts/wsl-shift-enter_test.ps1', 'scripts/build-markdown-reader.ps1')) {
             $Errors = $null
             [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $Path), [ref]$null, [ref]$Errors)
             if ($Errors.Count -gt 0) {
@@ -108,9 +111,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y zsh
       - run: sh scripts/next-release-version_test.sh
       - run: sh scripts/build-release_test.sh
+      - run: sh scripts/build-markdown-reader_test.sh
       - run: sh scripts/install_test.sh
       - run: sh scripts/completion_test.sh
       - run: bash scripts/terminal-setup_test.sh
       - run: bash -n completions/tb.bash
       - run: zsh -n completions/_tb
-      - run: shellcheck install.sh completions/tb.bash scripts/build-release.sh scripts/build-release_test.sh scripts/completion_test.sh scripts/install_test.sh scripts/terminal-setup_test.sh scripts/testdata/go
+      - run: shellcheck install.sh completions/tb.bash scripts/build-release.sh scripts/build-release_test.sh scripts/build-markdown-reader.sh scripts/build-markdown-reader_test.sh scripts/completion_test.sh scripts/install_test.sh scripts/terminal-setup_test.sh scripts/testdata/go scripts/testdata/reader scripts/testdata/reader-build/cargo scripts/testdata/reader-build/readelf

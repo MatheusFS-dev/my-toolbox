@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+if [ -n "${TB_TEST_GO_CALL_LOG:-}" ]; then
+    printf 'go build\n' >> "$TB_TEST_GO_CALL_LOG"
+fi
+
 output=
 while [ "$#" -gt 0 ]; do
     case "$1" in

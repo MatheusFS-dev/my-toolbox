@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+test -f "$2"
+case "$1" in
+    -lW)
+        printf 'Program Headers:\n'
+        if [ "${TB_TEST_ELF_MODE:-}" = interp ]; then
+            printf '  INTERP 0x000000 0x000000 0x000000 0x000000 0x000000 R 0x1\n'
+        fi
+        ;;
+    -dW)
+        if [ "${TB_TEST_ELF_MODE:-}" = needed ]; then
+            printf ' 0x0000000000000001 (NEEDED) Shared library: [libc.so.6]\n'
+        else
+            printf 'There is no dynamic section in this file.\n'
+        fi
+        ;;
+    *) exit 1 ;;
+esac
+if [ "${TB_TEST_ELF_MODE:-}" = failed ]; then exit 1; fi
