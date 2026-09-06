@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'build-markdown-reader-checks.ps1')
 
 if ($env:OS -ne 'Windows_NT' -or [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE') -ne 'AMD64') {
     throw 'Reader builds require a native x64 Windows host.'
@@ -32,13 +33,10 @@ if ($null -eq $Inspector) {
 }
 
 $PreviousRustFlags = $env:RUSTFLAGS
-$PreviousEncodedRustFlags = $env:CARGO_ENCODED_RUSTFLAGS
 try {
     # Encoded flags take precedence over RUSTFLAGS; reject this override so the
     # requested static CRT setting cannot be silently ignored.
-    if (-not [string]::IsNullOrEmpty($PreviousEncodedRustFlags)) {
-        throw 'Unset CARGO_ENCODED_RUSTFLAGS before building the reader.'
-    }
+    Assert-ReaderRustFlagsEnvironment
     $env:RUSTFLAGS = "$PreviousRustFlags -C target-feature=+crt-static".Trim()
     & cargo build --locked --release --target x86_64-pc-windows-msvc --manifest-path $ManifestPath --target-dir $TargetDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Reader Cargo build failed.' }
@@ -56,15 +54,9 @@ if ($UseLLVM) {
     $Imports = & $Inspector.Source /nologo /dependents $Reader 2>&1
 }
 if ($LASTEXITCODE -ne 0) { throw "PE import inspection failed: $Imports" }
-$ImportText = $Imports -join "`n"
-if ($ImportText -notmatch '(?im)\b[\w.-]+\.dll\b') {
-    throw 'PE import inspection returned no DLL names.'
-}
 # Static CRT binaries may still import kernel32, user32, and other Windows API
 # libraries. Only dynamically linked Microsoft C/C++ runtime libraries fail.
-if ($ImportText -match '(?i)\b(?:api-ms-win-crt-[\w.-]+|ucrtbase(?:d)?|msvcr[\w.-]*|msvcp[\w.-]*|vcruntime[\w.-]*|concrt[\w.-]*|vcomp[\w.-]*|vccorlib[\w.-]*)\.dll\b') {
-    throw "Reader imports a dynamic VC/UCRT runtime DLL: $($Matches[0])"
-}
+Assert-ReaderStaticRuntimeImports ($Imports -join "`n")
 & $Reader --tb-self-check
 if ($LASTEXITCODE -ne 0) { throw 'Reader native self-check failed.' }
 $LibexecDirectory = Join-Path $OutputDirectory 'libexec'
