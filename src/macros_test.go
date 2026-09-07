@@ -47,6 +47,20 @@ func TestMacroSearchAndModalActions(t *testing.T) {
 	}
 }
 
+func TestMacroBrowserStylesFocusedTitleBlue(t *testing.T) {
+	model := newMacroModel([]Macro{
+		{Subpackage: "autohotkey", Title: "Focused macro"},
+		{Subpackage: "autohotkey", Title: "Other macro"},
+	}, true, 72, 24)
+	view := model.View().Content
+	if !strings.Contains(view, presentationStyle("Focused macro", ansiBlue, true)) {
+		t.Fatalf("focused title is not blue: %q", view)
+	}
+	if strings.Contains(view, presentationStyle("Other macro", ansiBlue, true)) {
+		t.Fatalf("unfocused title is blue: %q", view)
+	}
+}
+
 func TestMacroModalDisablesRunOnLinuxARM64(t *testing.T) {
 	model := newMacroModel([]Macro{{Subpackage: "autohotkey", Title: "X"}}, false, 30, 8)
 	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

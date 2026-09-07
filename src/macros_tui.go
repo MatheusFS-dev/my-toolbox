@@ -178,15 +178,17 @@ func (model *macroModel) rebuild() {
 		}
 		model.rowStarts[i] = len(lines)
 		pointer := "    "
+		titleColor := ansiWhite
 		if i == model.cursor {
 			pointer = "  › "
+			titleColor = ansiBlue
 		}
 		for lineIndex, line := range wrapText(result.Macro.Title, max(1, model.width-4)) {
 			prefix := "    "
 			if lineIndex == 0 {
 				prefix = pointer
 			}
-			lines = append(lines, prefix+line)
+			lines = append(lines, prefix+presentationStyle(line, titleColor, true))
 		}
 		if result.Macro.Description != "" {
 			for _, line := range wrapText(result.Macro.Description, max(1, model.width-6)) {
