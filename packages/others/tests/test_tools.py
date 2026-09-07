@@ -564,6 +564,9 @@ class ProjectTemplateTest(unittest.TestCase):
             self.assertTrue((destination / "README.md").is_file())
             self.assertTrue((destination / ".github" / "ISSUE_TEMPLATE" / "bug_report.md").is_file())
             self.assertTrue((destination / "tests" / "gpu_nvidia" / "stress_gpu.py").is_file())
+            self.assertTrue(
+                (destination / "tests" / "gpu_nvidia" / "keras_dummy_training.py").is_file()
+            )
 
     def test_recursive_copy_includes_special_entries(self) -> None:
         """Copy dotfiles, empty directories, and symlinks dynamically."""
