@@ -18,6 +18,30 @@ type HuhUI struct {
 	stdout    io.Writer
 	stderr    io.Writer
 	runSearch func(tea.Model) (tea.Model, error)
+	runMacros func(tea.Model) (tea.Model, error)
+}
+
+// BrowseMacros opens the bundled macro browser.
+func (ui HuhUI) BrowseMacros(macros []Macro, runEnabled bool) (MacroSelection, error) {
+	run := ui.runMacros
+	if run == nil {
+		run = func(model tea.Model) (tea.Model, error) {
+			output := ui.stderr
+			if output == nil {
+				output = os.Stderr
+			}
+			return tea.NewProgram(model, tea.WithOutput(output)).Run()
+		}
+	}
+	final, err := run(newMacroModel(macros, runEnabled, maxPresentationWidth, 24))
+	if err != nil {
+		return MacroSelection{}, err
+	}
+	model, ok := final.(macroModel)
+	if !ok {
+		return MacroSelection{}, fmt.Errorf("macro browser returned an invalid model")
+	}
+	return model.result()
 }
 
 // Search opens the bundled article browser.

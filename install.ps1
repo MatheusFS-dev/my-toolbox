@@ -774,6 +774,8 @@ try {
         'tb.exe',
         'libexec\tb-markdown-reader.exe',
         'commands.json',
+        'packages\macros\autohotkey\press_key_after_x_ms.ahk',
+        'packages\macros\autohotkey\press_key_after_x_ms.json',
         'version.txt',
         'completions\_tb',
         'completions\tb.bash',

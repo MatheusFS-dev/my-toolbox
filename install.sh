@@ -711,6 +711,8 @@ staging_payload=$(mktemp -d "$versions_root/.install-$version.XXXXXX")
 tar -xzf "$temporary_root/$archive" -C "$staging_payload"
 for required in tb commands.json version.txt \
     libexec/tb-markdown-reader \
+    packages/macros/autohotkey/press_key_after_x_ms.ahk \
+    packages/macros/autohotkey/press_key_after_x_ms.json \
     completions/_tb \
     completions/tb.bash \
     completions/tb.ps1 \

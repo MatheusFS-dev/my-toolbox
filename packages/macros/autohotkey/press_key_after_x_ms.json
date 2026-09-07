@@ -1,0 +1,18 @@
+{
+  "title": "Press key after X ms",
+  "description": "Wait for a delay, then press one key.",
+  "arguments": [
+    {
+      "id": "key",
+      "prompt": "Key to press",
+      "type": "text",
+      "default": "Enter"
+    },
+    {
+      "id": "delay_ms",
+      "prompt": "Delay in milliseconds",
+      "type": "non_negative_integer",
+      "default": "12000000"
+    }
+  ]
+}

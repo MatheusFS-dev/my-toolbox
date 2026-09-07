@@ -24,7 +24,7 @@ echo version
         @'
 #!/bin/sh
 if [ "$#" -ne 1 ] || [ "$1" != "__complete" ]; then exit 2; fi
-printf '%s\n' help install-codex install-gh list search uninstall update version
+printf '%s\n' help install-codex install-gh list macros search uninstall update version
 '@ | Set-Content -LiteralPath (Join-Path $BinRoot 'tb') -Encoding ASCII
         & chmod 755 (Join-Path $BinRoot 'tb')
     }
@@ -46,7 +46,7 @@ printf '%s\n' help install-codex install-gh list search uninstall update version
         throw "PowerShell search completion = $([string]::Join(', ', $Search))."
     }
 
-    $ToolboxCandidates = @('help', 'install-codex', 'install-gh', 'list', 'search', 'uninstall', 'update', 'version')
+    $ToolboxCandidates = @('help', 'install-codex', 'install-gh', 'list', 'macros', 'search', 'uninstall', 'update', 'version')
     if (@($Later | Where-Object { $_ -in $ToolboxCandidates }).Count -ne 0) {
         throw "PowerShell later-argument completion returned toolbox candidates: $([string]::Join(', ', $Later))."
     }

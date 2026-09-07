@@ -8,6 +8,8 @@ mkdir -p "$test_root/bin" "$test_root/payload" "$test_root/home" "$test_root/dow
 
 cp "$repository_root/commands.json" "$test_root/payload/commands.json"
 cp -R "$repository_root/completions" "$test_root/payload/completions"
+mkdir -p "$test_root/payload/packages/macros/autohotkey"
+cp "$repository_root/packages/macros/autohotkey/press_key_after_x_ms.ahk" "$repository_root/packages/macros/autohotkey/press_key_after_x_ms.json" "$test_root/payload/packages/macros/autohotkey/"
 printf '%s\n' '0.1.5' > "$test_root/payload/version.txt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$test_root/payload/tb"
 chmod 755 "$test_root/payload/tb"

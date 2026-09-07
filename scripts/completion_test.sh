@@ -12,7 +12,7 @@ set -eu
 if [ "$#" -ne 1 ] || [ "$1" != "__complete" ]; then
     exit 2
 fi
-printf '%s\n' help install-codex install-gh list search uninstall update version
+printf '%s\n' help install-codex install-gh list macros search uninstall update version
 SH
 chmod 755 "$test_root/bin/tb"
 

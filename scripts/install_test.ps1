@@ -22,6 +22,10 @@ $TemporaryBefore = @(
 
 try {
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'commands.json') -Destination (Join-Path $Payload 'commands.json')
+    $MacroRoot = Join-Path $Payload 'packages\macros\autohotkey'
+    New-Item -ItemType Directory -Path $MacroRoot -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'packages\macros\autohotkey\press_key_after_x_ms.ahk') -Destination $MacroRoot
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'packages\macros\autohotkey\press_key_after_x_ms.json') -Destination $MacroRoot
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'completions') -Destination (Join-Path $Payload 'completions') -Recurse
     Set-Content -LiteralPath (Join-Path $Payload 'version.txt') -Value '0.1.5' -Encoding ascii
     Set-Content -LiteralPath (Join-Path $Payload 'tb.exe') -Value 'fixture' -Encoding ascii

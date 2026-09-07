@@ -67,6 +67,8 @@ func TestPlainHelpHasExactHierarchyAndWrapping(t *testing.T) {
 		"USAGE\n" +
 		"  tb list\n" +
 		"    Select supported tools interactively and run them in catalog order.\n" +
+		"  tb macros\n" +
+		"    Browse, run, or download bundled macros.\n" +
 		"  tb search\n" +
 		"    Browse and search the bundled Markdown guides.\n" +
 		"  tb <tool> [arguments...]\n" +

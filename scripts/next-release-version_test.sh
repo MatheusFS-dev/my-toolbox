@@ -39,6 +39,12 @@ actual=$(printf '%s\n' 'v1.1.0' | TOOLBOX_RELEASE_MINIMUM_VERSION=1.1.0 sh "$res
     exit 1
 }
 
+actual=$(printf '%s\n' 'v1.4.2' | TOOLBOX_RELEASE_MINIMUM_VERSION=1.5.0 sh "$resolver")
+[ "$actual" = '1.5.0' ] || {
+    printf 'Release floor resolved to %s, expected 1.5.0.\n' "$actual" >&2
+    exit 1
+}
+
 for minimum_version in 1.1 1.01.0 v1.1.0 1.1.0.0; do
     if printf '%s\n' 'v1.0.0' | TOOLBOX_RELEASE_MINIMUM_VERSION="$minimum_version" sh "$resolver" >/dev/null 2>&1; then
         printf 'Invalid minimum release version %s was accepted.\n' "$minimum_version" >&2

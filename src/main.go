@@ -42,15 +42,19 @@ func main() {
 		os.Exit(1)
 	}
 	builtins := NewToolboxBuiltins(root, platform, version, os.Stdout)
+	ui := HuhUI{}
 	app := App{
-		Catalog:     catalog,
-		Environment: environment,
-		UI:          HuhUI{},
-		Executor:    ProcessExecutor{Root: root, Platform: platform, Environment: environment, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
-		Output:      os.Stdout,
-		Error:       os.Stderr,
-		ArticleRoot: filepath.Join(root, "packages", "search", "articles"),
-		Version:     version,
+		Catalog:       catalog,
+		Environment:   environment,
+		Platform:      platform,
+		UI:            ui,
+		Executor:      ProcessExecutor{Root: root, Platform: platform, Environment: environment, Builtins: builtins, Input: os.Stdin, Output: os.Stdout, Error: os.Stderr},
+		Output:        os.Stdout,
+		Error:         os.Stderr,
+		ArticleRoot:   filepath.Join(root, "packages", "search", "articles"),
+		MacroRoot:     filepath.Join(root, "packages", "macros"),
+		MacroWorkflow: DefaultMacroWorkflow{UI: ui, Output: os.Stdout},
+		Version:       version,
 	}
 	if err := app.Execute(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)

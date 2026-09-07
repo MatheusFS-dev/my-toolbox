@@ -127,6 +127,7 @@ func renderHelp(commands []Command, version string, terminalWidth int, styled bo
 		description string
 	}{
 		{"tb list", "Select supported tools interactively and run them in catalog order."},
+		{"tb macros", "Browse, run, or download bundled macros."},
 		{"tb search", "Browse and search the bundled Markdown guides."},
 		{"tb <tool> [arguments...]", "Run one supported catalog tool directly, forwarding its arguments."},
 		{"tb update", "Reinstall the toolbox when a newer release is available."},

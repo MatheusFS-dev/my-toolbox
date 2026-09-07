@@ -27,6 +27,7 @@
 - [Overview](#overview)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Macros](#macros)
 - [Tool Catalog](#tool-catalog)
 - [Monitor](#monitor)
 - [Uninstallation](#uninstallation)
@@ -43,9 +44,10 @@
 | Supported systems | Linux x64, Linux ARM64, and Windows x64 |
 | Interactive workflow | Categorized, multi-select terminal interface through `tb list` |
 | Guide library | Searchable bundled Markdown articles through `tb search` |
+| Macro library | Searchable filesystem-discovered AutoHotkey scripts through `tb macros` |
 | Platform awareness | Native Linux, WSL, and Windows filtering before commands are shown or run |
 | Catalog source | Tool names, categories, descriptions, and platform rules in `commands.json` |
-| Maintenance | Built-in search, update, version, help, and uninstall commands |
+| Maintenance | Built-in macro browser, search, update, version, help, and uninstall commands |
 
 The toolbox gathers all required answers before it runs selected tools, executes them in catalog order, and stops at the first failure. Unsupported tools return an explicit platform error, while direct-only commands remain available through `tb help`.
 
@@ -89,6 +91,7 @@ Bootstrap installation does not replace an existing toolbox. When a newer releas
 
 ```text
 tb list
+tb macros
 tb search
 tb <tool> [arguments...]
 tb update
@@ -140,6 +143,18 @@ If the bundled reader cannot be located, prepared, or started, or exits with an 
 `tb list` excludes direct-only commands, while `tb help` includes them. Running `tb` without arguments is invalid and directs you to `tb list`. Help output uses ANSI styling only when standard output is a terminal; redirected output remains plain text with the same hierarchy.
 
 Tab completion suggests environment-supported built-in, listed, and direct-only command names for the first argument after `tb`. The toolbox does not add flag, path, or later-argument suggestions for commands delegated to selected tools.
+
+## Macros
+
+Run `tb macros` to browse the bundled macro library. Type to search each macro's title, description, relative path, and script content; use Up and Down to move, Enter to open the action menu, and Escape or Ctrl+C to cancel. The action menu contains **Run** and **Download**.
+
+The included **Press key after X ms** macro waits for a delay and then sends one key. Its defaults are `Enter` and `12000000` milliseconds. **Run** asks for these values, validates them, starts AutoHotkey as a detached background process, prints its PID, and returns immediately.
+
+Running macros requires AutoHotkey v2. If no working v2 runtime is found, the toolbox offers to install it and validates the result; after a successful installation, run `tb macros` again to launch the macro. Windows uses the official AutoHotkey v2 setup. Linux and WSL x64 use the independent AutoHotkey Linux port, which is currently a technology preview. Linux ARM64 can browse and download macros, but **Run** is disabled because that port does not provide an ARM64 runtime.
+
+**Download** copies only the selected `.ahk` file into an existing directory, accepts absolute paths, paths relative to the current directory, and `~` paths, and asks before overwriting. The downloaded script retains its direct-execution defaults.
+
+Macro packages live below `packages/macros`. The registered `autohotkey` subpackage discovers regular `.ahk` files recursively. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Adding a new `.ahk` file is automatic, while adding another subpackage requires a driver implementation.
 
 ## Tool Catalog
 

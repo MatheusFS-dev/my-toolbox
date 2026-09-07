@@ -16,6 +16,7 @@ type UI interface {
 	Select(commands []Command) ([]string, error)
 	Ask(question Question) (any, error)
 	Search(articles []Article) error
+	BrowseMacros(macros []Macro, runEnabled bool) (MacroSelection, error)
 }
 
 // Executor discovers questions and runs fully configured commands.
@@ -34,14 +35,17 @@ type configuredCommand struct {
 
 // App coordinates command parsing, preflight configuration, and execution.
 type App struct {
-	Catalog     Catalog
-	Environment string
-	UI          UI
-	Executor    Executor
-	Output      io.Writer
-	Error       io.Writer
-	ArticleRoot string
-	Version     string
+	Catalog       Catalog
+	Environment   string
+	Platform      string
+	UI            UI
+	Executor      Executor
+	Output        io.Writer
+	Error         io.Writer
+	ArticleRoot   string
+	MacroRoot     string
+	MacroWorkflow MacroWorkflow
+	Version       string
 }
 
 // Execute handles one public tb invocation.
@@ -65,7 +69,7 @@ func (app App) Execute(arguments []string) error {
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb __complete does not accept arguments")
 		}
-		names := []string{"help", "list", "search", "uninstall", "update", "version"}
+		names := []string{"help", "list", "macros", "search", "uninstall", "update", "version"}
 		for _, command := range app.Catalog.Commands {
 			if command.SupportsEnvironment(app.Environment) {
 				names = append(names, command.Name)
@@ -129,6 +133,26 @@ func (app App) Execute(arguments []string) error {
 			return err
 		}
 		return app.UI.Search(articles)
+	case "macros":
+		if len(arguments) != 1 {
+			return fmt.Errorf("tb macros does not accept arguments")
+		}
+		warnings := app.Error
+		if warnings == nil {
+			warnings = output
+		}
+		macros, err := loadMacros(app.MacroRoot, warnings)
+		if err != nil {
+			return err
+		}
+		selection, err := app.UI.BrowseMacros(macros, app.Platform != "linux-arm64")
+		if err != nil {
+			return err
+		}
+		if app.MacroWorkflow == nil {
+			return fmt.Errorf("macro workflow is unavailable")
+		}
+		return app.MacroWorkflow.Execute(selection)
 	case "update":
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb update does not accept arguments")
