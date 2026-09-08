@@ -15,6 +15,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config["restart"]["backoff_multiplier"], 1.2)
         self.assertEqual(config["restart"]["max_delay_seconds"], 30)
         self.assertEqual(config["restart"]["rapid_crash_seconds"], 60)
+        self.assertTrue(config["notifications"]["runtime_crash"])
+        self.assertNotIn("recovery", config["notifications"])
         self.assertTrue(config["notifications"]["possible_code_error"])
         self.assertEqual(config["sampling_interval_seconds"], 1)
         self.assertEqual(config["leak_detection"]["warmup_seconds"], 300)
@@ -63,6 +65,22 @@ class ConfigTests(unittest.TestCase):
     def test_schema_one_config_merges_memory_limit(self):
         config = validate_config({"schema_version": 1, "recipients": []})
         self.assertGreater(config["restart"]["memory_limit_gb"], 0)
+
+    def test_legacy_recovery_choice_is_tolerated_but_ignored(self):
+        config = validate_config({
+            "schema_version": 1,
+            "recipients": [],
+            "notifications": {"recovery": False},
+        })
+        self.assertTrue(config["notifications"]["runtime_crash"])
+        self.assertNotIn("recovery", config["notifications"])
+        explicit = validate_config({
+            "schema_version": 1,
+            "recipients": [],
+            "notifications": {"runtime_crash": True, "recovery": False},
+        })
+        self.assertTrue(explicit["notifications"]["runtime_crash"])
+        self.assertNotIn("recovery", explicit["notifications"])
 
     def test_schema_one_converts_legacy_mib_limit_to_decimal_gb(self):
         config = validate_config({

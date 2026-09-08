@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -254,10 +255,24 @@ func monitorSetupComplete(configPath, credentialsPath string) error {
 }
 
 func editMonitorRun(configPath string, interpreter monitorInterpreter) (monitorInterpreter, string, error) {
-	return editMonitorRunWith(configPath, interpreter, runMonitorConfigStep)
+	return editMonitorRunWith(configPath, interpreter, runMonitorEditStep)
 }
 
-func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runStep func(huh.Field) error) (monitorInterpreter, string, error) {
+func runMonitorEditStep(field huh.Field) error {
+	if err := monitorRunEditForm(field).Run(); err != nil {
+		return ErrCancelled
+	}
+	return nil
+}
+
+func monitorRunEditForm(field huh.Field) *huh.Form {
+	keymap := huh.NewDefaultKeyMap()
+	keymap.Quit.SetKeys("ctrl+c", "esc")
+	keymap.Quit.SetHelp("esc/ctrl+c", "leave")
+	return toolboxHuhForm(field).WithKeyMap(keymap)
+}
+
+func editMonitorRunWith(configPath string, interpreter monitorInterpreter, promptStep func(huh.Field) error) (monitorInterpreter, string, error) {
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return interpreter, "", err
@@ -289,7 +304,7 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runSt
 	}
 	heartbeatEnabled := boolValue(notifications["heartbeat"], false)
 	heartbeatMinutes := strconv.Itoa(int(numberValue(config["heartbeat_interval_minutes"], 60)))
-	recoveryEnabled := boolValue(notifications["recovery"], true)
+	runtimeCrashNotificationEnabled := boolValue(notifications["runtime_crash"], true)
 	scheduledNotificationEnabled := boolValue(notifications["scheduled_restart"], true)
 	finalFailureEnabled := boolValue(notifications["final_failure"], true)
 	completionEnabled := boolValue(notifications["completion"], true)
@@ -302,6 +317,27 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runSt
 	leakMinimumSlope := strconv.FormatFloat(numberValue(leak["minimum_slope_mib_per_minute"], 5), 'f', -1, 64)
 	reportsEnabled := boolValue(config["reports_enabled"], true)
 	viewerEnabled := boolValue(config["gui_viewer"], false)
+	editingStopped := false
+	runStep := func(field huh.Field) error {
+		if editingStopped {
+			return nil
+		}
+		if err := promptStep(field); err != nil {
+			if !errors.Is(err, ErrCancelled) {
+				return err
+			}
+			saveEdits := true
+			if confirmErr := promptStep(huh.NewConfirm().
+				Key("save-run-edits").
+				Title("Save edits made so far for this run?").
+				Description("Saved edits apply only to this run. Remaining options will be skipped.").
+				Value(&saveEdits)); confirmErr != nil || !saveEdits {
+				return ErrCancelled
+			}
+			editingStopped = true
+		}
+		return nil
+	}
 
 	if err := runStep(huh.NewInput().Key("python-interpreter").Title("Python 3 interpreter").Description("This interpreter runs every target in the queue.").Value(&path)); err != nil {
 		return interpreter, "", err
@@ -321,7 +357,7 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runSt
 	if err := runStep(huh.NewInput().Key("max-retry-delay").Title("Maximum crash-retry delay (seconds)").Description("The upper limit for the delay between crash restarts.").Value(&maxDelaySeconds).Validate(validateMonitorNonNegativeDecimal("maximum crash-retry delay"))); err != nil {
 		return interpreter, "", err
 	}
-	if err := runStep(huh.NewInput().Key("rapid-crash-threshold").Title("Rapid-crash threshold for this run (seconds)").Description("A failed attempt shorter than this is identified as a possible code error.").Value(&rapidCrashSeconds).Validate(validateMonitorPositiveDecimal("rapid-crash threshold"))); err != nil {
+	if err := runStep(huh.NewInput().Key("rapid-crash-threshold").Title("Rapid-crash threshold for this run (seconds)").Description("Shorter failures use rapid-crash handling. A restarted target that survives this long is considered recovered.").Value(&rapidCrashSeconds).Validate(validateMonitorPositiveDecimal("rapid-crash threshold"))); err != nil {
 		return interpreter, "", err
 	}
 	if err := runStep(huh.NewConfirm().Key("automatic-restarts").Title("Enable automatic restarts for this run?").Description("Automatic restarts can use a memory limit or elapsed time.").Value(&automaticRestartsEnabled)); err != nil {
@@ -332,7 +368,7 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runSt
 			return interpreter, "", err
 		}
 		if automaticRestartMode == "memory" {
-			if err := runStep(huh.NewInput().Key("memory-restart-limit").Title("Memory restart limit for this run (GB)").Description("Restart when the target process tree reaches this many decimal gigabytes of RAM.").Value(&memoryLimitGB).Validate(validateMonitorPositiveDecimal("memory restart limit"))); err != nil {
+			if err := runStep(huh.NewInput().Key("memory-restart-limit").Title("Memory restart limit for this run (GB)").Description(monitorMemoryRestartDescription(monitorSystemRAMTotalBytes())).Value(&memoryLimitGB).Validate(validateMonitorPositiveDecimal("memory restart limit"))); err != nil {
 				return interpreter, "", err
 			}
 		} else if err := runStep(huh.NewInput().Key("time-restart-interval").Title("Time restart interval for this run (minutes)").Description("Elapsed time before restarting the target.").Value(&scheduledMinutes).Validate(validateMonitorPositive("time restart interval"))); err != nil {
@@ -353,7 +389,7 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runSt
 		description string
 		value       *bool
 	}{
-		{"notification-recovery", "Email after recovery?", "Send an email when a target succeeds after one or more crashes.", &recoveryEnabled},
+		{"notification-runtime-crash", "Email after a crash is recovered?", "Send one warning after a crashed target restarts and remains running through the stability threshold.", &runtimeCrashNotificationEnabled},
 		{"notification-scheduled-restart", "Email after an automatic restart?", "Send an email after a memory-aware or time-scheduled restart.", &scheduledNotificationEnabled},
 		{"notification-final-failure", "Email after final failure?", "Send an email when the crash-retry budget is exhausted.", &finalFailureEnabled},
 		{"notification-completion", "Email after successful completion?", "Send an email when the target exits successfully.", &completionEnabled},
@@ -429,7 +465,8 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, runSt
 		return interpreter, "", fmt.Errorf("per-run heartbeat interval is invalid")
 	}
 	notifications["heartbeat"] = heartbeatEnabled
-	notifications["recovery"] = recoveryEnabled
+	notifications["runtime_crash"] = runtimeCrashNotificationEnabled
+	delete(notifications, "recovery")
 	notifications["scheduled_restart"] = scheduledNotificationEnabled
 	notifications["final_failure"] = finalFailureEnabled
 	notifications["completion"] = completionEnabled
@@ -470,6 +507,38 @@ func terminalInteractive() bool {
 	return term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd())
 }
 
+func openMonitorLogViewer(outputPath string) error {
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		return fmt.Errorf("no graphical display is configured")
+	}
+	type terminalCandidate struct {
+		name   string
+		prefix []string
+	}
+	candidates := []terminalCandidate{
+		{name: "x-terminal-emulator", prefix: []string{"-e"}},
+		{name: "gnome-terminal", prefix: []string{"--"}},
+		{name: "konsole", prefix: []string{"-e"}},
+		{name: "kitty"},
+		{name: "alacritty", prefix: []string{"-e"}},
+		{name: "xterm", prefix: []string{"-e"}},
+	}
+	for _, candidate := range candidates {
+		executable, err := exec.LookPath(candidate.name)
+		if err != nil {
+			continue
+		}
+		arguments := append(append([]string(nil), candidate.prefix...), "tail", fmt.Sprintf("--pid=%d", os.Getpid()), "-F", "--", outputPath)
+		command := exec.Command(executable, arguments...)
+		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := command.Start(); err != nil {
+			continue
+		}
+		return command.Process.Release()
+	}
+	return fmt.Errorf("no supported terminal emulator was found")
+}
+
 func configureMonitor(root string, output io.Writer) error {
 	if !terminalInteractive() {
 		return fmt.Errorf("Monitor configuration requires an interactive terminal")
@@ -481,7 +550,7 @@ func configureMonitor(root string, output io.Writer) error {
 	configPath := filepath.Join(stateRoot, "config.json")
 	credentialsPath := filepath.Join(stateRoot, "credentials.json")
 	config := monitorDefaultConfig(nil)
-	recipients := ""
+	savedRecipients := []string{}
 	if existing, readErr := os.ReadFile(configPath); readErr == nil {
 		if err := json.Unmarshal(existing, &config); err != nil {
 			return fmt.Errorf("load Monitor configuration: %w", err)
@@ -494,9 +563,10 @@ func configureMonitor(root string, output io.Writer) error {
 			for _, address := range addresses {
 				parts = append(parts, fmt.Sprint(address))
 			}
-			recipients = strings.Join(parts, ", ")
+			savedRecipients = parts
 		}
 	}
+	recipients := monitorInitialRecipients(savedRecipients)
 	email := monitorEmailSettings{Provider: "gmail", Port: "587", Security: "starttls"}
 	if existing, readErr := os.ReadFile(credentialsPath); readErr == nil {
 		var value map[string]any
@@ -534,7 +604,7 @@ func configureMonitor(root string, output io.Writer) error {
 	heartbeatMinutes := strconv.Itoa(int(numberValue(config["heartbeat_interval_minutes"], 60)))
 	leakWarmupMinutes := strconv.Itoa(max(1, int(numberValue(leak["warmup_seconds"], 300)/60)))
 	heartbeatEnabled := boolValue(notifications["heartbeat"], false)
-	recoveryEnabled := boolValue(notifications["recovery"], true)
+	runtimeCrashNotificationEnabled := boolValue(notifications["runtime_crash"], true)
 	scheduledNotificationEnabled := boolValue(notifications["scheduled_restart"], true)
 	finalFailureEnabled := boolValue(notifications["final_failure"], true)
 	completionEnabled := boolValue(notifications["completion"], true)
@@ -642,12 +712,9 @@ func configureMonitor(root string, output io.Writer) error {
 		email = monitorEmailCredentials("custom", email.Sender, enteredPassword, email)
 	}
 
-	if recipients == "" {
-		recipients = email.Sender
-	}
 	if err := runMonitorConfigStep(huh.NewInput().
 		Title(title("Choose who receives notifications")).
-		Description("Enter one or more email addresses separated by commas. The sending address is selected by default.").
+		Description("Enter one or more email addresses separated by commas.").
 		Value(&recipients).
 		Validate(func(value string) error {
 			_, err := parseMonitorRecipients(value)
@@ -667,7 +734,7 @@ func configureMonitor(root string, output io.Writer) error {
 		leak = config["leak_detection"].(map[string]any)
 		crashRetries, rapidCrashSeconds, scheduledMinutes, memoryLimitGB, heartbeatMinutes, leakWarmupMinutes = "10", "60", "0", "1", "60", "5"
 		automaticRestartsEnabled, automaticRestartMode = false, "time"
-		heartbeatEnabled, recoveryEnabled, scheduledNotificationEnabled = false, true, true
+		heartbeatEnabled, runtimeCrashNotificationEnabled, scheduledNotificationEnabled = false, true, true
 		finalFailureEnabled, completionEnabled, leakNotificationEnabled, codeErrorNotificationEnabled = true, true, true, true
 		leakEnabled, reportsEnabled, viewerEnabled = true, true, false
 	} else {
@@ -680,7 +747,7 @@ func configureMonitor(root string, output io.Writer) error {
 		}
 		if err := runMonitorConfigStep(huh.NewInput().
 			Title(title("Set rapid-crash threshold (seconds)")).
-			Description("A failed attempt shorter than this is identified as a possible code error. The alert is sent only once per run.").
+			Description("Shorter failures use rapid-crash handling. A restarted target that survives this long is considered recovered.").
 			Value(&rapidCrashSeconds).
 			Validate(validateMonitorPositive("rapid-crash threshold"))); err != nil {
 			return err
@@ -702,7 +769,7 @@ func configureMonitor(root string, output io.Writer) error {
 			if automaticRestartMode == "memory" {
 				if err := runMonitorConfigStep(huh.NewInput().
 					Title(title("Set memory restart limit (GB)")).
-					Description("Monitor restarts the target when total process-tree RAM reaches this decimal-gigabyte limit.").
+					Description(monitorMemoryRestartDescription(monitorSystemRAMTotalBytes())).
 					Value(&memoryLimitGB).
 					Validate(validateMonitorPositiveDecimal("memory restart limit"))); err != nil {
 					return err
@@ -734,8 +801,9 @@ func configureMonitor(root string, output io.Writer) error {
 		}
 		selectedNotifications := []string{}
 		for name, enabled := range map[string]bool{
-			"recovery": recoveryEnabled, "scheduled_restart": scheduledNotificationEnabled,
-			"final_failure": finalFailureEnabled, "completion": completionEnabled, "possible_leak": leakNotificationEnabled,
+			"runtime_crash":     runtimeCrashNotificationEnabled,
+			"scheduled_restart": scheduledNotificationEnabled,
+			"final_failure":     finalFailureEnabled, "completion": completionEnabled, "possible_leak": leakNotificationEnabled,
 			"possible_code_error": codeErrorNotificationEnabled,
 		} {
 			if enabled {
@@ -746,7 +814,7 @@ func configureMonitor(root string, output io.Writer) error {
 			Title(title("Choose notification events")).
 			Description("Space toggles an event. Enter continues. Runtime email failures never stop your script.").
 			Options(
-				huh.NewOption("Recovered after a crash", "recovery"),
+				huh.NewOption("Crash recovered after a stable restart", "runtime_crash"),
 				huh.NewOption("Scheduled restart", "scheduled_restart"),
 				huh.NewOption("Final failure", "final_failure"),
 				huh.NewOption("Successful completion", "completion"),
@@ -756,12 +824,12 @@ func configureMonitor(root string, output io.Writer) error {
 			Value(&selectedNotifications)); err != nil {
 			return err
 		}
-		recoveryEnabled, scheduledNotificationEnabled = false, false
+		runtimeCrashNotificationEnabled, scheduledNotificationEnabled = false, false
 		finalFailureEnabled, completionEnabled, leakNotificationEnabled, codeErrorNotificationEnabled = false, false, false, false
 		for _, notification := range selectedNotifications {
 			switch notification {
-			case "recovery":
-				recoveryEnabled = true
+			case "runtime_crash":
+				runtimeCrashNotificationEnabled = true
 			case "scheduled_restart":
 				scheduledNotificationEnabled = true
 			case "final_failure":
@@ -820,7 +888,8 @@ func configureMonitor(root string, output io.Writer) error {
 		return err
 	}
 	notifications["heartbeat"] = heartbeatEnabled
-	notifications["recovery"] = recoveryEnabled
+	notifications["runtime_crash"] = runtimeCrashNotificationEnabled
+	delete(notifications, "recovery")
 	notifications["scheduled_restart"] = scheduledNotificationEnabled
 	notifications["final_failure"] = finalFailureEnabled
 	notifications["completion"] = completionEnabled
@@ -978,7 +1047,7 @@ func monitorDefaultConfig(recipients []string) map[string]any {
 	return map[string]any{
 		"schema_version": 1, "recipients": recipients, "sampling_interval_seconds": 1,
 		"heartbeat_interval_minutes": 60, "reports_enabled": true, "gui_viewer": false,
-		"notifications":  map[string]any{"heartbeat": false, "recovery": true, "scheduled_restart": true, "final_failure": true, "completion": true, "possible_leak": true, "possible_code_error": true},
+		"notifications":  map[string]any{"heartbeat": false, "runtime_crash": true, "scheduled_restart": true, "final_failure": true, "completion": true, "possible_leak": true, "possible_code_error": true},
 		"restart":        map[string]any{"crash_retries": 10, "base_delay_seconds": 3, "backoff_multiplier": 1.2, "max_delay_seconds": 30, "rapid_crash_seconds": 60, "scheduled_interval_minutes": 0, "memory_aware": false, "memory_limit_gb": 1.0},
 		"leak_detection": map[string]any{"enabled": true, "warmup_seconds": 300, "window_seconds": 300, "minimum_growth_mib": 100, "minimum_slope_mib_per_minute": 5},
 	}

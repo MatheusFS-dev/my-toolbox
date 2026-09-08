@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import sys
 import unittest
@@ -34,47 +35,96 @@ class SupervisorTests(unittest.TestCase):
 
     @patch("monitor_runtime.supervisor.shutil.which", return_value="/usr/bin/nvidia-smi")
     @patch("monitor_runtime.supervisor.subprocess.check_output")
-    def test_gpu_metrics_fall_back_to_clearly_scoped_system_totals(self, check_output, _which):
+    def test_gpu_metrics_report_each_device_when_target_uses_no_gpu(self, check_output, _which):
         check_output.side_effect = [
             "",
-            "# gpu pid type sm mem enc dec command\n# Idx # C/G % % % % name\n",
-            "0, GPU A, 20, 100, 1000\n1, GPU B, 40, 200, 2000\n",
+            "0, uuid-a, GPU A, 20, 100, 1000\n1, uuid-b, GPU B, 40, 200, 2000\n",
         ]
         sample = _gpu_metrics({123})
         self.assertEqual(sample["gpu_scope"], "system-wide")
         self.assertEqual(sample["gpu_percent"], 30)
         self.assertEqual(sample["gpu_memory_mib"], 300)
         self.assertEqual(sample["gpu_memory_total_mib"], 3000)
+        self.assertEqual(sample["gpu_devices"], [
+            {
+                "index": 0, "uuid": "uuid-a", "name": "GPU A",
+                "utilization_percent": 20, "target_memory_mib": 0,
+                "system_memory_mib": 100, "total_memory_mib": 1000,
+                "target_active": False,
+            },
+            {
+                "index": 1, "uuid": "uuid-b", "name": "GPU B",
+                "utilization_percent": 40, "target_memory_mib": 0,
+                "system_memory_mib": 200, "total_memory_mib": 2000,
+                "target_active": False,
+            },
+        ])
 
     @patch("monitor_runtime.supervisor.shutil.which", return_value="/usr/bin/nvidia-smi")
     @patch("monitor_runtime.supervisor.subprocess.check_output")
-    def test_gpu_metrics_keep_target_scope_when_process_data_exists(self, check_output, _which):
-        check_output.side_effect = ["123, 256\n", "0 123 C 35 0 0 0 python\n"]
+    def test_gpu_metrics_map_target_processes_to_their_gpu_uuid(self, check_output, _which):
+        check_output.side_effect = [
+            "uuid-b, 123, 256\nuuid-a, 999, 128\n",
+            "0, uuid-a, GPU A, 20, 100, 1000\n1, uuid-b, GPU B, 40, 300, 2000\n",
+        ]
         sample = _gpu_metrics({123})
         self.assertEqual(sample["gpu_scope"], "target")
-        self.assertEqual(sample["gpu_percent"], 35)
+        self.assertEqual(sample["gpu_percent"], 40)
         self.assertEqual(sample["gpu_memory_mib"], 256)
-        self.assertIsNone(sample["gpu_memory_total_mib"])
+        self.assertEqual(sample["gpu_memory_total_mib"], 2000)
+        self.assertFalse(sample["gpu_devices"][0]["target_active"])
+        self.assertTrue(sample["gpu_devices"][1]["target_active"])
+        self.assertEqual(sample["gpu_devices"][1]["target_memory_mib"], 256)
 
     @patch("monitor_runtime.supervisor.shutil.which", return_value="/usr/bin/nvidia-smi")
     @patch("monitor_runtime.supervisor.subprocess.check_output")
-    def test_gpu_metrics_keep_target_memory_when_pmon_fails(self, check_output, _which):
-        check_output.side_effect = ["123, 256\n", subprocess.CalledProcessError(1, "nvidia-smi")]
+    def test_gpu_metrics_keep_target_memory_when_device_query_fails(self, check_output, _which):
+        check_output.side_effect = ["uuid-a, 123, 256\n", subprocess.CalledProcessError(1, "nvidia-smi")]
         sample = _gpu_metrics({123})
         self.assertEqual(sample["gpu_scope"], "target")
         self.assertEqual(sample["gpu_memory_mib"], 256)
+
+    @patch("monitor_runtime.supervisor.shutil.which", return_value="/usr/bin/nvidia-smi")
+    @patch("monitor_runtime.supervisor.subprocess.check_output")
+    def test_gpu_metrics_identify_target_device_when_process_memory_is_unavailable(self, check_output, _which):
+        check_output.side_effect = [
+            "uuid-b, 123, N/A\n",
+            "0, uuid-a, GPU A, 20, 100, 1000\n1, uuid-b, GPU B, 40, 300, 2000\n",
+        ]
+        sample = _gpu_metrics({123})
+        self.assertEqual(sample["gpu_scope"], "target")
+        self.assertTrue(sample["gpu_devices"][1]["target_active"])
+        self.assertIsNone(sample["gpu_devices"][1]["target_memory_mib"])
+        self.assertEqual(sample["gpu_memory_total_mib"], 2000)
 
     @patch("monitor_runtime.supervisor.shutil.which", return_value="/usr/bin/nvidia-smi")
     @patch("monitor_runtime.supervisor.subprocess.check_output")
     def test_gpu_metrics_ignore_entire_malformed_global_rows(self, check_output, _which):
         check_output.side_effect = [
             "",
-            "# no target rows\n",
-            "0, GPU A, 90, bad, 1000\n1, GPU B, 20, 200, 2000\n",
+            "0, uuid-a, GPU A, 90, bad, 1000\n1, uuid-b, GPU B, 20, 200, 2000\n",
         ]
         sample = _gpu_metrics({123})
-        self.assertEqual(sample["gpu_percent"], 20)
+        self.assertEqual(sample["gpu_percent"], 55)
         self.assertEqual(sample["gpu_memory_mib"], 200)
+        self.assertEqual(len(sample["gpu_devices"]), 2)
+        self.assertIsNone(sample["gpu_devices"][0]["system_memory_mib"])
+        self.assertEqual(sample["gpu_devices"][0]["total_memory_mib"], 1000)
+
+    def test_termination_reports_grace_wait_and_escalation_progress(self):
+        process = subprocess.Popen(
+            [sys.executable, "-u", "-c", "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(60)"],
+            start_new_session=True, stdout=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(process.stdout.readline().strip(), "ready")
+        progress = []
+        terminate_process_group(process, timeout=0.15, progress=lambda state, message: progress.append((state, message)))
+        process.stdout.close()
+        states = [state for state, _message in progress]
+        self.assertIn("cleanup_sigterm", states)
+        self.assertIn("cleanup_waiting", states)
+        self.assertIn("cleanup_sigkill", states)
+        self.assertEqual(states[-1], "cleanup_processes_stopped")
     def test_termination_returns_without_waiting_for_timeout_after_clean_exit(self):
         process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
         started = time.monotonic()
@@ -150,6 +200,24 @@ class SupervisorTests(unittest.TestCase):
             self.assertIn("attempt-2", second)
             self.assertNotIn("attempt-1", second)
 
+    def test_ctrl_c_during_crash_backoff_emits_cancelled_final_outcome(self):
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "broken.py"
+            script.write_text("raise SystemExit(2)\n", encoding="utf-8")
+            config = default_config()
+            config["reports_enabled"] = False
+            config["restart"].update({"crash_retries": 2, "base_delay_seconds": 3})
+            config["notifications"] = {key: False for key in config["notifications"]}
+            events = []
+
+            with patch("monitor_runtime.supervisor._wait_for_restart", side_effect=KeyboardInterrupt):
+                result = supervise_script(str(script), sys.executable, config, events.append)
+
+            self.assertEqual(result["outcome"], "cancelled")
+            final = [event for event in events if event["type"] == "final_outcome"]
+            self.assertEqual(len(final), 1)
+            self.assertEqual(final[0]["exit_code"], 130)
+
     def test_rapid_crashes_send_one_code_error_email_only_after_retry_exhaustion(self):
         with TemporaryDirectory() as directory:
             script = Path(directory) / "broken.py"
@@ -213,6 +281,162 @@ class SupervisorTests(unittest.TestCase):
 
             self.assertEqual(result["outcome"], "success")
             self.assertEqual(notifications, [])
+
+    def test_sustained_crash_alerts_then_confirms_stable_recovery(self):
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "recover_after_runtime_crash.py"
+            script.write_text(
+                "from pathlib import Path\n"
+                "import time\n"
+                "marker = Path('attempt.txt')\n"
+                "attempt = int(marker.read_text()) + 1 if marker.exists() else 1\n"
+                "marker.write_text(str(attempt))\n"
+                "time.sleep(0.50 if attempt == 1 else 0.45)\n"
+                "raise SystemExit(7 if attempt == 1 else 0)\n",
+                encoding="utf-8",
+            )
+            config = default_config()
+            config["reports_enabled"] = False
+            config["sampling_interval_seconds"] = 0.01
+            config["restart"].update({"crash_retries": 1, "base_delay_seconds": 0, "rapid_crash_seconds": 0.30})
+            config["notifications"] = {key: key == "runtime_crash" for key in config["notifications"]}
+            events = []
+            notifications = []
+
+            def notifier(kind, title, output_lines, metrics, graph_paths=None):
+                notifications.append((kind, metrics))
+                return True
+
+            result = supervise_script(str(script), sys.executable, config, events.append, notifier, "Long training")
+
+            self.assertEqual(result["outcome"], "success")
+            self.assertEqual([item[0] for item in notifications], ["crash_recovered"])
+            details = notifications[0][1]
+            self.assertEqual(details["crash_attempt"], 1)
+            self.assertEqual(details["crash_exit_code"], 7)
+            self.assertGreaterEqual(details["crash_duration_seconds"], 0.30)
+            self.assertEqual(details["restart_attempt"], 2)
+            self.assertGreaterEqual(details["stable_for_seconds"], 0.30)
+            states = [event.get("state") for event in events if event["type"] == "lifecycle"]
+            self.assertIn("runtime_crash_email_held", states)
+            self.assertIn("recovery_stable", states)
+
+    def test_rapid_failure_during_runtime_incident_ends_with_final_failure(self):
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "failed_recovery.py"
+            script.write_text(
+                "from pathlib import Path\n"
+                "import time\n"
+                "marker = Path('attempt.txt')\n"
+                "attempt = int(marker.read_text()) + 1 if marker.exists() else 1\n"
+                "marker.write_text(str(attempt))\n"
+                "time.sleep(0.50 if attempt == 1 else 0.01)\n"
+                "raise SystemExit(7)\n",
+                encoding="utf-8",
+            )
+            config = default_config()
+            config["reports_enabled"] = False
+            config["sampling_interval_seconds"] = 0.01
+            config["restart"].update({"crash_retries": 1, "base_delay_seconds": 0, "rapid_crash_seconds": 0.30})
+            config["notifications"] = {
+                key: key in ("runtime_crash", "possible_code_error", "final_failure")
+                for key in config["notifications"]
+            }
+            events = []
+            notifications = []
+
+            def notifier(kind, title, output_lines, metrics, graph_paths=None):
+                notifications.append(kind)
+                return True
+
+            result = supervise_script(str(script), sys.executable, config, events.append, notifier)
+
+            self.assertEqual(result["outcome"], "failed")
+            self.assertEqual(notifications, ["final_failure"])
+            states = [event.get("state") for event in events if event["type"] == "lifecycle"]
+            self.assertIn("recovery_failed", states)
+            self.assertNotIn("possible_code_error_warning", states)
+
+    def test_sustained_terminal_crash_supersedes_earlier_rapid_warning(self):
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "rapid_then_sustained.py"
+            script.write_text(
+                "from pathlib import Path\n"
+                "import time\n"
+                "marker = Path('attempt.txt')\n"
+                "attempt = int(marker.read_text()) + 1 if marker.exists() else 1\n"
+                "marker.write_text(str(attempt))\n"
+                "if attempt == 2:\n"
+                "    time.sleep(0.50)\n"
+                "raise SystemExit(7)\n",
+                encoding="utf-8",
+            )
+            config = default_config()
+            config["reports_enabled"] = False
+            config["restart"].update({"crash_retries": 1, "base_delay_seconds": 0, "rapid_crash_seconds": 0.30})
+            config["notifications"] = {
+                key: key in ("possible_code_error", "final_failure") for key in config["notifications"]
+            }
+            notifications = []
+
+            def notifier(kind, title, output_lines, metrics, graph_paths=None):
+                notifications.append(kind)
+                return True
+
+            result = supervise_script(str(script), sys.executable, config, lambda event: None, notifier)
+
+            self.assertEqual(result["outcome"], "failed")
+            self.assertEqual(notifications, ["final_failure"])
+
+    def test_recovery_is_confirmed_when_process_exits_between_poll_iterations(self):
+        class Process:
+            def __init__(self, pid, poll_results, exit_code):
+                self.pid = pid
+                self.stdout = io.BytesIO()
+                self.stderr = io.BytesIO()
+                self.returncode = None
+                self.poll_results = list(poll_results)
+                self.exit_code = exit_code
+
+            def poll(self):
+                if self.poll_results:
+                    result = self.poll_results.pop(0)
+                    if result is not None:
+                        self.returncode = result
+                    return result
+                return self.returncode
+
+            def wait(self):
+                self.returncode = self.exit_code
+                return self.returncode
+
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "boundary.py"
+            script.write_text("pass\n", encoding="utf-8")
+            config = default_config()
+            config["reports_enabled"] = False
+            config["restart"].update({"crash_retries": 1, "base_delay_seconds": 0, "rapid_crash_seconds": 1})
+            config["notifications"] = {key: key == "runtime_crash" for key in config["notifications"]}
+            processes = [Process(101, [None, 7], 7), Process(102, [0], 0)]
+            clock = iter(range(0, 100, 2))
+            notifications = []
+
+            def notifier(kind, title, output_lines, metrics, graph_paths=None):
+                notifications.append(kind)
+                return True
+
+            sample = {
+                "elapsed_seconds": 1, "cpu_percent": 0, "ram_bytes": 0, "ram_mib": 0,
+                "system_ram_total_bytes": 0, "gpu_percent": None, "gpu_memory_mib": None,
+                "gpu_memory_total_mib": None, "gpu_scope": None, "gpu_devices": [],
+            }
+            with patch("monitor_runtime.supervisor.subprocess.Popen", side_effect=processes), \
+                    patch("monitor_runtime.supervisor.time.monotonic", side_effect=lambda: next(clock)), \
+                    patch("monitor_runtime.supervisor._process_metrics", return_value=sample):
+                result = supervise_script(str(script), sys.executable, config, lambda event: None, notifier)
+
+            self.assertEqual(result["outcome"], "success")
+            self.assertEqual(notifications, ["crash_recovered"])
 
     def test_output_and_crash_log_keep_full_lines_while_protocol_output_is_bounded(self):
         with TemporaryDirectory() as directory:

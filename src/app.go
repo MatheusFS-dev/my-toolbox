@@ -145,7 +145,7 @@ func (app App) Execute(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		selection, err := app.UI.BrowseMacros(macros, app.Platform != "linux-arm64")
+		selection, err := app.UI.BrowseMacros(macros, true)
 		if err != nil {
 			return err
 		}

@@ -50,7 +50,21 @@ type macroMetadata struct {
 	Arguments   []MacroArgument `json:"arguments"`
 }
 
-var macroDrivers = map[string]string{"autohotkey": ".ahk"}
+type macroDriver struct {
+	extension string
+	goos      string
+	label     string
+}
+
+var macroDrivers = map[string]macroDriver{
+	"autohotkey": {".ahk", "windows", "Windows"},
+	"ydotool":    {".sh", "linux", "Linux"},
+}
+
+func macroSupportsOS(macro Macro, goos string) bool {
+	driver, ok := macroDrivers[macro.Subpackage]
+	return ok && driver.goos == goos
+}
 
 func loadMacros(root string, warnings io.Writer) ([]Macro, error) {
 	info, err := os.Stat(root)
@@ -67,7 +81,7 @@ func loadMacros(root string, warnings io.Writer) ([]Macro, error) {
 		warnings = io.Discard
 	}
 	macros := []Macro{}
-	for subpackage, extension := range macroDrivers {
+	for subpackage, driver := range macroDrivers {
 		driverRoot := filepath.Join(root, subpackage)
 		if _, statErr := os.Stat(driverRoot); statErr != nil {
 			continue
@@ -77,7 +91,7 @@ func loadMacros(root string, warnings io.Writer) ([]Macro, error) {
 				fmt.Fprintf(warnings, "warning: skip macro %s: %v\n", warningPath(root, path), walkErr)
 				return nil
 			}
-			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), extension) {
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), driver.extension) {
 				return nil
 			}
 			macro, macroErr := loadMacro(root, subpackage, path)

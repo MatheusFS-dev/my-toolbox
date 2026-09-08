@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -53,6 +54,35 @@ func monitorConfigurationSummary(credentials monitorEmailSettings, recipients []
 		settings = "default monitoring settings"
 	}
 	return fmt.Sprintf("Email provider: %s\nSender: %s\nNotifications go to: %s\nMonitoring: %s", provider, credentials.Sender, strings.Join(recipients, ", "), settings)
+}
+
+func monitorInitialRecipients(saved []string) string {
+	return strings.Join(saved, ", ")
+}
+
+func monitorSystemRAMTotalBytes() int64 {
+	content, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "MemTotal:" {
+			kilobytes, parseErr := strconv.ParseInt(fields[1], 10, 64)
+			if parseErr == nil && kilobytes > 0 {
+				return kilobytes * 1024
+			}
+		}
+	}
+	return 0
+}
+
+func monitorMemoryRestartDescription(totalBytes int64) string {
+	description := "Monitor restarts the target when total process-tree RAM reaches this decimal-gigabyte limit."
+	if totalBytes > 0 {
+		return fmt.Sprintf("%s This system has %.3f GB total system RAM.", description, float64(totalBytes)/1_000_000_000)
+	}
+	return description + " Total system RAM is unavailable."
 }
 
 func applyMonitorRestartMode(restart map[string]any, enabled bool, mode string, value float64) error {

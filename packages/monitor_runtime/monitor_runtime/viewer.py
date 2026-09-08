@@ -21,7 +21,10 @@ def open_log_viewer(output_path):
         executable = shutil.which(name)
         if executable:
             try:
-                return subprocess.Popen([executable] + prefix + ["tail", "-F", "--", str(output_path)], start_new_session=True), ""
+                return subprocess.Popen(
+                    [executable] + prefix + ["tail", "--pid={}".format(os.getpid()), "-F", "--", str(output_path)],
+                    start_new_session=True,
+                ), ""
             except OSError:
                 continue
     return None, "GUI log viewer unavailable because no supported terminal emulator was found"

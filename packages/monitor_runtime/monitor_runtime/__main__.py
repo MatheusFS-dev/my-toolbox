@@ -53,6 +53,10 @@ def main():
         emit("email_result", kind="test", success=True, recipients=config["recipients"])
         return 0
     except KeyboardInterrupt:
+        try:
+            emit("final_outcome", outcome="cancelled", error="Monitor was interrupted.", exit_code=130)
+        except Exception:
+            pass
         return 130
     except Exception as error:
         try:

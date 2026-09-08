@@ -15,39 +15,56 @@ import (
 )
 
 type monitorEvent struct {
-	ProtocolVersion     int     `json:"protocol_version"`
-	Type                string  `json:"type"`
-	Title               string  `json:"title"`
-	Script              string  `json:"script"`
-	State               string  `json:"state"`
-	Message             string  `json:"message"`
-	Text                string  `json:"text"`
-	Stream              string  `json:"stream"`
-	Reason              string  `json:"reason"`
-	Kind                string  `json:"kind"`
-	RunDirectory        string  `json:"run_directory"`
-	InterpreterPath     string  `json:"interpreter"`
-	PID                 int     `json:"pid"`
-	Attempt             int     `json:"attempt"`
-	CrashCount          int     `json:"crash_count"`
-	ScheduledCount      int     `json:"scheduled_count"`
-	MemoryCount         int     `json:"memory_count"`
-	QueueIndex          int     `json:"queue_index"`
-	QueueTotal          int     `json:"queue_total"`
-	CPUPercent          float64 `json:"cpu_percent"`
-	RAMBytes            int64   `json:"ram_bytes"`
-	RAMMiB              float64 `json:"ram_mib"`
-	SystemRAMTotalBytes int64   `json:"system_ram_total_bytes"`
-	GPUPercent          any     `json:"gpu_percent"`
-	GPUMemoryMiB        any     `json:"gpu_memory_mib"`
-	GPUMemoryTotalMiB   any     `json:"gpu_memory_total_mib"`
-	GPUScope            string  `json:"gpu_scope"`
-	MemoryLimitGB       float64 `json:"memory_limit_gb"`
-	Elapsed             float64 `json:"elapsed_seconds"`
-	Outcome             string  `json:"outcome"`
-	Error               string  `json:"error"`
-	Success             bool    `json:"success"`
-	DelaySeconds        float64 `json:"delay_seconds"`
+	ProtocolVersion     int                `json:"protocol_version"`
+	Type                string             `json:"type"`
+	Title               string             `json:"title"`
+	Script              string             `json:"script"`
+	State               string             `json:"state"`
+	Message             string             `json:"message"`
+	Text                string             `json:"text"`
+	Stream              string             `json:"stream"`
+	Reason              string             `json:"reason"`
+	Kind                string             `json:"kind"`
+	RunDirectory        string             `json:"run_directory"`
+	InterpreterPath     string             `json:"interpreter"`
+	PID                 int                `json:"pid"`
+	Attempt             int                `json:"attempt"`
+	CrashCount          int                `json:"crash_count"`
+	ScheduledCount      int                `json:"scheduled_count"`
+	MemoryCount         int                `json:"memory_count"`
+	QueueIndex          int                `json:"queue_index"`
+	QueueTotal          int                `json:"queue_total"`
+	CPUPercent          float64            `json:"cpu_percent"`
+	RAMBytes            int64              `json:"ram_bytes"`
+	RAMMiB              float64            `json:"ram_mib"`
+	SystemRAMTotalBytes int64              `json:"system_ram_total_bytes"`
+	GPUPercent          any                `json:"gpu_percent"`
+	GPUMemoryMiB        any                `json:"gpu_memory_mib"`
+	GPUMemoryTotalMiB   any                `json:"gpu_memory_total_mib"`
+	GPUDevices          []monitorGPUDevice `json:"gpu_devices"`
+	GPUScope            string             `json:"gpu_scope"`
+	MemoryLimitGB       float64            `json:"memory_limit_gb"`
+	Elapsed             float64            `json:"elapsed_seconds"`
+	Outcome             string             `json:"outcome"`
+	Error               string             `json:"error"`
+	Success             bool               `json:"success"`
+	DelaySeconds        float64            `json:"delay_seconds"`
+	AttemptDuration     float64            `json:"attempt_duration_seconds"`
+	ExitCode            int                `json:"exit_code"`
+	Restart             bool               `json:"restart"`
+	Scheduled           bool               `json:"scheduled"`
+	MemoryRestart       bool               `json:"memory_restart"`
+}
+
+type monitorGPUDevice struct {
+	Index              int    `json:"index"`
+	UUID               string `json:"uuid"`
+	Name               string `json:"name"`
+	UtilizationPercent any    `json:"utilization_percent"`
+	TargetMemoryMiB    any    `json:"target_memory_mib"`
+	SystemMemoryMiB    any    `json:"system_memory_mib"`
+	TotalMemoryMiB     any    `json:"total_memory_mib"`
+	TargetActive       bool   `json:"target_active"`
 }
 
 type monitorDashboardSettings struct {
@@ -75,8 +92,12 @@ type monitorNotificationState struct {
 }
 
 type monitorPetTick struct{ animation int }
+type monitorViewerResult struct{ Error error }
 
 const monitorPetFrameInterval = 500 * time.Millisecond
+
+const monitorActivityEntries = 8
+const monitorLogEntries = monitorActivityEntries * 2
 
 // Frame ranges for the independently selected eye, tail, and ear animations.
 var monitorCatFrames = []string{
@@ -106,6 +127,7 @@ type monitorDashboard struct {
 	Output        []string
 	Activity      []string
 	ActivityLevel []monitorMessageSeverity
+	MonitorLog    []string
 	Current       monitorEvent
 	Width         int
 	Height        int
@@ -113,6 +135,7 @@ type monitorDashboard struct {
 	CodeError     bool
 	CodeErrorText string
 	Cancel        chan<- struct{}
+	OpenViewer    func(string) error
 	cancelSent    bool
 	lastHeartbeat float64
 	emailKind     string
@@ -131,7 +154,8 @@ func newMonitorDashboard(scripts []string, interpreter monitorInterpreter, confi
 	dashboard := &monitorDashboard{
 		Scripts: append([]string(nil), scripts...), Interpreter: interpreter,
 		Settings: monitorDashboardSettingsFromConfig(config), Width: 80, Height: 24,
-		viewport: viewport.New(),
+		OpenViewer: openMonitorLogViewer,
+		viewport:   viewport.New(),
 	}
 	dashboard.resize(80, 24)
 	return dashboard
@@ -152,8 +176,8 @@ func monitorDashboardSettingsFromConfig(config map[string]any) monitorDashboardS
 		{Label: "Completion email", Enabled: boolValue(notifications["completion"], false)},
 		{Label: "Final failure email", Enabled: boolValue(notifications["final_failure"], false)},
 		{Label: "Possible leak email", Enabled: boolValue(notifications["possible_leak"], false)},
+		{Label: "Crash/restart email", Enabled: boolValue(notifications["runtime_crash"], true)},
 		{Label: "Code error email", Enabled: boolValue(notifications["possible_code_error"], true)},
-		{Label: "Recovery email", Enabled: boolValue(notifications["recovery"], false)},
 		{Label: "Scheduled restart", Enabled: boolValue(notifications["scheduled_restart"], false)},
 		{Label: "Heartbeat email", Enabled: boolValue(notifications["heartbeat"], false)},
 	}
@@ -191,6 +215,17 @@ func (dashboard *monitorDashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 	case tea.WindowSizeMsg:
 		dashboard.resize(message.Width, message.Height)
 	case tea.KeyPressMsg:
+		if message.Code == 'v' && dashboard.Settings.ViewerEnabled {
+			if dashboard.Current.RunDirectory == "" {
+				dashboard.appendMonitorLog("viewer unavailable • waiting for run directory")
+				return dashboard, nil
+			}
+			path := filepath.Join(dashboard.Current.RunDirectory, "output.log")
+			opener := dashboard.OpenViewer
+			return dashboard, func() tea.Msg {
+				return monitorViewerResult{Error: opener(path)}
+			}
+		}
 		if message.Code == 'c' && message.Mod.Contains(tea.ModCtrl) && !dashboard.cancelSent {
 			dashboard.cancelSent = true
 			dashboard.Stopping = true
@@ -219,6 +254,12 @@ func (dashboard *monitorDashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 		if message.Type == "final_outcome" && (message.Outcome != "success" || message.QueueIndex >= message.QueueTotal) {
 			return dashboard, tea.Quit
 		}
+	case monitorViewerResult:
+		if message.Error != nil {
+			dashboard.appendMonitorLog("viewer failed • " + message.Error.Error())
+		} else {
+			dashboard.appendMonitorLog("viewer opened • press V to reopen it after closing")
+		}
 	}
 	var command tea.Cmd
 	dashboard.viewport, command = dashboard.viewport.Update(message)
@@ -233,25 +274,44 @@ func (dashboard *monitorDashboard) View() tea.View {
 	inner := width - 2
 	status := dashboard.status()
 	title := fmt.Sprintf(" MONITOR  %s  •  Queue %d/%d  •  %s ", status, dashboard.Current.QueueIndex, max(dashboard.Current.QueueTotal, len(dashboard.Scripts)), formatMonitorDuration(dashboard.Current.Elapsed))
-	headerText := truncateMonitorText(title, inner-2)
+	headerText := wrapMonitorText(title, inner-2)
 	headerColor := "86"
 	if severity := dashboard.currentSeverity(); severity != monitorNeutral {
 		headerColor = monitorSeverityColor(severity)
 	}
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(headerColor)).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("63")).Width(inner)
-	header := titleStyle.Render(headerText)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(headerColor))
+	header := titleStyle.Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("63")).Width(inner).Render(headerText)
 	footer := "Ctrl+C stop target and quit"
 	if dashboard.Stopping {
 		footer = "Stopping target and descendants… waiting for cleanup"
+		if dashboard.Current.Message != "" && strings.HasPrefix(dashboard.Current.State, "cleanup_") {
+			footer = dashboard.Current.Message
+		}
 	} else {
-		footer = fmt.Sprintf("↑/↓ PgUp/PgDn Home/End scroll • %d%% • Ctrl+C stop target and quit", int(dashboard.viewport.ScrollPercent()*100))
+		viewerHelp := ""
+		if dashboard.Settings.ViewerEnabled {
+			viewerHelp = " • V reopen viewer"
+		}
+		footer = fmt.Sprintf("↑/↓ PgUp/PgDn Home/End scroll • %d%%%s • Ctrl+C stop target and quit", int(dashboard.viewport.ScrollPercent()*100), viewerHelp)
 	}
 	footerColor := "244"
 	if dashboard.Stopping {
 		footerColor = monitorSeverityColor(monitorWarning)
 	}
-	footer = lipgloss.NewStyle().Foreground(lipgloss.Color(footerColor)).PaddingLeft(1).Render(truncateMonitorText(footer, width-1))
-	view := tea.NewView(header + "\n" + dashboard.viewport.View() + "\n" + footer)
+	footer = lipgloss.NewStyle().Foreground(lipgloss.Color(footerColor)).PaddingLeft(1).Render(wrapMonitorText(footer, width-1))
+	if lipgloss.Height(header)+lipgloss.Height(footer) >= dashboard.Height {
+		header = titleStyle.Width(width).Render(wrapMonitorText(title, width))
+	}
+	viewportHeight := max(0, dashboard.Height-lipgloss.Height(header)-lipgloss.Height(footer))
+	offset := dashboard.viewport.YOffset()
+	dashboard.viewport.SetHeight(viewportHeight)
+	dashboard.viewport.SetYOffset(offset)
+	sections := []string{header}
+	if viewportHeight > 0 {
+		sections = append(sections, dashboard.viewport.View())
+	}
+	sections = append(sections, footer)
+	view := tea.NewView(strings.Join(sections, "\n"))
 	view.AltScreen = true
 	return view
 }
@@ -295,6 +355,7 @@ func (dashboard *monitorDashboard) viewportContent() string {
 	}
 	sections = append(sections,
 		dashboard.panel("RECENT ACTIVITY", dashboard.activityPanel(), inner),
+		dashboard.panel("MONITOR LOG", dashboard.monitorLogPanel(), inner),
 		dashboard.panel("LATEST OUTPUT", dashboard.outputPanel(), inner),
 	)
 	return strings.Join(sections, "\n")
@@ -311,7 +372,7 @@ func (dashboard *monitorDashboard) compactConfiguration(width int) string {
 	}
 	line := fmt.Sprintf("CONFIG  restart %s • retries %d • leak %s • heartbeat %s • sample %.1fs",
 		dashboard.Settings.AutomaticMode, dashboard.Settings.CrashRetries, leak, heartbeat, dashboard.Settings.SampleSeconds)
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).BorderTop(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("240")).Width(width).Render(truncateMonitorText(line, width))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).BorderTop(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("240")).Width(width).Render(wrapMonitorText(line, width))
 }
 
 func (dashboard *monitorDashboard) status() string {
@@ -346,7 +407,6 @@ func (dashboard *monitorDashboard) panelPair(leftTitle, leftBody, rightTitle, ri
 
 func (dashboard *monitorDashboard) panelContent(title, body string, width int) string {
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(title)
-	body = truncateMonitorBlock(body, max(8, width-4))
 	if title == "RECENT ACTIVITY" {
 		lines := strings.Split(body, "\n")
 		start := max(0, len(dashboard.ActivityLevel)-len(lines))
@@ -362,6 +422,7 @@ func (dashboard *monitorDashboard) panelContent(title, body string, width int) s
 	} else if title == "RESOURCES" {
 		body = colorMonitorResourceBody(body)
 	}
+	body = wrapMonitorBlock(body, max(8, width-4))
 	return heading + "\n" + body
 }
 
@@ -393,6 +454,35 @@ func (dashboard *monitorDashboard) resourcePanel() string {
 		ramPercent = float64(ramBytes) / float64(dashboard.Current.SystemRAMTotalBytes) * 100
 	}
 	ramMemory := formatMonitorMemoryPair(float64(ramBytes)/1000000000, ramBytes > 0, float64(dashboard.Current.SystemRAMTotalBytes)/1000000000, dashboard.Current.SystemRAMTotalBytes > 0)
+	base := fmt.Sprintf("CPU\n  %s %5.1f%%\n\nRAM\n  %s %s",
+		monitorMeter(dashboard.Current.CPUPercent), dashboard.Current.CPUPercent,
+		monitorMeter(ramPercent), ramMemory)
+	if len(dashboard.Current.GPUDevices) > 0 {
+		devices := make([]string, 0, len(dashboard.Current.GPUDevices))
+		for _, device := range dashboard.Current.GPUDevices {
+			status := "IDLE"
+			memoryLabel := "System VRAM"
+			usedMiB := anyMonitorFloat(device.SystemMemoryMiB)
+			usedAvailable := device.SystemMemoryMiB != nil
+			if device.TargetActive {
+				status = "TARGET"
+				memoryLabel = "Target VRAM"
+				usedMiB = anyMonitorFloat(device.TargetMemoryMiB)
+				usedAvailable = device.TargetMemoryMiB != nil
+			}
+			usedGB := usedMiB * 1048576 / 1000000000
+			totalGB := anyMonitorFloat(device.TotalMemoryMiB) * 1048576 / 1000000000
+			memoryPercent := 0.0
+			if totalGB > 0 {
+				memoryPercent = usedGB / totalGB * 100
+			}
+			name := strings.TrimSpace(strings.TrimPrefix(device.Name, "NVIDIA GeForce "))
+			devices = append(devices, fmt.Sprintf("GPU %d · %s · %s\n  Utilization\n  %s %s\n  %s\n  %s %s",
+				device.Index, name, status, monitorMeter(anyMonitorFloat(device.UtilizationPercent)), formatMonitorOptional(device.UtilizationPercent, "%"),
+				memoryLabel, monitorMeter(memoryPercent), formatMonitorMemoryPair(usedGB, usedAvailable, totalGB, device.TotalMemoryMiB != nil)))
+		}
+		return base + "\n\n" + strings.Join(devices, "\n\n")
+	}
 	gpuScope := dashboard.Current.GPUScope
 	if gpuScope == "" {
 		gpuScope = "target"
@@ -404,9 +494,8 @@ func (dashboard *monitorDashboard) resourcePanel() string {
 	if gpuMemoryTotal > 0 {
 		gpuMemoryPercent = gpuMemoryUsed / gpuMemoryTotal * 100
 	}
-	return fmt.Sprintf("CPU\n  %s %5.1f%%\n\nRAM\n  %s %s\n\nGPU · %s\n  Utilization\n  %s %s\n  Memory\n  %s %s",
-		monitorMeter(dashboard.Current.CPUPercent), dashboard.Current.CPUPercent,
-		monitorMeter(ramPercent), ramMemory,
+	return fmt.Sprintf("%s\n\nGPU · %s\n  Utilization\n  %s %s\n  Memory\n  %s %s",
+		base,
 		strings.ToUpper(gpuScope), monitorMeter(anyMonitorFloat(dashboard.Current.GPUPercent)),
 		formatMonitorOptional(dashboard.Current.GPUPercent, "%"), monitorMeter(gpuMemoryPercent), gpuMemory)
 }
@@ -479,6 +568,32 @@ func (dashboard *monitorDashboard) activityPanel() string {
 	return strings.Join(dashboard.Activity, "\n")
 }
 
+func (dashboard *monitorDashboard) monitorLogPanel() string {
+	lines := dashboard.MonitorLog
+	if len(lines) > monitorLogEntries {
+		lines = lines[len(lines)-monitorLogEntries:]
+	}
+	if len(lines) == 0 {
+		lines = []string{"Waiting for monitor events…"}
+	}
+	lines = append([]string(nil), lines...)
+	for len(lines) < monitorLogEntries {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (dashboard *monitorDashboard) appendMonitorLog(message string) {
+	if message == "" {
+		return
+	}
+	dashboard.MonitorLog = append(dashboard.MonitorLog, time.Now().Format("15:04:05")+"  "+message)
+	if len(dashboard.MonitorLog) > 100 {
+		dashboard.MonitorLog = dashboard.MonitorLog[len(dashboard.MonitorLog)-100:]
+	}
+	dashboard.rebuildViewport()
+}
+
 func (dashboard *monitorDashboard) outputPanel() string {
 	if len(dashboard.Output) == 0 {
 		return "Waiting for target output…"
@@ -513,6 +628,7 @@ func (dashboard *monitorDashboard) apply(event monitorEvent) {
 		current.Elapsed, current.CPUPercent, current.RAMBytes, current.RAMMiB = event.Elapsed, event.CPUPercent, event.RAMBytes, event.RAMMiB
 		current.SystemRAMTotalBytes = event.SystemRAMTotalBytes
 		current.GPUPercent, current.GPUMemoryMiB, current.GPUMemoryTotalMiB, current.GPUScope = event.GPUPercent, event.GPUMemoryMiB, event.GPUMemoryTotalMiB, event.GPUScope
+		current.GPUDevices = append([]monitorGPUDevice(nil), event.GPUDevices...)
 	}
 	if event.Type == "restart_decision" || event.Type == "final_outcome" {
 		current.CrashCount, current.ScheduledCount, current.MemoryCount = event.CrashCount, event.ScheduledCount, event.MemoryCount
@@ -555,9 +671,15 @@ func (dashboard *monitorDashboard) apply(event monitorEvent) {
 	if activity := monitorActivityLine(event); activity != "" {
 		dashboard.Activity = append(dashboard.Activity, activity)
 		dashboard.ActivityLevel = append(dashboard.ActivityLevel, monitorEventSeverity(event))
-		if len(dashboard.Activity) > 8 {
-			dashboard.Activity = dashboard.Activity[len(dashboard.Activity)-8:]
-			dashboard.ActivityLevel = dashboard.ActivityLevel[len(dashboard.ActivityLevel)-8:]
+		if len(dashboard.Activity) > monitorActivityEntries {
+			dashboard.Activity = dashboard.Activity[len(dashboard.Activity)-monitorActivityEntries:]
+			dashboard.ActivityLevel = dashboard.ActivityLevel[len(dashboard.ActivityLevel)-monitorActivityEntries:]
+		}
+	}
+	if line := monitorLogLine(event); line != "" {
+		dashboard.MonitorLog = append(dashboard.MonitorLog, time.Now().Format("15:04:05")+"  "+line)
+		if len(dashboard.MonitorLog) > 100 {
+			dashboard.MonitorLog = dashboard.MonitorLog[len(dashboard.MonitorLog)-100:]
 		}
 	}
 	dashboard.rebuildViewport()
@@ -736,6 +858,41 @@ func monitorActivityLine(event monitorEvent) string {
 	return ""
 }
 
+func monitorLogLine(event monitorEvent) string {
+	switch event.Type {
+	case "run_created":
+		return "monitor started • logs " + event.RunDirectory
+	case "attempt_ended":
+		if event.ExitCode != 0 && !event.Scheduled && !event.MemoryRestart {
+			return fmt.Sprintf("crash • attempt %d exited with exit code %d", event.Attempt, event.ExitCode)
+		}
+	case "restart_decision":
+		if event.Reason == "crash" && event.Restart {
+			return fmt.Sprintf("restart scheduled in %.1fs • crash notification follows stability classification", event.DelaySeconds)
+		}
+		if event.Reason == "crash" {
+			return "crash retries exhausted • configured final notifications are being evaluated"
+		}
+		return "restart • " + strings.ReplaceAll(event.Reason, "_", " ")
+	case "email_result":
+		if event.Success {
+			return strings.ReplaceAll(event.Kind, "_", " ") + " email sent"
+		}
+		return strings.ReplaceAll(event.Kind, "_", " ") + " email failed • " + emptyMonitorValue(event.Error)
+	case "lifecycle":
+		if event.Message != "" {
+			return strings.ReplaceAll(event.State, "_", " ") + " • " + event.Message
+		}
+		return strings.ReplaceAll(event.State, "_", " ")
+	case "final_outcome":
+		if event.Error != "" {
+			return "monitor error • " + event.Error
+		}
+		return "run finished • " + event.Outcome
+	}
+	return ""
+}
+
 func monitorMeter(percent float64) string {
 	percent = max(0, min(100, percent))
 	filled := int(percent / 10)
@@ -798,21 +955,13 @@ func formatMonitorDuration(seconds float64) string {
 	return fmt.Sprintf("%ds", remainder)
 }
 
-func truncateMonitorText(value string, width int) string {
+func wrapMonitorText(value string, width int) string {
 	value = strings.Join(sanitizeMonitorLines(value, -1), " ")
-	if lipgloss.Width(value) <= width {
-		return value
-	}
-	prefix, _ := splitAtWidth(value, max(1, width-1))
-	return prefix + "…"
+	return lipgloss.Wrap(value, max(1, width), "")
 }
 
-func truncateMonitorBlock(value string, width int) string {
-	lines := strings.Split(value, "\n")
-	for index := range lines {
-		lines[index] = truncateMonitorText(lines[index], width)
-	}
-	return strings.Join(lines, "\n")
+func wrapMonitorBlock(value string, width int) string {
+	return lipgloss.Wrap(value, max(1, width), "")
 }
 
 func emptyMonitorValue(value string) string {

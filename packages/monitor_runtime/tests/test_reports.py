@@ -20,6 +20,32 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "summary.json").read_text(encoding="utf-8"))["outcome"], "success")
             self.assertIn("outcome: success", (root / "summary.txt").read_text(encoding="utf-8"))
 
+    def test_samples_csv_preserves_per_device_gpu_metrics(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            devices = [{
+                "index": 1,
+                "uuid": "uuid-b",
+                "name": "GPU B",
+                "utilization_percent": 40,
+                "target_memory_mib": 256,
+                "system_memory_mib": 300,
+                "total_memory_mib": 2000,
+                "target_active": True,
+            }]
+            sample = {
+                "elapsed_seconds": 1,
+                "cpu_percent": 2,
+                "ram_mib": 3,
+                "gpu_percent": 40,
+                "gpu_memory_mib": 256,
+                "gpu_devices": devices,
+            }
+            write_reports(root, [sample], [], {"outcome": "success"})
+            with (root / "samples.csv").open(newline="", encoding="utf-8") as stream:
+                row = next(csv.DictReader(stream))
+            self.assertEqual(json.loads(row["gpu_devices"]), devices)
+
     def test_resource_plots_use_increased_canvas(self):
         """Keep attached plots within the approved larger dimensions."""
         with TemporaryDirectory() as directory:

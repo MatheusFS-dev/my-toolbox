@@ -61,6 +61,35 @@ class EmailTests(unittest.TestCase):
         self.assertIn("Script: /work/broken.py", plain)
         self.assertIn("NameError: missing_name", html)
 
+    def test_crash_recovered_email_highlights_only_semantic_statuses(self):
+        message = build_message(
+            "crash_recovered",
+            "Long training",
+            ["a@example.com"],
+            ["ordinary crash error restarted successfully output"],
+            {"crash_attempt": 1, "crash_duration_seconds": 99.514, "crash_exit_code": -15, "restart_attempt": 2, "stable_for_seconds": 60},
+        )
+        self.assertEqual(message["Subject"], "Long training — Crashed, then restarted successfully")
+        plain = message.get_body(preferencelist=("plain",)).get_content()
+        rendered_html = message.get_body(preferencelist=("html",)).get_content()
+        self.assertIn("Status: Crashed; restarted successfully", plain)
+        self.assertIn("Crash exit code: -15", plain)
+        self.assertIn("Crash duration: 99.514 s", plain)
+        self.assertEqual(rendered_html.count("color:#dc2626"), 1)
+        self.assertEqual(rendered_html.count("color:#16a34a"), 1)
+        self.assertIn(">Crashed</span>", rendered_html)
+        self.assertIn(">Restarted successfully</span>", rendered_html)
+        self.assertIn("ordinary crash error restarted successfully output", rendered_html)
+
+    def test_failure_email_uses_one_red_status_without_coloring_output(self):
+        message = build_message(
+            "final_failure", "Training", ["a@example.com"], ["crash error in target output"], {}
+        )
+        rendered_html = message.get_body(preferencelist=("html",)).get_content()
+        self.assertEqual(rendered_html.count("color:#dc2626"), 1)
+        self.assertIn(">Failed</span>", rendered_html)
+        self.assertIn("crash error in target output", rendered_html)
+
     def test_gpu_acronym_is_uppercase_in_plain_and_html_metrics(self):
         """Keep GPU capitalization in every rendered email body."""
         message = build_message(

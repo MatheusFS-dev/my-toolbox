@@ -5,7 +5,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +54,22 @@ func TestResolveMonitorRunTitlesOffersQueueIndividualAndFilenameModes(t *testing
 				t.Fatalf("titles = %#v, want %#v", titles, test.want)
 			}
 		})
+	}
+}
+
+func TestNewMonitorConfigurationDoesNotCopySenderIntoRecipients(t *testing.T) {
+	if recipients := monitorInitialRecipients(nil); recipients != "" {
+		t.Fatalf("new recipients = %q, want blank", recipients)
+	}
+	if recipients := monitorInitialRecipients([]string{"alerts@example.com"}); recipients != "alerts@example.com" {
+		t.Fatalf("saved recipients = %q", recipients)
+	}
+}
+
+func TestMemoryRestartDescriptionIncludesTotalSystemRAM(t *testing.T) {
+	description := monitorMemoryRestartDescription(67_001_581_568)
+	if !strings.Contains(description, "67.002 GB total system RAM") {
+		t.Fatalf("memory description = %q", description)
 	}
 }
 
@@ -109,7 +127,7 @@ func TestEditMonitorRunOffersEveryRuntimeSettingWithoutChangingSavedDefaults(t *
 		"python-interpreter", "sampling-interval", "crash-retries", "base-retry-delay",
 		"retry-backoff", "max-retry-delay", "rapid-crash-threshold", "automatic-restarts",
 		"automatic-restart-type", "memory-restart-limit", "heartbeat-enabled", "heartbeat-interval",
-		"notification-recovery", "notification-scheduled-restart", "notification-final-failure",
+		"notification-runtime-crash", "notification-scheduled-restart", "notification-final-failure",
 		"notification-completion", "notification-possible-leak", "notification-possible-code-error",
 		"leak-detection-enabled", "leak-warmup", "leak-window", "leak-minimum-growth",
 		"leak-minimum-slope", "reports-enabled", "viewer-enabled",
@@ -134,6 +152,122 @@ func TestEditMonitorRunOffersEveryRuntimeSettingWithoutChangingSavedDefaults(t *
 	}
 	if numberValue(temporary["sampling_interval_seconds"], 0) != 1 || !boolValue(temporary["reports_enabled"], false) || boolValue(temporary["gui_viewer"], true) {
 		t.Fatalf("temporary run settings = %#v", temporary)
+	}
+}
+
+func TestLeavingRunEditorCanSaveCompletedEditsAndSkipRemainingOptions(t *testing.T) {
+	stateRoot := t.TempDir()
+	configPath := filepath.Join(stateRoot, "config.json")
+	if err := writeMonitorJSON(configPath, monitorDefaultConfig(nil)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interpreter, err := resolveMonitorInterpreter("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{}
+	selected, temporaryPath, err := editMonitorRunWith(configPath, interpreter, func(field huh.Field) error {
+		keys = append(keys, field.GetKey())
+		switch field.GetKey() {
+		case "sampling-interval":
+			return field.RunAccessible(io.Discard, strings.NewReader("2.5\n"))
+		case "crash-retries":
+			return ErrCancelled
+		case "save-run-edits":
+			if save, ok := field.GetValue().(bool); !ok || !save {
+				t.Fatalf("save confirmation default = %#v, want true", field.GetValue())
+			}
+			return nil
+		default:
+			if len(keys) > 4 {
+				t.Fatalf("run editor continued after save confirmation with %q", field.GetKey())
+			}
+			return nil
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(temporaryPath)
+	if selected.Path != interpreter.Path {
+		t.Fatalf("selected interpreter = %q, want %q", selected.Path, interpreter.Path)
+	}
+	if strings.Join(keys, "|") != "python-interpreter|sampling-interval|crash-retries|save-run-edits" {
+		t.Fatalf("prompted fields = %#v", keys)
+	}
+	content, err := os.ReadFile(temporaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var temporary map[string]any
+	if err := json.Unmarshal(content, &temporary); err != nil {
+		t.Fatal(err)
+	}
+	if numberValue(temporary["sampling_interval_seconds"], 0) != 2.5 {
+		t.Fatalf("saved sampling interval = %#v, want 2.5", temporary["sampling_interval_seconds"])
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("saving run edits changed the permanent configuration")
+	}
+}
+
+func TestLeavingRunEditorCanDiscardCompletedEdits(t *testing.T) {
+	stateRoot := t.TempDir()
+	configPath := filepath.Join(stateRoot, "config.json")
+	if err := writeMonitorJSON(configPath, monitorDefaultConfig(nil)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interpreter, err := resolveMonitorInterpreter("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawConfirmation := false
+	_, temporaryPath, err := editMonitorRunWith(configPath, interpreter, func(field huh.Field) error {
+		switch field.GetKey() {
+		case "sampling-interval":
+			return field.RunAccessible(io.Discard, strings.NewReader("2.5\n"))
+		case "crash-retries":
+			return ErrCancelled
+		case "save-run-edits":
+			sawConfirmation = true
+			return field.RunAccessible(io.Discard, strings.NewReader("n\n"))
+		}
+		return nil
+	})
+	if !sawConfirmation {
+		t.Fatal("leaving the run editor did not ask whether to save")
+	}
+	if !errors.Is(err, ErrCancelled) || temporaryPath != "" {
+		t.Fatalf("discard result = path %q, error %v", temporaryPath, err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("discarding run edits changed the permanent configuration")
+	}
+}
+
+func TestMonitorRunEditFormTreatsEscapeAsCancellation(t *testing.T) {
+	value := "unchanged"
+	form := monitorRunEditForm(huh.NewInput().Key("value").Value(&value))
+	updated, _ := form.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	form = updated.(*huh.Form)
+	if form.State != huh.StateAborted {
+		t.Fatalf("Escape result = state %v, want aborted", form.State)
 	}
 }
 
@@ -362,12 +496,15 @@ func TestMonitorDashboardShowsConfigurationAndGraphicalResources(t *testing.T) {
 	view := rendered.Content
 	visibleView := strings.Join(sanitizeMonitorLines(view, -1), "\n")
 	for _, expected := range []string{
-		"╭", "TARGET", "RESOURCES", "RESTART POLICY", "MONITORING", "RECENT ACTIVITY", "LATEST OUTPUT",
+		"╭", "TARGET", "RESOURCES", "RESTART POLICY", "MONITORING", "RECENT ACTIVITY", "MONITOR LOG",
 		"/venv/bin/python3", "Memory-aware", "100 GB", "Rapid crash", "60s", "0.454 / 32.000 GB", "SYSTEM-WIDE", "0.268 / 8.590 GB", "4", "7m", "12m", "━━", "Ctrl+C stop target and quit",
 	} {
 		if !strings.Contains(visibleView, expected) {
 			t.Fatalf("dashboard is missing %q:\n%s", expected, view)
 		}
+	}
+	if !strings.Contains(dashboard.viewportContent(), "LATEST OUTPUT") {
+		t.Fatalf("scrollable dashboard is missing LATEST OUTPUT:\n%s", dashboard.viewportContent())
 	}
 	if strings.Contains(visibleView, "password") {
 		t.Fatalf("dashboard exposed credential vocabulary:\n%s", view)
@@ -502,17 +639,17 @@ func TestMonitorDashboardListsAndColorsEveryEmailToggle(t *testing.T) {
 	notifications["completion"] = true
 	notifications["final_failure"] = false
 	notifications["possible_leak"] = true
-	notifications["recovery"] = false
 	notifications["scheduled_restart"] = true
 	notifications["heartbeat"] = false
 	notifications["possible_code_error"] = true
+	notifications["runtime_crash"] = true
 	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, config)
 	body := dashboard.monitoringPanel()
 	for _, expected := range []string{
 		"Completion email      on",
 		"Final failure email   off",
 		"Possible leak email   on",
-		"Recovery email        off",
+		"Crash/restart email   on",
 		"Scheduled restart     on",
 		"Heartbeat email       off",
 		"Code error email      on",
@@ -521,12 +658,26 @@ func TestMonitorDashboardListsAndColorsEveryEmailToggle(t *testing.T) {
 			t.Fatalf("monitoring panel is missing %q:\n%s", expected, body)
 		}
 	}
+	if strings.Contains(body, "Recovery email") {
+		t.Fatalf("monitoring panel still exposes a separate recovery email:\n%s", body)
+	}
 	styled := dashboard.panel("MONITORING", body, 50)
 	if !strings.Contains(styled, colorMonitorMessage("on", monitorSuccess)) {
 		t.Fatalf("enabled state is not green:\n%s", styled)
 	}
 	if !strings.Contains(styled, colorMonitorMessage("off", monitorFailure)) {
 		t.Fatalf("disabled state is not red:\n%s", styled)
+	}
+}
+
+func TestMonitorDashboardIgnoresLegacyRecoveryToggle(t *testing.T) {
+	config := monitorDefaultConfig(nil)
+	notifications := config["notifications"].(map[string]any)
+	delete(notifications, "runtime_crash")
+	notifications["recovery"] = false
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, config)
+	if !strings.Contains(dashboard.monitoringPanel(), "Crash/restart email   on") {
+		t.Fatalf("legacy recovery setting changed the new default:\n%s", dashboard.monitoringPanel())
 	}
 }
 
@@ -576,6 +727,84 @@ func TestMonitorFullWidthPanelUsesItsEntireRequestedWidth(t *testing.T) {
 		if width := lipgloss.Width(line); width != 60 {
 			t.Fatalf("panel width = %d, want 60:\n%s", width, panel)
 		}
+	}
+}
+
+func TestMonitorDashboardWrapsNarrowTextWithoutEllipses(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.Width = 36
+	dashboard.Height = 30
+	dashboard.Settings.ViewerEnabled = true
+	dashboard.Current.Title = "quarterly-analysis-with-a-deliberately-long-name"
+	dashboard.MonitorLog = []string{"12:34:56  configured failure notifications are evaluated after retry exhaustion"}
+
+	content := dashboard.viewportContent()
+	visibleContent := strings.Join(sanitizeMonitorLines(content, -1), "\n")
+	for _, expected := range []string{"configured", "notifications", "evaluated", "retry", "exhaustion"} {
+		if !strings.Contains(visibleContent, expected) {
+			t.Fatalf("wrapped dashboard content lost %q:\n%s", expected, visibleContent)
+		}
+	}
+	view := dashboard.View().Content
+	visibleView := strings.Join(sanitizeMonitorLines(view, -1), "\n")
+	for _, expected := range []string{"quarterly-", "deliberately-", "long-name", "V reopen", "viewer", "Ctrl+C stop", "target and quit"} {
+		if !strings.Contains(visibleView, expected) {
+			t.Fatalf("narrow dashboard lost %q:\n%s", expected, visibleView)
+		}
+	}
+	for _, truncated := range []string{"quarterly-analys…", "failure …", "target and…"} {
+		if strings.Contains(visibleContent, truncated) || strings.Contains(visibleView, truncated) {
+			t.Fatalf("narrow dashboard used truncation marker %q:\n%s", truncated, visibleView)
+		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > dashboard.Width {
+			t.Fatalf("wrapped line width = %d, terminal width = %d:\n%s", width, dashboard.Width, view)
+		}
+	}
+	if lines := strings.Count(view, "\n") + 1; lines > dashboard.Height {
+		t.Fatalf("wrapped dashboard height = %d, terminal height = %d:\n%s", lines, dashboard.Height, view)
+	}
+}
+
+func TestMonitorDashboardFitsWhenWrappedChromeConsumesMinimumHeight(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.Width = 36
+	dashboard.Height = 6
+	for _, viewerEnabled := range []bool{false, true} {
+		dashboard.Settings.ViewerEnabled = viewerEnabled
+		view := dashboard.View().Content
+		if lines := strings.Count(view, "\n") + 1; lines > dashboard.Height {
+			t.Fatalf("viewer enabled %t: minimum dashboard height = %d lines, terminal height = %d:\n%s", viewerEnabled, lines, dashboard.Height, view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if width := lipgloss.Width(line); width > dashboard.Width {
+				t.Fatalf("viewer enabled %t: minimum dashboard line width = %d, terminal width = %d:\n%s", viewerEnabled, width, dashboard.Width, view)
+			}
+		}
+		visible := strings.Join(sanitizeMonitorLines(view, -1), "\n")
+		if viewerEnabled && (!strings.Contains(visible, "V reopen") || !strings.Contains(visible, "target and quit")) {
+			t.Fatalf("minimum dashboard lost wrapped viewer help:\n%s", visible)
+		}
+	}
+}
+
+func TestMonitorLogShowsNewestSixteenEntries(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	for index := 1; index <= 20; index++ {
+		dashboard.MonitorLog = append(dashboard.MonitorLog, fmt.Sprintf("event %02d", index))
+	}
+
+	log := dashboard.monitorLogPanel()
+	if lines := strings.Count(log, "\n") + 1; lines != 16 {
+		t.Fatalf("monitor log body height = %d lines, want 16:\n%s", lines, log)
+	}
+	if strings.Contains(log, "event 04") || !strings.Contains(log, "event 05") || !strings.Contains(log, "event 20") {
+		t.Fatalf("monitor log did not keep the newest sixteen entries:\n%s", log)
+	}
+	dashboard.MonitorLog = []string{"one", "two"}
+	if lines := strings.Count(dashboard.monitorLogPanel(), "\n") + 1; lines != 16 {
+		t.Fatalf("short monitor log body height = %d lines, want 16", lines)
 	}
 }
 
@@ -631,6 +860,81 @@ func TestMonitorDashboardCtrlCCancelsExactlyOnceAndWaitsForFinalOutcome(t *testi
 	view := strings.Join(sanitizeMonitorLines(dashboard.View().Content, -1), "\n")
 	if !strings.Contains(view, "Stopping target and descendants") {
 		t.Fatalf("stopping state is not visible:\n%s", dashboard.View().Content)
+	}
+}
+
+func TestMonitorDashboardReopensConfiguredViewerForCurrentRun(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.Settings.ViewerEnabled = true
+	dashboard.Current.RunDirectory = "/work/run"
+	opened := ""
+	dashboard.OpenViewer = func(path string) error {
+		opened = path
+		return nil
+	}
+	updated, command := dashboard.Update(tea.KeyPressMsg{Code: 'v'})
+	dashboard = updated.(*monitorDashboard)
+	if command == nil {
+		t.Fatal("V did not schedule the viewer to reopen")
+	}
+	message := command()
+	dashboard.Update(message)
+	if opened != "/work/run/output.log" {
+		t.Fatalf("viewer path = %q", opened)
+	}
+	if !strings.Contains(strings.Join(dashboard.MonitorLog, "\n"), "viewer opened") {
+		t.Fatalf("monitor log = %#v", dashboard.MonitorLog)
+	}
+}
+
+func TestMonitorLogExplainsDeferredCrashEmailAndDeliveryErrors(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.apply(monitorEvent{Type: "attempt_ended", Attempt: 1, ExitCode: 2})
+	dashboard.apply(monitorEvent{Type: "restart_decision", Reason: "crash", Restart: true, DelaySeconds: 3})
+	dashboard.apply(monitorEvent{Type: "email_result", Kind: "final_failure", Success: false, Error: "SMTP timeout"})
+	log := strings.Join(dashboard.MonitorLog, "\n")
+	for _, expected := range []string{"exit code 2", "stability classification", "SMTP timeout"} {
+		if !strings.Contains(log, expected) {
+			t.Fatalf("monitor log is missing %q: %s", expected, log)
+		}
+	}
+	if !strings.Contains(dashboard.viewportContent(), "MONITOR LOG") {
+		t.Fatalf("dashboard is missing monitor log panel:\n%s", dashboard.viewportContent())
+	}
+}
+
+func TestMonitorLogDoesNotMislabelIntentionalRestartsAsCrashes(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.apply(monitorEvent{Type: "attempt_ended", Attempt: 1, ExitCode: -15, Scheduled: true})
+	dashboard.apply(monitorEvent{Type: "attempt_ended", Attempt: 2, ExitCode: -15, MemoryRestart: true})
+	log := strings.Join(dashboard.MonitorLog, "\n")
+	if strings.Contains(log, "crash") {
+		t.Fatalf("intentional restart was logged as a crash: %s", log)
+	}
+}
+
+func TestMonitorDashboardShowsEachGPUAndMarksTargetDevice(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.apply(monitorEvent{Type: "resource_sample", GPUDevices: []monitorGPUDevice{
+		{Index: 0, Name: "NVIDIA GeForce RTX 3060", UtilizationPercent: 42, TargetMemoryMiB: 256, SystemMemoryMiB: 1200, TotalMemoryMiB: 12288, TargetActive: true},
+		{Index: 1, Name: "NVIDIA GeForce RTX 4070", UtilizationPercent: 3, SystemMemoryMiB: 16, TotalMemoryMiB: 12282},
+	}})
+	resources := dashboard.resourcePanel()
+	for _, expected := range []string{"GPU 0", "RTX 3060", "TARGET", "0.268 / 12.885 GB", "GPU 1", "RTX 4070", "IDLE", "0.017 / 12.879 GB"} {
+		if !strings.Contains(resources, expected) {
+			t.Fatalf("resources are missing %q:\n%s", expected, resources)
+		}
+	}
+}
+
+func TestMonitorDashboardKeepsTargetGPUVisibleWhenVRAMUsageIsUnavailable(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.apply(monitorEvent{Type: "resource_sample", GPUDevices: []monitorGPUDevice{
+		{Index: 1, Name: "NVIDIA GeForce RTX 4070", UtilizationPercent: 3.0, TargetMemoryMiB: nil, SystemMemoryMiB: 16.0, TotalMemoryMiB: 12282.0, TargetActive: true},
+	}})
+	resources := dashboard.resourcePanel()
+	if !strings.Contains(resources, "RTX 4070 · TARGET") || !strings.Contains(resources, "unavailable / 12.879 GB") {
+		t.Fatalf("target GPU with unavailable VRAM was not preserved:\n%s", resources)
 	}
 }
 

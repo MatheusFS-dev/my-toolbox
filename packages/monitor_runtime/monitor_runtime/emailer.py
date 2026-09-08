@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List
 SUBJECTS = {
     "test": "{title} — Email test",
     "heartbeat": "{title} — Heartbeat",
+    "crash_recovered": "{title} — Crashed, then restarted successfully",
     "recovery": "{title} — Recovered",
     "scheduled_restart": "{title} — Scheduled restart",
     "final_failure": "{title} — Failed",
@@ -24,6 +25,7 @@ SUBJECTS = {
 STATUS_LABELS = {
     "test": "Email test",
     "heartbeat": "Running",
+    "crash_recovered": "Crashed; restarted successfully",
     "recovery": "Recovered",
     "scheduled_restart": "Restarted",
     "final_failure": "Failed",
@@ -57,6 +59,7 @@ def build_message(kind: str, title: str, recipients: Iterable[str], output_lines
     clean_title = " ".join(CONTROL_SEQUENCE.sub("", title).split()).strip() or "Monitor"
     subject = SUBJECTS[kind].format(title=clean_title)
     status = STATUS_LABELS[kind]
+    status_html = _status_html(kind, status)
     output_lines = [CONTROL_SEQUENCE.sub("", line) for line in output_lines]
     metric_lines = ["{}: {}".format(_metric_label(key), _metric_value(key, value)) for key, value in sorted(metrics.items())]
     latest_lines = list(output_lines[-10:]) or ["No recent output."]
@@ -107,7 +110,7 @@ def build_message(kind: str, title: str, recipients: Iterable[str], output_lines
         '{}<div style="padding:14px 24px;background:#f8fafc;color:#64748b;font-size:12px">Monitor notification · {}</div>'
         '</div></body></html>'
     ).format(
-        html.escape(clean_title), html.escape(status), html.escape(clean_title), html.escape(status),
+        html.escape(clean_title), status_html, html.escape(clean_title), html.escape(status),
         html_metrics, html_output, graph_section, html.escape(kind.replace("_", " ")),
     )
     message = EmailMessage()
@@ -125,6 +128,9 @@ def build_message(kind: str, title: str, recipients: Iterable[str], output_lines
 def _metric_label(key: str) -> str:
     labels = {
         "cpu_percent": "CPU usage",
+        "crash_attempt": "Crash attempt",
+        "crash_duration_seconds": "Crash duration",
+        "crash_exit_code": "Crash exit code",
         "attempt": "Attempt",
         "attempt_duration_seconds": "Attempt duration",
         "exit_code": "Exit code",
@@ -135,6 +141,9 @@ def _metric_label(key: str) -> str:
         "gpu_scope": "GPU scope",
         "ram_mib": "RAM usage",
         "remaining_retries": "Remaining retries",
+        "restart_delay_seconds": "Restart delay",
+        "restart_attempt": "Restart attempt",
+        "stable_for_seconds": "Stable for",
         "system_ram_total_bytes": "Total system RAM",
     }
     if key in labels:
@@ -156,9 +165,23 @@ def _metric_value(key: str, value: Any) -> str:
         return "{:.3f} GB".format(float(value) / 1000000000)
     if key == "elapsed_seconds":
         return "{} s".format(value)
-    if key == "attempt_duration_seconds":
+    if key in {"attempt_duration_seconds", "crash_duration_seconds", "restart_delay_seconds", "stable_for_seconds"}:
         return "{} s".format(value)
     return str(value)
+
+
+def _status_html(kind: str, status: str) -> str:
+    if kind == "crash_recovered":
+        return (
+            '<span style="font-weight:700;color:#dc2626">Crashed</span>'
+            '<span style="color:#cbd5e1">; then </span>'
+            '<span style="font-weight:700;color:#16a34a">Restarted successfully</span>'
+        )
+    if kind in {"final_failure", "possible_code_error"}:
+        return '<span style="font-weight:700;color:#dc2626">{}</span>'.format(html.escape(status))
+    if kind == "completion":
+        return '<span style="font-weight:700;color:#16a34a">{}</span>'.format(html.escape(status))
+    return html.escape(status)
 
 
 def send_message(credentials: Dict[str, Any], message: EmailMessage) -> None:

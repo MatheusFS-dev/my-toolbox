@@ -44,7 +44,7 @@
 | Supported systems | Linux x64, Linux ARM64, and Windows x64 |
 | Interactive workflow | Categorized, multi-select terminal interface through `tb list` |
 | Guide library | Searchable bundled Markdown articles through `tb search` |
-| Macro library | Searchable filesystem-discovered AutoHotkey scripts through `tb macros` |
+| Macro library | Searchable AutoHotkey (Windows) and ydotool (Linux) scripts through `tb macros` |
 | Platform awareness | Native Linux, WSL, and Windows filtering before commands are shown or run |
 | Catalog source | Tool names, categories, descriptions, and platform rules in `commands.json` |
 | Maintenance | Built-in macro browser, search, update, version, help, and uninstall commands |
@@ -146,15 +146,22 @@ Tab completion suggests environment-supported built-in, listed, and direct-only 
 
 ## Macros
 
-Run `tb macros` to browse the bundled macro library. Type to search each macro's title, description, relative path, and script content; use Up and Down to move, Enter to open the action menu, and Escape or Ctrl+C to cancel. The action menu contains **Run** and **Download**.
+Run `tb macros` to browse the bundled macro library. Type to search each macro's title, description, relative path, and script content; use Up and Down to move, Enter to open the action menu, and Escape or Ctrl+C to cancel. Supported OSs appear in red below each description. Both subpackages remain visible, but **Run** is disabled on unsupported OSs; **Download** stays available.
 
-The included **Press key after X ms** macro waits for a delay and then sends one key. Its defaults are `Enter` and `12000000` milliseconds. **Run** asks for these values, validates them, starts AutoHotkey as a detached background process, prints its PID, and returns immediately.
+Both subpackages include **Press key after X ms**, with defaults of `Enter` and `12000000` milliseconds. **Run** asks for the values and schedules the macro in the background, prints its PID, and returns immediately.
 
-Running macros requires AutoHotkey v2. If no working v2 runtime is found, the toolbox offers to install it and validates the result; after a successful installation, run `tb macros` again to launch the macro. Windows uses the official AutoHotkey v2 setup. Linux and WSL x64 use the independent AutoHotkey Linux port, which is currently a technology preview. Linux ARM64 can browse and download macros, but **Run** is disabled because that port does not provide an ARM64 runtime.
+- **autohotkey — Windows only:** requires AutoHotkey v2. If no working runtime is found, the toolbox offers the official Windows installer and validates the result. Run `tb macros` again after installation.
+- **ydotool — Linux:** uses Linux input events for Wayland or X11. If ydotool is missing or incompatible, the toolbox offers to build checksum-verified v1.0.4 into `~/.local/bin`, using CMake, Make, and a C compiler, then continues running the selected macro. This also supports Linux ARM64. Older 0.1.x packages are rejected.
 
-**Download** copies only the selected `.ahk` file into an existing directory, accepts absolute paths, paths relative to the current directory, and `~` paths, and asks before overwriting. The downloaded script retains its direct-execution defaults.
+`tb macros` automatically reuses a working `ydotoold` or starts it in the background. When `/dev/uinput` requires elevated access, `sudo` may ask for your password. The toolbox creates a socket owned by your user with mode `0600`, waits for startup, and passes the socket configuration to the macro automatically. An existing `YDOTOOL_SOCKET` setting is respected; otherwise the toolbox uses `~/.ydotool_socket` when starting its daemon. Later runs reuse the daemon, and it starts again on demand after a reboot.
 
-Macro packages live below `packages/macros`. The registered `autohotkey` subpackage discovers regular `.ahk` files recursively. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Adding a new `.ahk` file is automatic, while adding another subpackage requires a driver implementation.
+The toolbox validates macro arguments before daemon startup and prints log paths for daemon startup and background macro errors. If authorization or startup fails, the macro is not scheduled.
+
+The ydotool timer accepts `Enter`, `Space`, `Tab`, `Escape`, arrow/navigation keys, or a numeric Linux keycode (1–767). Numeric codes refer to physical keys, not layout-independent characters. A downloaded timer can be run as `sh press_key_after_x_ms.sh Enter 1000` with ydotool on `PATH` and the daemon configured.
+
+**Download** copies only the selected `.ahk` or `.sh` file into an existing directory, accepts absolute paths, paths relative to the current directory, and `~` paths, and asks before overwriting. The downloaded script retains its direct-execution defaults.
+
+Macro packages live below `packages/macros`. The `autohotkey` driver discovers regular `.ahk` files recursively; `ydotool` discovers `.sh` files. Ydotool scripts must support `--check` followed by the macro arguments, validating them without sleeping or sending input. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Adding a script to either subpackage is automatic; another subpackage requires a driver implementation.
 
 ## Tool Catalog
 

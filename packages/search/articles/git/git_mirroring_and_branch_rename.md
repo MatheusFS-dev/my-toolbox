@@ -1,4 +1,4 @@
-# What is actually mirrored
+# git mirroring and Branch rename
 
 Git mirroring covers **commits, branches, tags, refs**. It does **not** mirror issues, PRs, wiki, releases metadata, permissions, CI settings.
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -38,6 +39,7 @@ type macroModel struct {
 	rowStarts, rowEnds                      []int
 	modal, completed, cancelled, runEnabled bool
 	selection                               MacroSelection
+	goos                                    string
 }
 
 func newMacroModel(macros []Macro, runEnabled bool, width, height int) macroModel {
@@ -45,11 +47,15 @@ func newMacroModel(macros []Macro, runEnabled bool, width, height int) macroMode
 	input.Prompt = "› "
 	input.Placeholder = "Type to search macros"
 	input.Focus()
-	model := macroModel{macros: append([]Macro(nil), macros...), input: input, runEnabled: runEnabled}
+	model := macroModel{macros: append([]Macro(nil), macros...), input: input, runEnabled: runEnabled, goos: runtime.GOOS}
 	model.resize(width, height)
 	model.refresh()
 	return model
 }
+func (model macroModel) canRun() bool {
+	return model.runEnabled && model.cursor < len(model.results) && macroSupportsOS(model.results[model.cursor].Macro, model.goos)
+}
+
 func (model macroModel) Init() tea.Cmd { return model.input.Focus() }
 func (model macroModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := message.(tea.WindowSizeMsg); ok {
@@ -70,13 +76,13 @@ func (model macroModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				model.rebuild()
 				return model, nil
 			case tea.KeyUp, tea.KeyDown:
-				if model.runEnabled {
+				if model.canRun() {
 					model.action = 1 - model.action
 				}
 				return model, nil
 			case tea.KeyEnter:
 				action := MacroActionRun
-				if !model.runEnabled || model.action == 1 {
+				if !model.canRun() || model.action == 1 {
 					action = MacroActionDownload
 				}
 				model.selection = MacroSelection{Macro: model.results[model.cursor].Macro, Action: action}
@@ -104,7 +110,8 @@ func (model macroModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			if len(model.results) > 0 {
 				model.modal = true
-				if !model.runEnabled {
+				model.action = 0
+				if !model.canRun() {
 					model.action = 1
 				}
 				model.resize(model.width, model.height)
@@ -134,8 +141,8 @@ func (model macroModel) View() tea.View {
 			pointerDownload = "› "
 		}
 		body += "\n\n" + pointerRun + run + "\n" + pointerDownload + "Download"
-		if !model.runEnabled {
-			body += "\n" + presentationStyle("Run unavailable on Linux ARM64.", ansiGray, true)
+		if !model.canRun() {
+			body += "\n" + presentationStyle("Run unavailable on this OS.", ansiGray, true)
 		}
 	}
 	return tea.NewView(title + "\n" + model.input.View() + "\n\n" + body + "\n" + footer)
@@ -193,6 +200,11 @@ func (model *macroModel) rebuild() {
 		if result.Macro.Description != "" {
 			for _, line := range wrapText(result.Macro.Description, max(1, model.width-6)) {
 				lines = append(lines, "      "+line)
+			}
+		}
+		if driver, ok := macroDrivers[result.Macro.Subpackage]; ok {
+			for _, line := range wrapText("Supported OSs: "+driver.label, max(1, model.width-6)) {
+				lines = append(lines, "      "+presentationStyle(line, ansiBrightRed, true))
 			}
 		}
 		model.rowEnds[i] = len(lines) - 1

@@ -9,11 +9,14 @@ from typing import Any, Dict, Iterable, List
 def write_reports(run_directory: Path, samples: List[Dict[str, Any]], lifecycle: List[Dict[str, Any]], summary: Dict[str, Any]) -> None:
     """Write machine-readable samples/lifecycle data and JSON/text summaries."""
     directory = Path(run_directory)
-    fields = ["elapsed_seconds", "cpu_percent", "ram_mib", "gpu_percent", "gpu_memory_mib"]
+    fields = ["elapsed_seconds", "cpu_percent", "ram_mib", "gpu_percent", "gpu_memory_mib", "gpu_devices"]
     with (directory / "samples.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(samples)
+        for sample in samples:
+            row = dict(sample)
+            row["gpu_devices"] = json.dumps(sample.get("gpu_devices", []), ensure_ascii=False, separators=(",", ":"))
+            writer.writerow(row)
     (directory / "lifecycle.jsonl").write_text("".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in lifecycle), encoding="utf-8")
     (directory / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (directory / "summary.txt").write_text("\n".join("{}: {}".format(key, value) for key, value in sorted(summary.items())) + "\n", encoding="utf-8")

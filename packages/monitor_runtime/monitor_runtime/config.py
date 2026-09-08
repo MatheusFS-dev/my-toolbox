@@ -24,7 +24,7 @@ def default_config() -> Dict[str, Any]:
         "recipients": [],
         "notifications": {
             "heartbeat": False,
-            "recovery": True,
+            "runtime_crash": True,
             "scheduled_restart": True,
             "final_failure": True,
             "completion": True,
@@ -106,6 +106,8 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
             merged[key].update(value)
         else:
             merged[key] = value
+    notifications = merged["notifications"]
+    notifications.pop("recovery", None)
     restart = merged["restart"]
     if "memory_limit_gb" not in configured_restart and "memory_limit_mib" in configured_restart:
         try:

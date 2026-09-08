@@ -1,0 +1,18 @@
+{
+  "title": "Press key after X ms",
+  "description": "Wait for a delay, then press one key using ydotool (Wayland or X11).",
+  "arguments": [
+    {
+      "id": "key",
+      "prompt": "Key to press (Enter, Space, Tab, Escape, arrows/navigation, or Linux keycode 1-767)",
+      "type": "text",
+      "default": "Enter"
+    },
+    {
+      "id": "delay_ms",
+      "prompt": "Delay in milliseconds",
+      "type": "non_negative_integer",
+      "default": "12000000"
+    }
+  ]
+}

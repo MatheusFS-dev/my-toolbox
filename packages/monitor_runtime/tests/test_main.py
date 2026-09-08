@@ -68,6 +68,24 @@ class MainTests(unittest.TestCase):
             events = [json.loads(line) for line in output.splitlines()]
             self.assertEqual(events[-1]["outcome"], "cancelled")
 
+    def test_sigint_outside_active_process_loop_still_emits_final_outcome(self):
+        request = {
+            "protocol_version": 1,
+            "type": "run",
+            "scripts": ["/tmp/job.py"],
+            "interpreter": sys.executable,
+        }
+        output = io.StringIO()
+        with patch("sys.stdin", io.StringIO(json.dumps(request) + "\n")), \
+                patch("sys.stdout", output), \
+                patch("monitor_runtime.__main__.load_config", return_value=default_config()), \
+                patch("monitor_runtime.__main__.run_queue", side_effect=KeyboardInterrupt):
+            code = main()
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(code, 130)
+        self.assertEqual(events[-1]["type"], "final_outcome")
+        self.assertEqual(events[-1]["outcome"], "cancelled")
+
     def test_custom_title_reaches_completion_email_and_final_event(self):
         """Preserve the selected title through runtime notifications and events."""
         with TemporaryDirectory() as directory:
