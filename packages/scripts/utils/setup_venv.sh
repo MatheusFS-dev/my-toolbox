@@ -41,14 +41,17 @@ if [ "$IS_INSTALLED" -eq 1 ]; then
         echo "Auto-skipping uninstall (default: No)."
         exit 0
     fi
-    read -r -p "Do you want to uninstall it? [y/N]: " answer
-    case "$answer" in
-        y|Y|yes|YES) ;;
-        *)
+    while true; do
+        read -r -p "Do you want to uninstall it? [y/N]: " answer || { echo "Input canceled." >&2; exit 1; }
+        case "${answer,,}" in
+            y|yes) break ;;
+            ''|n|no)
             echo "Cancelled."
             exit 0
             ;;
-    esac
+            *) echo "Please enter yes, y, no, n, or press Enter for no." >&2 ;;
+        esac
+    done
 
     echo ""
     echo "Uninstalling..."
@@ -103,15 +106,15 @@ else
         echo "Auto-confirming install (default: Yes)."
         answer="y"
     else
-        read -r -p "Do you want to install it? [y/N]: " answer
+        while true; do
+            read -r -p "Do you want to install it? [y/N]: " answer || { echo "Input canceled." >&2; exit 1; }
+            case "${answer,,}" in
+                y|yes) break ;;
+                ''|n|no) echo "Cancelled."; exit 0 ;;
+                *) echo "Please enter yes, y, no, n, or press Enter for no." >&2 ;;
+            esac
+        done
     fi
-    case "$answer" in
-        y|Y|yes|YES) ;;
-        *)
-            echo "Cancelled."
-            exit 0
-            ;;
-    esac
 
     echo ""
     echo "Installing..."

@@ -233,12 +233,30 @@ class EnvironmentAliasTest(unittest.TestCase):
             self.assertEqual(conflicts, [home / ".bashrc"])
             self.assertIn(r"project\1", updates[home / ".bashrc"])
 
-    def test_blank_path_and_symlink_configuration_are_rejected(self) -> None:
-        """Require an explicit venv path and refuse to replace a shell symlink."""
-        with mock.patch("builtins.input", return_value=""), self.assertRaisesRegex(
-            ValueError, "explicit"
-        ):
-            self.tool.run_interactive()
+    def test_blank_path_retries_before_any_alias_write(self) -> None:
+        """Retry an empty venv path and accept a subsequent valid selection."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            venv = root / ".venv"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "bin" / "activate").write_text("activate\n", encoding="utf-8")
+            (venv / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+            (venv / "bin" / "python").chmod(0o755)
+            with mock.patch(
+                "builtins.input", side_effect=("", str(root), "", "invalid", "bash", "n")
+            ) as prompt, mock.patch("builtins.print") as output:
+                self.tool.run_interactive()
+            self.assertEqual(prompt.call_count, 6)
+            self.assertIn("explicit", output.call_args_list[0].args[0])
+            self.assertTrue(
+                any(
+                    "bash, zsh, or both" in call.args[0]
+                    for call in output.call_args_list
+                )
+            )
+
+    def test_symlink_configuration_is_rejected(self) -> None:
+        """Refuse to replace a shell configuration symlink."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             venv = root / "venv"
@@ -255,6 +273,17 @@ class EnvironmentAliasTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "symlink"):
                 self.tool.prepare_alias_updates(venv, "project-env", ["bash"], home)
             self.assertEqual(target.read_text(encoding="utf-8"), "export KEEP=1\n")
+
+    def test_yes_no_prompt_retries_invalid_input_and_preserves_default(self) -> None:
+        """Warn, repeat the same prompt, and retain the configured default."""
+        with mock.patch("builtins.input", side_effect=("maybe", "")) as prompt, mock.patch(
+            "builtins.print"
+        ) as output:
+            self.assertTrue(self.tool.prompt_yes_no("Continue?", True))
+        self.assertEqual(prompt.call_count, 2)
+        output.assert_called_once_with(
+            "Enter yes, y, no, n, or press Enter for yes."
+        )
 
 
 class PythonBootstrapTest(unittest.TestCase):
@@ -322,6 +351,53 @@ class PythonBootstrapTest(unittest.TestCase):
         """Load the bundled parser as Tomli 2.2.1 when tomllib is unavailable."""
         self.assertIsNone(self.fallback_error, str(self.fallback_error))
         self.assertEqual(self.fallback_tool.tomllib.__version__, "2.2.1")
+
+    def test_yes_no_prompt_retries_invalid_explicit_answer(self) -> None:
+        """Reject an invalid answer and repeat an explicit yes/no question."""
+        with mock.patch("builtins.input", side_effect=("later", "n")) as prompt, mock.patch(
+            "builtins.print"
+        ) as output:
+            self.assertFalse(self.tool.prompt_yes_no("Continue?", None))
+        self.assertEqual(prompt.call_count, 2)
+        output.assert_called_once_with("Enter yes, y, no, or n.")
+
+    def test_interactive_paths_retry_before_bootstrap_preparation(self) -> None:
+        """Retry invalid project and venv paths before preparing any writes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            venv = root / "venv"
+            (venv / "bin").mkdir(parents=True)
+            (venv / "bin" / "activate").write_text("activate\n", encoding="utf-8")
+            (venv / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+            (venv / "bin" / "python").chmod(0o755)
+            plan = self.tool.BootstrapPlan(project, [], [], {project / "generated": "x"})
+            answers = (
+                str(root / "missing-project"),
+                str(project),
+                str(root / "missing-venv"),
+                str(venv),
+                "n",
+                "n",
+                "n",
+                "n",
+            )
+            with mock.patch("builtins.input", side_effect=answers) as prompt, mock.patch(
+                "builtins.print"
+            ) as output, mock.patch.object(
+                self.tool, "prepare_bootstrap", return_value=plan
+            ) as prepare, mock.patch.object(
+                self.tool, "write_bootstrap_files"
+            ) as write:
+                self.tool.run_interactive()
+
+            self.assertEqual(prompt.call_count, 8)
+            self.assertEqual(prepare.call_count, 1)
+            write.assert_not_called()
+            warnings = "\n".join(str(call.args[0]) for call in output.call_args_list)
+            self.assertIn("Project directory does not exist", warnings)
+            self.assertIn("does not exist", warnings)
 
     def test_bundled_tomli_fallback_preserves_valid_project_toml(self) -> None:
         """Preserve unrelated TOML while updating project metadata via fallback."""
@@ -638,3 +714,29 @@ class ProjectTemplateTest(unittest.TestCase):
             entries = self.tool.discover_template(source)
             with self.assertRaisesRegex(ValueError, "overlap"):
                 self.tool.preflight_copy(source, nested, entries)
+
+    def test_destination_and_confirmation_retry_invalid_input(self) -> None:
+        """Retry invalid paths and explicit confirmations before copying."""
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            with mock.patch(
+                "builtins.input",
+                side_effect=("", str(destination / "missing"), str(destination)),
+            ) as prompt, mock.patch("builtins.print") as output, mock.patch.object(
+                self.tool, "discover_template", return_value=[]
+            ), mock.patch.object(
+                self.tool, "preflight_copy", return_value=[]
+            ), mock.patch.object(
+                self.tool, "copy_template"
+            ) as copy:
+                self.tool.run_interactive()
+            self.assertEqual(prompt.call_count, 3)
+            self.assertEqual(output.call_args_list[0].args[0], "Destination cannot be empty.")
+            copy.assert_called_once()
+
+        with mock.patch("builtins.input", side_effect=("maybe", "yes")) as prompt, mock.patch(
+            "builtins.print"
+        ) as output:
+            self.assertTrue(self.tool.prompt_yes_no("Overwrite?"))
+        self.assertEqual(prompt.call_count, 2)
+        output.assert_called_once_with("Enter yes, y, no, or n.")

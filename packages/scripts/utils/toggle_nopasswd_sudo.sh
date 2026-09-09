@@ -66,7 +66,16 @@ if [[ -z "$TARGET_USER" ]]; then
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
         TARGET_USER="$SUDO_USER"
     else
-        read -rp "Target user: " TARGET_USER
+        while true; do
+            read -rp "Target user: " TARGET_USER || { log_error "Input canceled."; exit 1; }
+            if [[ -z "$TARGET_USER" ]]; then
+                log_warn "Target user cannot be empty."
+            elif ! id "$TARGET_USER" >/dev/null 2>&1; then
+                log_warn "User '${TARGET_USER}' does not exist."
+            else
+                break
+            fi
+        done
     fi
 fi
 
@@ -154,11 +163,14 @@ echo
 # Confirmation
 # ---------------------------------------------------------------------------
 if [[ "$ASSUME_YES" -ne 1 ]]; then
-    read -rp "Do you want to ${ACTION_DESC} for '${TARGET_USER}'? [y/N]: " confirm
-    case "${confirm,,}" in
-        y|yes) : ;;
-        *) log_info "Operation canceled. No changes made."; exit 0 ;;
-    esac
+    while true; do
+        read -rp "Do you want to ${ACTION_DESC} for '${TARGET_USER}'? [y/N]: " confirm || { log_error "Input canceled."; exit 1; }
+        case "${confirm,,}" in
+            y|yes) break ;;
+            ''|n|no) log_info "Operation canceled. No changes made."; exit 0 ;;
+            *) log_warn "Enter yes, y, no, n, or press Enter for no." ;;
+        esac
+    done
 fi
 
 # ---------------------------------------------------------------------------

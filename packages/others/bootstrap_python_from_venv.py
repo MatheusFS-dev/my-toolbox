@@ -924,16 +924,19 @@ def prompt_yes_no(question: str, default: Optional[bool]) -> bool:
         EOFError: If input closes before an answer.
     """
     suffix = " [Y/n]" if default is True else " [y/N]" if default is False else " [y/n]"
-    answer = input(question + suffix + ": ").strip().lower()
-    if not answer:
+    while True:
+        answer = input(question + suffix + ": ").strip().lower()
+        if not answer and default is not None:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
         if default is None:
-            raise ValueError("An explicit yes/no answer is required")
-        return default
-    if answer in {"y", "yes"}:
-        return True
-    if answer in {"n", "no"}:
-        return False
-    raise ValueError(f"Invalid yes/no answer: {answer}")
+            print("Enter yes, y, no, or n.")
+        else:
+            default_name = "yes" if default else "no"
+            print(f"Enter yes, y, no, n, or press Enter for {default_name}.")
 
 
 def validate_uv() -> str:
@@ -978,13 +981,25 @@ def run_interactive() -> None:
         OSError: If files cannot be read, backed up, or written.
         EOFError: If interactive input closes before required answers.
     """
-    project_text = input(f"Project directory [{Path.cwd()}]: ").strip()
-    project = Path(project_text).expanduser() if project_text else Path.cwd()
+    while True:
+        project_text = input(f"Project directory [{Path.cwd()}]: ").strip()
+        project = Path(project_text).expanduser() if project_text else Path.cwd()
+        if project.is_dir():
+            break
+        print(f"Project directory does not exist: {project}")
     default_venv = os.environ.get("VIRTUAL_ENV", "")
     prompt = f"Venv path [{default_venv}]: " if default_venv else "Venv path: "
-    venv_text = input(prompt).strip() or default_venv
-    if not venv_text:
-        raise ValueError("Venv path cannot be empty")
+    while True:
+        venv_text = input(prompt).strip() or default_venv
+        if not venv_text:
+            print("Venv path cannot be empty.")
+            continue
+        try:
+            resolve_venv(Path(venv_text).expanduser())
+        except (FileNotFoundError, ValueError) as error:
+            print(str(error))
+            continue
+        break
     scan_notebooks = prompt_yes_no("Scan notebooks too?", True)
     restrict_uv = prompt_yes_no(
         "Restrict uv resolution to the current platform?",

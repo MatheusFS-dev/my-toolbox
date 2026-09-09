@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "4c4015c7e173649f7e450c2b5e258ca20b634efb3bd019879d1ae91d1668f955"
+	const want = "358b4eef1d538ea7260474b1d4a8fc109047800663734d6b32d0ee035144828b"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -340,9 +340,6 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 	}
 	for _, command := range catalog.Commands {
 		wantVisibility := "list"
-		if command.Name == "setup-agents-project" {
-			wantVisibility = "direct"
-		}
 		if command.Visibility != wantVisibility {
 			t.Fatalf("command %q visibility = %q, want %q", command.Name, command.Visibility, wantVisibility)
 		}
@@ -363,6 +360,40 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		}
 		if windowsEntrypoint[0] != "python-script" || !strings.HasSuffix(windowsEntrypoint[1], "/windows/"+installerName) {
 			t.Fatalf("command %q Windows entrypoint = %v", command.Name, windowsEntrypoint)
+		}
+	}
+}
+
+func TestRepositoryListInteractiveCommandsHavePromptAuditCoverage(t *testing.T) {
+	catalog, err := LoadCatalogFile("../commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage := map[string]string{
+		"setup-agents-codex":         "installer Python retry tests",
+		"setup-agents-claude":        "verified existing retry prompts",
+		"setup-agents-antigravity":   "verified existing retry prompts",
+		"setup-agents-project":       "installer Python retry tests",
+		"setup-alacritty":            "terminal Bash prompt tests",
+		"setup-kitty":                "terminal Bash prompt tests",
+		"setup-windows":              "Windows PowerShell prompt tests",
+		"set-terminal-hotkey":        "typed command arguments; no interactive input",
+		"setup-wsl":                  "terminal Bash prompt tests",
+		"set-vscode-wsl-cwd":         "Windows PowerShell path prompt tests",
+		"set-default-cwd":            "terminal Bash path prompt tests",
+		"change-grub-order":          "verified existing retry prompts",
+		"setup-venv":                 "terminal Bash prompt tests",
+		"toggle-nopasswd-sudo":       "terminal Bash user and prompt tests",
+		"create-env-alias":           "utility Python retry tests",
+		"bootstrap-python-from-venv": "utility Python retry tests",
+		"create-project-template":    "utility Python retry tests",
+	}
+	for _, command := range catalog.Commands {
+		if command.Visibility != "list" || command.Protocol == "builtin" {
+			continue
+		}
+		if coverage[command.Name] == "" {
+			t.Errorf("list-visible interactive command %q has no prompt audit entry", command.Name)
 		}
 	}
 }

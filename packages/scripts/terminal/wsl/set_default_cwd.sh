@@ -61,10 +61,18 @@ if (( $# != 0 )); then
     fail 'set_default_cwd.sh does not accept arguments; enter the directory at the prompt.'
 fi
 
-read -r -p 'Enter the default shell directory: ' target || fail 'A directory is required.'
-[[ -n "$target" ]] || fail 'A directory is required.'
-[[ "$target" == /* ]] || fail 'The directory must be an absolute path.'
-[[ -d "$target" ]] || fail "The directory does not exist: $target"
+while true; do
+    read -r -p 'Enter the default shell directory: ' target || fail 'Input canceled.'
+    if [[ -z "$target" ]]; then
+        printf 'Warning: A directory is required.\n' >&2
+    elif [[ "$target" != /* ]]; then
+        printf 'Warning: The directory must be an absolute path.\n' >&2
+    elif [[ ! -d "$target" ]]; then
+        printf 'Warning: The directory does not exist: %s\n' "$target" >&2
+    else
+        break
+    fi
+done
 
 escaped_target="${target//\'/\'\\\'\'}"
 quoted_target="'$escaped_target'"

@@ -79,9 +79,14 @@ function New-FeatureResult {
 function Read-YesNo {
     param([string]$Message, [bool]$Default = $true)
     $suffix = if ($Default) { '[Y/n]' } else { '[y/N]' }
-    $answer = Read-Host "$Message $suffix"
-    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
-    return $answer -match '^(?i:y|yes)$'
+    while ($true) {
+        $answer = Read-Host "$Message $suffix"
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+        if ($answer -match '^(?i:y|yes)$') { return $true }
+        if ($answer -match '^(?i:n|no)$') { return $false }
+        $defaultName = if ($Default) { 'yes' } else { 'no' }
+        Write-Warning "Enter yes, y, no, n, or press Enter for $defaultName."
+    }
 }
 
 function Find-JsoncStringEnd {

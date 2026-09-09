@@ -262,16 +262,19 @@ def prompt_yes_no(question: str, default: Optional[bool]) -> bool:
         EOFError: If interactive input closes before an answer.
     """
     suffix = " [Y/n]" if default is True else " [y/N]" if default is False else " [y/n]"
-    answer = input(question + suffix + ": ").strip().lower()
-    if not answer:
+    while True:
+        answer = input(question + suffix + ": ").strip().lower()
+        if not answer and default is not None:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
         if default is None:
-            raise ValueError("An explicit yes/no answer is required")
-        return default
-    if answer in {"y", "yes"}:
-        return True
-    if answer in {"n", "no"}:
-        return False
-    raise ValueError(f"Invalid yes/no answer: {answer}")
+            print("Enter yes, y, no, or n.")
+        else:
+            default_name = "yes" if default else "no"
+            print(f"Enter yes, y, no, n, or press Enter for {default_name}.")
 
 
 def run_interactive() -> None:
@@ -289,16 +292,32 @@ def run_interactive() -> None:
         OSError: If shell files or backups cannot be read or written.
         EOFError: If interactive input closes before all required answers.
     """
-    path_answer = input("Venv root or project containing .venv: ").strip()
-    if not path_answer:
-        raise ValueError("An explicit venv or project path is required")
-    venv = resolve_venv(Path(path_answer))
+    while True:
+        path_answer = input("Venv root or project containing .venv: ").strip()
+        if not path_answer:
+            print("Enter an explicit venv or project path.")
+            continue
+        try:
+            venv = resolve_venv(Path(path_answer))
+        except (FileNotFoundError, ValueError) as error:
+            print(str(error))
+            continue
+        break
     default_alias = venv.parent.name if venv.name == ".venv" else venv.name
-    alias_name = input(f"Alias name [{default_alias}]: ").strip() or default_alias
-    shell_choice = input("Shell selection (bash, zsh, or both): ").strip().lower()
+    while True:
+        alias_name = input(f"Alias name [{default_alias}]: ").strip() or default_alias
+        try:
+            validate_alias_name(alias_name)
+        except ValueError as error:
+            print(str(error))
+            continue
+        break
     shell_map = {"bash": ["bash"], "zsh": ["zsh"], "both": ["bash", "zsh"]}
-    if shell_choice not in shell_map:
-        raise ValueError("Shell selection must be bash, zsh, or both")
+    while True:
+        shell_choice = input("Shell selection (bash, zsh, or both): ").strip().lower()
+        if shell_choice in shell_map:
+            break
+        print("Shell selection must be bash, zsh, or both.")
     updates, conflicts = prepare_alias_updates(
         venv,
         alias_name,

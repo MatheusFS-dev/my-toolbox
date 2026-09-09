@@ -161,8 +161,14 @@ validate_preflight() {
 prompt_yes_no() {
     local prompt="$1"
     local answer=''
-    read -r -p "$prompt [Y/n]: " answer || true
-    [[ -z "$answer" || "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
+    while true; do
+        read -r -p "$prompt [Y/n]: " answer || { printf 'Input canceled.\n' >&2; exit 1; }
+        case "${answer,,}" in
+            ''|y|yes) return 0 ;;
+            n|no) return 1 ;;
+            *) printf 'Please enter yes, y, no, n, or press Enter for yes.\n' >&2 ;;
+        esac
+    done
 }
 
 select_features() {
@@ -181,10 +187,14 @@ select_features() {
 
     if [[ "${SELECTED[eza]}" == true && "$ASSUME_YES" == false && "$EZA_VIEW_EXPLICIT" == false ]]; then
         local view=''
-        read -r -p 'eza view, list or grid [list]: ' view || true
-        if [[ "$view" == grid ]]; then
-            EZA_VIEW=grid
-        fi
+        while true; do
+            read -r -p 'eza view, list or grid [list]: ' view || { printf 'Input canceled.\n' >&2; exit 1; }
+            case "${view,,}" in
+                ''|list) EZA_VIEW=list; break ;;
+                grid) EZA_VIEW=grid; break ;;
+                *) printf 'Please enter list, grid, or press Enter for list.\n' >&2 ;;
+            esac
+        done
     fi
 }
 

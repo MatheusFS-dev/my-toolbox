@@ -6,6 +6,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
+. (Join-Path $PSScriptRoot 'modules/wsl_path_prompt.ps1')
+
 function Find-JsonStringEnd {
     param([Parameter(Mandatory = $true)][string]$Text, [Parameter(Mandatory = $true)][int]$Start)
 
@@ -345,13 +347,8 @@ try {
         exit 0
     }
 
-    if ([string]::IsNullOrWhiteSpace($WslPath)) { $WslPath = Read-Host -Prompt 'Enter the default WSL directory' }
-    if ([string]::IsNullOrWhiteSpace($wslPath)) { throw 'A WSL directory is required.' }
-    if (-not $wslPath.StartsWith('/')) { throw 'The WSL directory must be an absolute path beginning with /.' }
-
     $wslExe = Join-Path $env:windir 'System32\wsl.exe'
-    & $wslExe --exec test -d $wslPath
-    if ($LASTEXITCODE -ne 0) { throw "The WSL directory does not exist in the default distribution: $wslPath" }
+    $WslPath = Read-WslDirectory -InitialPath $WslPath -WslExe $wslExe
 
     $backupPath = Set-VSCodeWslProfile -SettingsPath $settingsPath -WslPath $wslPath
     $folderUri = Open-VSCodeWslFolder -WslExe $wslExe -WslPath $wslPath

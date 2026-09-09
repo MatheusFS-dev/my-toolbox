@@ -46,15 +46,15 @@ prompt_yes_no() {
         return
     fi
     local input_val
-    read -r -p "$prompt_msg [Default: $default_val]: " input_val
-    if [[ -z "$input_val" ]]; then
-        input_val="$default_val"
-    fi
-    if [[ "$input_val" =~ ^[Yy]$ ]]; then
-        echo "y"
-    else
-        echo "n"
-    fi
+    while true; do
+        read -r -p "$prompt_msg [Default: $default_val]: " input_val || { echo "Input canceled." >&2; exit 1; }
+        [[ -n "$input_val" ]] || input_val="$default_val"
+        case "${input_val,,}" in
+            y|yes) echo "y"; return ;;
+            n|no) echo "n"; return ;;
+            *) echo "Please enter yes, y, no, n, or press Enter for $default_val." >&2 ;;
+        esac
+    done
 }
 
 # 1. Zsh + Oh My Zsh
@@ -133,10 +133,14 @@ if [[ "$RUN_EZA" == "y" ]]; then
         echo "Choose ls/eza display mode:"
         echo "  1) List (one per line) [Default]"
         echo "  2) Side-by-side"
-        read -r -p "Selection [1/2] [Default: 1]: " input_val
-        if [[ "$input_val" == "2" ]]; then
-            EZA_LIST_VIEW="2"
-        fi
+        while true; do
+            read -r -p "Selection [1/2] [Default: 1]: " input_val || { echo "Input canceled." >&2; exit 1; }
+            case "$input_val" in
+                ''|1) EZA_LIST_VIEW="1"; break ;;
+                2) EZA_LIST_VIEW="2"; break ;;
+                *) echo "Please enter 1, 2, or press Enter for 1." >&2 ;;
+            esac
+        done
     fi
 fi
 echo ""

@@ -231,15 +231,15 @@ def prompt_yes_no(question: str) -> bool:
         bool: True for yes and false for no.
 
     Raises:
-        ValueError: If the answer is empty or not yes/no.
         EOFError: If input closes before an answer.
     """
-    answer = input(question + " [y/n]: ").strip().lower()
-    if answer in {"y", "yes"}:
-        return True
-    if answer in {"n", "no"}:
-        return False
-    raise ValueError("An explicit yes/no answer is required")
+    while True:
+        answer = input(question + " [y/n]: ").strip().lower()
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("Enter yes, y, no, or n.")
 
 
 def run_interactive() -> None:
@@ -253,19 +253,19 @@ def run_interactive() -> None:
 
     Raises:
         FileNotFoundError: If the packaged template or destination is missing.
-        ValueError: If Enter is used for the destination, paths overlap, entry
-            types mismatch, or confirmation is invalid.
+        ValueError: If paths overlap or entry types mismatch.
         OSError: If discovery or copying fails.
         EOFError: If input closes before required answers.
     """
-    destination_text = input("Existing destination directory: ").strip()
-    if not destination_text:
-        raise ValueError("Destination cannot be empty")
-    destination = Path(destination_text).expanduser()
-    if not destination.is_dir():
-        raise FileNotFoundError(
-            f"Destination does not exist or is not a directory: {destination}"
-        )
+    while True:
+        destination_text = input("Existing destination directory: ").strip()
+        if not destination_text:
+            print("Destination cannot be empty.")
+            continue
+        destination = Path(destination_text).expanduser()
+        if destination.is_dir():
+            break
+        print(f"Destination does not exist or is not a directory: {destination}")
     destination = destination.resolve()
     source = Path(__file__).resolve().parent / "template"
     entries = discover_template(source)
