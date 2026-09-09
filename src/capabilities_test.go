@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -68,6 +70,24 @@ func TestResolveRequirementsDerivesOfficialInstallerShellButNotGitHubCLI(t *test
 	}
 	if len(github) != 0 {
 		t.Fatalf("GitHub CLI requirements = %v, want none", capabilityIDs(github))
+	}
+}
+
+func TestSupportedPowerShellPathPrefersPowerShell7(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("PowerShell host selection is Windows-specific")
+	}
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("PowerShell 7 is unavailable")
+	}
+	if _, err := exec.LookPath("powershell.exe"); err != nil {
+		t.Skip("Windows PowerShell is unavailable")
+	}
+
+	got, exists := supportedPowerShellPath()
+	if !exists || !strings.EqualFold(got, pwsh) {
+		t.Fatalf("supportedPowerShellPath() = %q, %t, want PowerShell 7 at %q", got, exists, pwsh)
 	}
 }
 
