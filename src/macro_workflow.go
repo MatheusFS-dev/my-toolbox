@@ -71,6 +71,19 @@ func (workflow DefaultMacroWorkflow) run(macro Macro) error {
 	if macro.Subpackage == "ydotool" {
 		return workflow.runYdotool(macro)
 	}
+	if macro.Subpackage == "cronjob" {
+		arguments, err := workflow.macroArguments(macro)
+		if err != nil {
+			return err
+		}
+		check := exec.Command("sh", append([]string{macro.SourcePath, "--check"}, arguments...)...)
+		if details, err := check.CombinedOutput(); err != nil {
+			return fmt.Errorf("validate cronjob: %w: %s", err, strings.TrimSpace(string(details)))
+		}
+		command := exec.Command("sh", append([]string{macro.SourcePath}, arguments...)...)
+		command.Stdin, command.Stdout, command.Stderr = os.Stdin, output, output
+		return command.Run()
+	}
 	findRuntime := workflow.FindRuntime
 	if findRuntime == nil {
 		findRuntime = findAutoHotkeyV2
@@ -120,21 +133,31 @@ func (workflow DefaultMacroWorkflow) run(macro Macro) error {
 func (workflow DefaultMacroWorkflow) macroArguments(macro Macro) ([]string, error) {
 	arguments := []string{}
 	for _, argument := range macro.Arguments {
-		answer, askErr := workflow.UI.Ask(Question{ID: "macro-" + argument.ID, Type: "text", Title: argument.Prompt + " [default: " + argument.Default + "]"})
-		if askErr != nil {
-			return nil, askErr
+		for {
+			answer, askErr := workflow.UI.Ask(Question{ID: "macro-" + argument.ID, Type: "text", Title: argument.Prompt + " [default: " + argument.Default + "]"})
+			if askErr != nil {
+				return nil, askErr
+			}
+			value, ok := answer.(string)
+			if !ok {
+				return nil, fmt.Errorf("macro argument %q returned an invalid answer", argument.ID)
+			}
+			if strings.TrimSpace(value) == "" {
+				value = argument.Default
+			}
+			if err := validateMacroArgument(argument, value); err != nil {
+				if argument.Type == "time_24h" {
+					_, _, _, _, output := workflow.settings()
+					if _, writeErr := fmt.Fprintf(output, "[%s] Warning: invalid %s: %v. Please try again.\n", time.Now().Format(time.RFC3339), argument.Prompt, err); writeErr != nil {
+						return nil, writeErr
+					}
+					continue
+				}
+				return nil, fmt.Errorf("invalid %s: %w", argument.Prompt, err)
+			}
+			arguments = append(arguments, value)
+			break
 		}
-		value, ok := answer.(string)
-		if !ok {
-			return nil, fmt.Errorf("macro argument %q returned an invalid answer", argument.ID)
-		}
-		if strings.TrimSpace(value) == "" {
-			value = argument.Default
-		}
-		if err := validateMacroArgument(argument, value); err != nil {
-			return nil, fmt.Errorf("invalid %s: %w", argument.Prompt, err)
-		}
-		arguments = append(arguments, value)
 	}
 	return arguments, nil
 }

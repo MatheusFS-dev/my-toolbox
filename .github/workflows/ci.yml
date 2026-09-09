@@ -116,6 +116,8 @@ jobs:
       - run: sh scripts/build-markdown-reader_test.sh
       - run: sh scripts/install_test.sh
       - run: sh scripts/completion_test.sh
+      - run: sh scripts/cronjob_test.sh
+      - run: shellcheck packages/macros/cronjob/codex_hi.sh scripts/cronjob_test.sh
       - run: bash scripts/terminal-setup_test.sh
       - run: bash -n completions/tb.bash
       - run: zsh -n completions/_tb

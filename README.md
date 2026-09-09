@@ -44,7 +44,7 @@
 | Supported systems | Linux x64, Linux ARM64, and Windows x64 |
 | Interactive workflow | Categorized, multi-select terminal interface through `tb list` |
 | Guide library | Searchable bundled Markdown articles through `tb search` |
-| Macro library | Searchable AutoHotkey (Windows) and ydotool (Linux) scripts through `tb macros` |
+| Macro library | Searchable AutoHotkey (Windows), ydotool (Linux), and daily Codex cronjob (native systemd Linux) macros through `tb macros` |
 | Platform awareness | Native Linux, WSL, and Windows filtering before commands are shown or run |
 | Catalog source | Tool names, categories, descriptions, and platform rules in `commands.json` |
 | Maintenance | Built-in macro browser, search, update, version, help, and uninstall commands |
@@ -146,9 +146,9 @@ Tab completion suggests environment-supported built-in, listed, and direct-only 
 
 ## Macros
 
-Run `tb macros` to browse the bundled macro library. Type to search each macro's title, description, relative path, and script content; use Up and Down to move, Enter to open the action menu, and Escape or Ctrl+C to cancel. Supported OSs appear in red below each description. Both subpackages remain visible, but **Run** is disabled on unsupported OSs; **Download** stays available.
+Run `tb macros` to browse the bundled macro library. Type to search each macro's title, description, relative path, and script content; use Up and Down to move, Enter to open the action menu, and Escape or Ctrl+C to cancel. Supported OSs appear in red below each description. All subpackages remain visible, but **Run** is disabled on unsupported OSs; **Download** stays available.
 
-Both subpackages include **Press key after X ms**, with defaults of `Enter` and `12000000` milliseconds. **Run** asks for the values and schedules the macro in the background, prints its PID, and returns immediately.
+The autohotkey and ydotool subpackages include **Press key after X ms**, with defaults of `Enter` and `12000000` milliseconds. **Run** asks for the values and schedules the macro in the background, prints its PID, and returns immediately.
 
 - **autohotkey — Windows only:** requires AutoHotkey v2. If no working runtime is found, the toolbox offers the official Windows installer and validates the result. Run `tb macros` again after installation.
 - **ydotool — Linux:** uses Linux input events for Wayland or X11. If ydotool is missing or incompatible, the toolbox offers to build checksum-verified v1.0.4 into `~/.local/bin`, using CMake, Make, and a C compiler, then continues running the selected macro. This also supports Linux ARM64. Older 0.1.x packages are rejected.
@@ -161,7 +161,13 @@ The ydotool timer accepts `Enter`, `Space`, `Tab`, `Escape`, arrow/navigation ke
 
 **Download** copies only the selected `.ahk` or `.sh` file into an existing directory, accepts absolute paths, paths relative to the current directory, and `~` paths, and asks before overwriting. The downloaded script retains its direct-execution defaults.
 
-Macro packages live below `packages/macros`. The `autohotkey` driver discovers regular `.ahk` files recursively; `ydotool` discovers `.sh` files. Ydotool scripts must support `--check` followed by the macro arguments, validating them without sleeping or sending input. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Adding a script to either subpackage is automatic; another subpackage requires a driver implementation.
+The **cronjob — native systemd Linux** subpackage includes **Schedule Codex Hi**. Select **Run** and enter a daily local time in `HH:MM` format, or accept `07:00`. Installation runs in the foreground, enables/starts an existing `cron.service` or `crond.service` using `sudo` when needed, and installs one user crontab entry for every day of the week. It requires an installed Codex CLI, `crontab`, systemd, `flock`, and standard GNU/Linux utilities; WSL is unsupported. It does not install OS packages, invoke Codex, or open the status viewer during setup.
+
+Run `codex-hi` to view the schedule, recent timestamped events, and continuous status updates until Ctrl+C. Events report submission, Codex output, success or failure, and waiting for the next run; scheduler health is checked every 30 seconds. The scheduled request sends `Hi` using non-interactive, ephemeral Codex execution with a read-only sandbox and the user's saved authentication. Log in with Codex before the first scheduled run. Success means Codex exited with status zero; the command does not verify or report the account's five-hour usage-window state. Failed runs are not retried, overlapping runs are skipped, and the machine must be awake with cron running at the scheduled time. Normal cron timezone and daylight-saving behavior applies.
+
+The command is installed at `~/.local/bin/codex-hi`; add `~/.local/bin` to `PATH` if needed. Runtime files are stored under `${XDG_DATA_HOME:-$HOME/.local/share}/codex-hi`, independently of toolbox releases, and logs under `${XDG_STATE_HOME:-$HOME/.local/state}/my-toolbox/codex-hi`. Re-running the macro changes the schedule while preserving history. `tb uninstall` leaves this job installed. Run `codex-hi --uninstall` to remove its schedule, command, configuration, and logs; the shared cron service remains running. A downloaded installer can be run as `sh codex_hi.sh` to prompt for the time, or `sh codex_hi.sh 07:00`.
+
+Macro packages live below `packages/macros`. The `autohotkey` driver discovers regular `.ahk` files recursively; `ydotool` and `cronjob` discover `.sh` files. Both shell drivers require `--check` followed by the macro arguments, validating without side effects. Cronjob installers run in the foreground. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Argument types are `text`, `non_negative_integer`, and `time_24h`. Adding a script to a registered subpackage is automatic; another subpackage requires a driver implementation.
 
 ## Tool Catalog
 

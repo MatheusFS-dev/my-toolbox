@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Macro is one runnable script discovered from a registered macro driver.
@@ -59,6 +60,7 @@ type macroDriver struct {
 var macroDrivers = map[string]macroDriver{
 	"autohotkey": {".ahk", "windows", "Windows"},
 	"ydotool":    {".sh", "linux", "Linux"},
+	"cronjob":    {".sh", "linux", "Linux"},
 }
 
 func macroSupportsOS(macro Macro, goos string) bool {
@@ -159,7 +161,7 @@ func loadMacro(root, subpackage, path string) (Macro, error) {
 			return Macro{}, fmt.Errorf("duplicate argument id %q", argument.ID)
 		}
 		seen[argument.ID] = true
-		if argument.Type != "text" && argument.Type != "non_negative_integer" {
+		if argument.Type != "text" && argument.Type != "non_negative_integer" && argument.Type != "time_24h" {
 			return Macro{}, fmt.Errorf("unsupported argument type %q", argument.Type)
 		}
 		if err := validateMacroArgument(argument, argument.Default); err != nil {
@@ -171,6 +173,12 @@ func loadMacro(root, subpackage, path string) (Macro, error) {
 }
 
 func validateMacroArgument(argument MacroArgument, value string) error {
+	if argument.Type == "time_24h" {
+		parsed, err := time.Parse("15:04", value)
+		if err != nil || parsed.Format("15:04") != value {
+			return fmt.Errorf("must be a 24-hour time HH:MM")
+		}
+	}
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("value is required")
 	}

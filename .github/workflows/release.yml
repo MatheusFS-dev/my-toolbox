@@ -54,6 +54,7 @@ jobs:
           python -m unittest discover -s packages/agent-workspace-template/source/tests -v
           python -m unittest discover -s packages/others/tests -v
           sh scripts/install_test.sh
+          sh scripts/cronjob_test.sh
           bash scripts/terminal-setup_test.sh
           sh scripts/build-release_test.sh
           sh scripts/build-markdown-reader_test.sh
@@ -75,7 +76,7 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
-          TOOLBOX_RELEASE_MINIMUM_VERSION: 1.5.0
+          TOOLBOX_RELEASE_MINIMUM_VERSION: 1.6.0
         run: |
           VERSION=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | sh scripts/next-release-version.sh)
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
