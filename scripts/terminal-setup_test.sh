@@ -185,6 +185,8 @@ assert_desktop_terminal_prompts_retry() {
             "$repository_root/packages/scripts/terminal/$terminal_name/setup_${terminal_name}.sh" \
             > "$prompt_library"
         output="$({
+            # The dynamically sourced prompt function reads this variable.
+            # shellcheck disable=SC2034
             ASSUME_YES=false
             # shellcheck source=/dev/null
             source "$prompt_library"
