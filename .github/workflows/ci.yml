@@ -110,7 +110,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Install Zsh
+        run: |
+          for source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -f "$source" ] || continue
+            if grep -Fq 'dl.google.com/linux/chrome' "$source"; then
+              sudo rm -f "$source"
+            fi
+          done
+          sudo apt-get update && sudo apt-get install -y zsh
       - run: sh scripts/next-release-version_test.sh
       - run: sh scripts/build-release_test.sh
       - run: sh scripts/build-markdown-reader_test.sh
