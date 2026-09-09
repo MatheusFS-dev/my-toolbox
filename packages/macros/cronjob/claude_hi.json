@@ -1,0 +1,7 @@
+{
+  "title": "Schedule Claude Hi",
+  "description": "Install a daily Claude Hi cron job and the claude-hi status command (native systemd Linux).",
+  "arguments": [
+    {"id": "time", "prompt": "Daily local time (HH:MM)", "type": "time_24h", "default": "07:00"}
+  ]
+}
