@@ -89,7 +89,7 @@ case "$mode" in
         event 'SENT: submitting Hi to Codex.'
         cd "$data_root"
         result=0
-        "$codex_path" exec --ephemeral --skip-git-repo-check --sandbox read-only --color never Hi </dev/null > "$state_root/latest-run.log" 2>&1 || result=$?
+        "$codex_path" exec --ephemeral --skip-git-repo-check --sandbox read-only --color never 'Just reply with "Hi" and do nothing else' </dev/null > "$state_root/latest-run.log" 2>&1 || result=$?
         while IFS= read -r line || [ -n "$line" ]; do event "CODEX: $line"; done < "$state_root/latest-run.log"
         exit "$result"
         ;;

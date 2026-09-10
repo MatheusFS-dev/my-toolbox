@@ -57,7 +57,7 @@ cp "$test_root/crontab-command" "$test_root/bin/crontab"
 grep 'OVERLAP:' "$XDG_STATE_HOME/my-toolbox/codex-hi/events.log"
 "$HOME/.local/bin/codex-hi" --run
 grep 'SUCCESS:' "$XDG_STATE_HOME/my-toolbox/codex-hi/events.log"
-grep -Fx 'exec --ephemeral --skip-git-repo-check --sandbox read-only --color never Hi' "$test_root/calls"
+grep -Fx 'exec --ephemeral --skip-git-repo-check --sandbox read-only --color never Just reply with "Hi" and do nothing else' "$test_root/calls"
 if CRON_TEST_EXIT=7 "$HOME/.local/bin/codex-hi" --run; then exit 1; fi
 grep 'ERROR: Codex exit 7' "$XDG_STATE_HOME/my-toolbox/codex-hi/events.log"
 timeout 2 "$HOME/.local/bin/codex-hi" > "$test_root/view" || [ "$?" -eq 124 ]
@@ -119,13 +119,13 @@ cp "$test_root/crontab" "$test_root/before-lifecycle-lock"
 
 # Runtime uses the exact client commands and records success, error, and waiting events.
 "$HOME/.local/bin/claude-hi" --run
-grep -Fx 'claude --print --no-session-persistence --permission-mode plan Hi' "$test_root/calls"
+grep -Fx 'claude --print --no-session-persistence --permission-mode plan Just reply with "Hi" and do nothing else' "$test_root/calls"
 grep 'SUCCESS: Claude exited successfully.' "$XDG_STATE_HOME/my-toolbox/claude-hi/events.log"
 grep 'WAITING: next run ' "$XDG_STATE_HOME/my-toolbox/claude-hi/events.log"
 if CLAUDE_TEST_EXIT=7 "$HOME/.local/bin/claude-hi" --run; then exit 1; fi
 grep 'ERROR: Claude exit 7' "$XDG_STATE_HOME/my-toolbox/claude-hi/events.log"
 "$HOME/.local/bin/agy-hi" --run
-grep -Fx 'agy --print --mode plan Hi' "$test_root/calls"
+grep -Fx 'agy --print --mode plan Just reply with "Hi" and do nothing else' "$test_root/calls"
 grep 'SUCCESS: Antigravity exited successfully.' "$XDG_STATE_HOME/my-toolbox/agy-hi/events.log"
 grep 'WAITING: next run ' "$XDG_STATE_HOME/my-toolbox/agy-hi/events.log"
 if AGY_TEST_EXIT=9 "$HOME/.local/bin/agy-hi" --run; then exit 1; fi

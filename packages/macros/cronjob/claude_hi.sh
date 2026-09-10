@@ -88,7 +88,7 @@ case "$mode" in
         event 'SENT: submitting Hi to Claude.'
         cd "$data_root"
         result=0
-        "$claude_path" --print --no-session-persistence --permission-mode plan Hi </dev/null > "$state_root/latest-run.log" 2>&1 || result=$?
+        "$claude_path" --print --no-session-persistence --permission-mode plan 'Just reply with "Hi" and do nothing else' </dev/null > "$state_root/latest-run.log" 2>&1 || result=$?
         while IFS= read -r line || [ -n "$line" ]; do event "CLAUDE: $line"; done < "$state_root/latest-run.log"
         exit "$result"
         ;;

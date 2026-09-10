@@ -88,7 +88,7 @@ case "$mode" in
         event 'SENT: submitting Hi to Antigravity.'
         cd "$data_root"
         result=0
-        "$agy_path" --print --mode plan Hi </dev/null > "$state_root/latest-run.log" 2>&1 || result=$?
+        "$agy_path" --print --mode plan 'Just reply with "Hi" and do nothing else' </dev/null > "$state_root/latest-run.log" 2>&1 || result=$?
         while IFS= read -r line || [ -n "$line" ]; do event "ANTIGRAVITY: $line"; done < "$state_root/latest-run.log"
         exit "$result"
         ;;
