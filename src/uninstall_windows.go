@@ -470,6 +470,9 @@ func cleanupWindowsPaths(dataRoot, wrapper string) error {
 	if err := toolboxRoot.RemoveAll("completions"); err != nil {
 		return fmt.Errorf("remove Windows toolbox completions: %w", err)
 	}
+	if err := toolboxRoot.RemoveAll("used-tools"); err != nil {
+		return fmt.Errorf("remove Windows remembered tools: %w", err)
+	}
 	if err := toolboxRoot.Remove("current.txt"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Windows toolbox current version: %w", err)
 	}

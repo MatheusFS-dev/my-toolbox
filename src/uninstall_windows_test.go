@@ -243,12 +243,13 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	versionsRoot := filepath.Join(dataRoot, "versions", "0.1.1")
 	binRoot := filepath.Join(dataRoot, "bin")
 	completionRoot := filepath.Join(dataRoot, "completions")
+	markerRoot := filepath.Join(dataRoot, "used-tools")
 	wrapper := filepath.Join(binRoot, "tb.cmd")
 	githubCLI := filepath.Join(binRoot, "gh.exe")
 	currentFile := filepath.Join(dataRoot, "current.txt")
 	unrelated := filepath.Join(localAppData, "unrelated")
 	t.Setenv("LOCALAPPDATA", localAppData)
-	for _, path := range []string{versionsRoot, binRoot, completionRoot, unrelated} {
+	for _, path := range []string{versionsRoot, binRoot, completionRoot, markerRoot, unrelated} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -258,6 +259,7 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 		githubCLI:                               "installed gh",
 		currentFile:                             "0.1.1\n",
 		filepath.Join(completionRoot, "tb.ps1"): "completion",
+		filepath.Join(markerRoot, "install-codex"): "",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -266,7 +268,7 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	if err := cleanupWindowsPaths(dataRoot, wrapper); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{versionsRoot, completionRoot, currentFile, wrapper} {
+	for _, path := range []string{versionsRoot, completionRoot, markerRoot, currentFile, wrapper} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("managed path still exists: %s", path)
 		}

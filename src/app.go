@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -46,6 +47,7 @@ type App struct {
 	MacroRoot     string
 	MacroWorkflow MacroWorkflow
 	Version       string
+	refreshRunner func(string) error
 }
 
 // Execute handles one public tb invocation.
@@ -164,7 +166,10 @@ func (app App) Execute(arguments []string) error {
 		if err := app.Executor.Preflight(command); err != nil {
 			return fmt.Errorf("preflight update: %w", err)
 		}
-		return app.Executor.Run(command, map[string]any{}, nil)
+		if err := app.Executor.Run(command, map[string]any{}, nil); err != nil {
+			return err
+		}
+		return app.refreshRemembered(output)
 	case "uninstall":
 		if len(arguments) != 1 {
 			return fmt.Errorf("tb uninstall does not accept arguments")
@@ -224,6 +229,9 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 	skipped := []string{}
 	for index, configuredTool := range configured {
 		if configuredTool.skipped != "" {
+			if err := rememberTool(app.Platform, configuredTool.command.Name); err != nil {
+				return err
+			}
 			skipped = append(skipped, fmt.Sprintf("%s (%s)", configuredTool.command.Name, configuredTool.skipped))
 			continue
 		}
@@ -253,9 +261,75 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 			printSummary(output, executed, configuredTool.command.Name, allSkipped, notRun)
 			return fmt.Errorf("execute %s: %w", configuredTool.command.Name, err)
 		}
+		if err := rememberTool(app.Platform, configuredTool.command.Name); err != nil {
+			return err
+		}
 		executed = append(executed, configuredTool.command.Name)
 	}
 	printSummary(output, executed, "", skipped, nil)
+	return nil
+}
+
+func (app App) refreshRemembered(output io.Writer) error {
+	activeRoot, err := activeToolboxRoot(app.Platform)
+	if err != nil {
+		return err
+	}
+	activeCatalog, err := LoadCatalogFile(filepath.Join(activeRoot, "commands.json"))
+	if err != nil {
+		return fmt.Errorf("load active toolbox catalog: %w", err)
+	}
+	names, err := rememberedCatalogTools(app.Platform, activeCatalog, app.Environment)
+	if err != nil {
+		return err
+	}
+	runner := app.refreshRunner
+	if runner == nil {
+		warnings := app.Error
+		if warnings == nil {
+			warnings = output
+		}
+		runner = func(name string) error { return runActiveTool(app.Platform, name, output, warnings) }
+	}
+	if monitor, exists := activeCatalog.Find("install-monitor"); exists && monitor.SupportsEnvironment(app.Environment) {
+		needed, err := monitorUpdateNeeded(activeRoot)
+		if err != nil {
+			return err
+		}
+		if needed {
+			if _, err := fmt.Fprintln(output, "Updating installed Monitor."); err != nil {
+				return err
+			}
+			if err := runner("install-monitor"); err != nil {
+				printSummary(output, nil, "install-monitor", nil, names)
+				return err
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(output, "Remembered global tools: %s\n", joinNames(names)); err != nil {
+		return err
+	}
+	answer, err := app.UI.Ask(Question{ID: "refresh-remembered-tools", Type: "confirm", Title: "Rerun all remembered global tools?"})
+	if err != nil {
+		return err
+	}
+	confirmed, valid := answer.(bool)
+	if !valid {
+		return fmt.Errorf("refresh confirmation returned an invalid answer")
+	}
+	if !confirmed {
+		return nil
+	}
+	for index, name := range names {
+		if err := runner(name); err != nil {
+			printSummary(output, names[:index], name, nil, names[index+1:])
+			return err
+		}
+	}
+	printSummary(output, names, "", nil, nil)
 	return nil
 }
 

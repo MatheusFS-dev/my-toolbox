@@ -16,6 +16,7 @@ type fakeUI struct {
 	articles       []Article
 	macros         []Macro
 	macroSelection MacroSelection
+	asked          []Question
 }
 
 func (ui *fakeUI) Select(commands []Command) ([]string, error) {
@@ -24,6 +25,7 @@ func (ui *fakeUI) Select(commands []Command) ([]string, error) {
 }
 
 func (ui *fakeUI) Ask(question Question) (any, error) {
+	ui.asked = append(ui.asked, question)
 	if ui.err != nil {
 		return nil, ui.err
 	}

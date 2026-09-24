@@ -87,6 +87,10 @@ Every release includes `tb-markdown-reader` for its platform. Rust and a separat
 
 Bootstrap installation does not replace an existing toolbox. When a newer release is available, `tb update` stages it alongside the active version, verifies the archive and bundled reader, then switches `current.txt` to activate it. The previous version is retained. If staging, validation, or activation fails, the active version, wrapper, and current-version pointer are preserved.
 
+After a successful update, including when the toolbox is already current, `tb update` checks an installed Monitor runtime and updates it automatically when its package version is older than the version bundled with the active toolbox. It then lists previously used global agent setups and asks once whether to rerun all of them. The default answer is No. If confirmed, the active toolbox version reruns them in catalog order with each setup's own prompts and requirement checks. Refresh stops at the first failure and reports commands not run; a successful toolbox upgrade remains installed.
+
+Toolbox remembers successful runs of the global `setup-agents-codex`, `setup-agents-claude`, and `setup-agents-antigravity` commands. Earlier runs are not detected retroactively. Markers live in the stable `my-toolbox/used-tools` data directory and are removed by `tb uninstall`. Software installers, plugins, project setup, and terminal commands are excluded.
+
 ## Usage
 
 ```text

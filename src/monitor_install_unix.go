@@ -9,11 +9,53 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 const monitorRuntimeMarker = "{\"owner\":\"my-toolbox\",\"schema_version\":1}\n"
 const monitorWrapperMarker = "# my-toolbox monitor wrapper v1\n"
+
+var monitorVersionPattern = regexp.MustCompile(`(?m)^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"\s*$`)
+
+func monitorUpdateNeeded(activeRoot string) (bool, error) {
+	_, runtimeRoot, _, err := monitorPaths()
+	if err != nil {
+		return false, err
+	}
+	owner, err := os.ReadFile(filepath.Join(runtimeRoot, "owned.json"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read installed Monitor ownership: %w", err)
+	}
+	if string(owner) != monitorRuntimeMarker {
+		return false, nil
+	}
+	installed, err := monitorPackageVersion(filepath.Join(runtimeRoot, "app", "monitor_runtime", "__init__.py"))
+	if err != nil {
+		return false, fmt.Errorf("read installed Monitor version: %w", err)
+	}
+	bundled, err := monitorPackageVersion(filepath.Join(activeRoot, "packages", "monitor_runtime", "monitor_runtime", "__init__.py"))
+	if err != nil {
+		return false, fmt.Errorf("read bundled Monitor version: %w", err)
+	}
+	comparison, err := compareVersions(bundled, installed)
+	return comparison > 0, err
+}
+
+func monitorPackageVersion(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	match := monitorVersionPattern.FindSubmatch(content)
+	if match == nil {
+		return "", fmt.Errorf("missing canonical Monitor version in %s", path)
+	}
+	return string(match[1]), nil
+}
 
 func monitorWrapper(_ string) string {
 	return `#!/bin/sh

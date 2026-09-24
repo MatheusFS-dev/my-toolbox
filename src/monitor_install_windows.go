@@ -7,3 +7,7 @@ import "fmt"
 func (builtins *ToolboxBuiltins) installMonitor() error {
 	return fmt.Errorf("Monitor supports Linux and WSL only")
 }
+
+func monitorUpdateNeeded(string) (bool, error) {
+	return false, nil
+}

@@ -31,6 +31,13 @@ func TestUninstallRemovesExactCompletionBlocksAndPreservesProfiles(t *testing.T)
 	if err := os.WriteFile(wrapper, []byte(linuxToolboxWrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	marker := filepath.Join(dataRoot, "used-tools", "install-codex")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	markerStart := "# >>> my-toolbox completion >>>"
 	markerEnd := "# <<< my-toolbox completion <<<"
 	bashOriginal := []byte("bash unrelated")
@@ -47,6 +54,9 @@ func TestUninstallRemovesExactCompletionBlocksAndPreservesProfiles(t *testing.T)
 	builtins := NewToolboxBuiltins(versionRoot, "linux-amd64", "0.1.1", io.Discard)
 	if err := builtins.uninstall(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("remembered tool marker still exists: %v", err)
 	}
 	for profile, want := range map[string][]byte{bashProfile: bashOriginal, zshProfile: zshOriginal} {
 		got, err := os.ReadFile(profile)
