@@ -56,6 +56,9 @@ func (executor ProcessExecutor) Preflight(command Command) error {
 
 func (executor ProcessExecutor) supportsCapability(id string) bool {
 	switch id {
+	case "python-stress-gpu":
+		_, err := stressGPUPython(executor.Platform)
+		return err == nil
 	case "python-workspace-linux":
 		if path, err := exec.LookPath("python3"); err == nil && supportsPythonVersion(path, nil, "(3, 9) <= sys.version_info[:2]") {
 			return true

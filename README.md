@@ -240,6 +240,19 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 
   Run `monitor <script.py> [more.py ...]` after installation. Monitor keeps private state in `~/.monitor`, executes targets with the selected Python 3 interpreter, and writes run artifacts below each script's `runs/monitor_logs/` directory. Use `monitor config`, `monitor --help`, and `monitor --version` for configuration and command details.
 
+- `install-stress-gpu` (Linux, WSL, or Windows): Install or repair the standalone NVIDIA GPU stress application in its own virtual environment.
+  Requires: Python 3.10-3.14.
+
+  Run `stress-gpu` after installation. Select one or several visible NVIDIA GPUs, choose relative compute and available VRAM usage from 1% to 100% (default 100%), then enter a duration in seconds or `loop` to run until Ctrl+C. Selected boards run concurrently, and the timer starts after all workers have initialized.
+
+  Installation uses pinned CUDA-enabled PyTorch 2.10.0 from the official CUDA 12.8 wheel index and NVIDIA telemetry bindings. Compatible NVIDIA drivers, hardware, and platform wheels are required. It supports Linux x64, compatible Linux ARM64 installations, WSL, and Windows x64. It does not install drivers or a system CUDA toolkit. The CUDA wheels are large and require network access and sufficient disk space. A CPU-only PyTorch installation is rejected.
+
+  The terminal dashboard refreshes in place with utilization, VRAM, temperature, power, clocks, and available throttling indicators for each board. Unsupported metrics show N/A. Relative load sets a synchronized compute duty cycle and a fraction of initially free VRAM. Full load runs continuously and fills available VRAM with minimal runtime/workspace headroom, with allocation backoff when necessary. The achieved utilization and allocation are reported separately because exact 100% usage cannot be guaranteed. Measurements are board-wide, including other GPU processes. Visibility restrictions are respected and telemetry uses UUID identity.
+
+  The final report includes averages, peaks, temperature trend, thermal observations, allocated memory, stop reason, and errors. It is an observation report, not a hardware-health certification. After the report, choose whether to save `report.txt` and `samples.jsonl`, then supply a directory. Existing output replacement requires confirmation. Raw samples are temporarily spooled to disk so continuous runs do not grow process RAM indefinitely.
+
+  The private runtime lives in `~/.stress-gpu`, with a launcher at `~/.local/bin/stress-gpu` on Linux/WSL or `%LOCALAPPDATA%\my-toolbox\bin\stress-gpu.cmd` on Windows. Add that launcher directory to PATH if necessary. Rerun `tb install-stress-gpu` to update or repair the application. Failed installations retain the active generation. Previous generations remain available under the runtime directory, and `tb uninstall` leaves the application installed.
+
 - `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
   Requires: Bash; sudo; Python 3; GRUB configuration files; GRUB utilities; `awk`; `cat`; `cp`; `date`; `grep`.
 - `setup-venv` (Linux or WSL): Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.
@@ -308,6 +321,7 @@ python3 -m pip install -r packages/monitor_runtime/requirements.txt
 PYTHONPATH=packages/monitor_runtime python3 -m unittest discover -s packages/monitor_runtime/tests -v
 python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
 python3 -m unittest discover -s packages/others/tests -v
+PYTHONPATH=packages/stress_gpu_runtime python3 -m unittest discover -s packages/stress_gpu_runtime/tests -v
 sh scripts/install_test.sh
 sh scripts/build-release_test.sh
 sh scripts/build-markdown-reader_test.sh
@@ -368,5 +382,8 @@ Thanks to the people who have contributed to my-toolbox:
 </table>
 
 ## References
+
+- NVIDIA stress runtime installation follows [official PyTorch CUDA wheel instructions](https://pytorch.org/get-started/previous-versions/).
+- NVIDIA stress telemetry uses the [NVIDIA Management Library](https://docs.nvidia.com/deploy/nvml-api/latest/).
 
 - The bundled reader is derived from [leboiko/markdown-reader](https://github.com/leboiko/markdown-reader) 1.35.1 at [commit `186698c`](https://github.com/leboiko/markdown-reader/tree/186698caba1f6c4f9932296da03c5599b35408d0). Credit goes to its original author and contributors. The local fork remains available under its [MIT License](packages/search/fork-markdown-reader/LICENSE).

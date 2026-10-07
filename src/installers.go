@@ -121,6 +121,8 @@ func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
 		return builtins.runOfficialInstaller("https://astral.sh/uv/install.sh", "https://astral.sh/uv/install.ps1", []string{"UV_NO_MODIFY_PATH=1"})
 	case "install-gh":
 		return builtins.installGH()
+	case "install-stress-gpu":
+		return builtins.installStressGPU()
 	case "install-monitor":
 		return builtins.installMonitor()
 	case "install-superpowers-codex":

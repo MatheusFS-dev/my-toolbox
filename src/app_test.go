@@ -195,15 +195,15 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 	}{
 		{
 			environment: "linux-native",
-			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\ninstall-vscode-nautilus\nlist\nmacros\nmount-drive\nsearch\nset-english-us-locale\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\ntoggle-polkit-prompts\nuninstall\nupdate\nversion\n",
+			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\ninstall-vscode-nautilus\nlist\nmacros\nmount-drive\nsearch\nset-english-us-locale\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\ntoggle-polkit-prompts\nuninstall\nupdate\nversion\n",
 		},
 		{
 			environment: "linux-wsl",
-			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
+			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
 		},
 		{
 			environment: "windows",
-			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
+			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
 		},
 	}
 	for _, test := range tests {
