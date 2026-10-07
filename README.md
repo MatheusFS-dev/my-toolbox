@@ -243,7 +243,7 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 - `setup-venv` (Linux or WSL): Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.
   Requires: Bash; `awk`; `cat`; `dirname`; `grep`; `mktemp`; `rm`.
 - `set-english-us-locale` (native Ubuntu): Inspect persistent system and user locale, English language packs, generated `en_US.UTF-8`, and GNOME region. Confirm setup or reinstall; conflicting user overrides are backed up. Log out and back in afterward.
-  Requires: Bash; sudo; Ubuntu; apt-get; cp; dpkg-query; grep; locale; locale-gen; mkdir; sed; update-locale.
+  Requires: Bash; sudo; Ubuntu; apt-get; cp; dpkg-query; grep; locale; mkdir; sed.
 - `toggle-polkit-prompts` (native Linux): Inspect and toggle the managed Polkit bypass for the active local user with confirmation. This covers Polkit-mediated settings and package actions, but not sudo, login or lock-screen prompts, app-specific passwords, other users, or remote or inactive sessions. Unexpected rules are left untouched.
   Requires: Bash; sudo; cat; chmod; id; mktemp; mv; rm; sh; tee.
 - `toggle-nopasswd-sudo` (Linux or WSL): Enable or disable passwordless `sudo` for one Linux or WSL user. Validates enabling changes and manages only the toolbox-owned sudoers file.
