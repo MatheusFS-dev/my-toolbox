@@ -52,6 +52,11 @@ jobs:
         env:
           PYTHONPATH: packages/monitor_runtime
         run: python -m unittest discover -s packages/monitor_runtime/tests -v
+      - name: Test NVIDIA stress runtime without CUDA dependencies
+        env:
+          PYTHONPATH: packages/stress_gpu_runtime
+        run: python -m unittest discover -s packages/stress_gpu_runtime/tests -v
+      - run: python -m compileall -q packages/stress_gpu_runtime
       - run: python -m compileall -q packages/others
       - run: python -m compileall -q packages/monitor_runtime/monitor_runtime packages/monitor_runtime/tests
       - if: runner.os == 'Linux' && runner.arch == 'X64' && matrix.python-version == '3.14'

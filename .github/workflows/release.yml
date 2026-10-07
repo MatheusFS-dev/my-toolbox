@@ -59,6 +59,7 @@ jobs:
       - name: Verify release commit
         run: |
           go test ./...
+          PYTHONPATH=packages/stress_gpu_runtime python -m unittest discover -s packages/stress_gpu_runtime/tests -v
           python -m unittest discover -s packages/agent-workspace-template/source/tests -v
           python -m unittest discover -s packages/others/tests -v
           sh scripts/install_test.sh

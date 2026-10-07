@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "d3477c99cc17427903a5cd4e1d42b047af2ec0621f3e520bb29decf60b44a8de"
+	const want = "9a67a029fa85af3c90d4fd39682e818ec0cb3b2e8f4ce0380339a051951ab096"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -254,6 +254,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"install-antigravity":             "Install Antigravity for the current user on Linux or Windows. Skips installation when `agy` is already available.",
 		"install-uv":                      "Install uv for the current user on Linux or Windows without changing shell PATH configuration. Skips installation when `uv` is already available.",
 		"install-gh":                      "Download, verify, and install the latest GitHub CLI for the current user. Shows PATH guidance when needed.",
+		"install-stress-gpu":              "Install or repair the NVIDIA stress-gpu application with an isolated virtual environment.",
 		"install-monitor":                 "Install or repair Monitor for the current Linux or WSL user with an isolated supervisor runtime.",
 		"install-superpowers-codex":       "Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-claude":      "Add the Superpowers plugin to Claude Code for the current user. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
@@ -272,9 +273,9 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"set-default-cwd":                 "Make Bash and Zsh start in a chosen WSL directory when opened from home. Preserves unrelated shell configuration and backs up changed files.",
 		"change-grub-order":               "Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.",
 		"setup-venv":                      "Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.",
-		"set-english-us-locale":          "Set persistent Ubuntu system and user locale to en_US.UTF-8, install English packs, and set GNOME region after showing differences and confirming. Backs up conflicting user overrides.",
-		"toggle-polkit-prompts":          "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
-		"mount-drive":                    "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
+		"set-english-us-locale":           "Set persistent Ubuntu system and user locale to en_US.UTF-8, install English packs, and set GNOME region after showing differences and confirming. Backs up conflicting user overrides.",
+		"toggle-polkit-prompts":           "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
+		"mount-drive":                     "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
 		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates enabling changes and only manages the toolbox-owned sudoers file.",
 		"create-env-alias":                "Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
@@ -331,7 +332,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
-		"set-default-cwd", "install-monitor", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
+		"set-default-cwd", "install-monitor", "install-stress-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
 		"create-env-alias", "bootstrap-python-from-venv", "create-project-template",
 	}
 	if len(catalog.Commands) != len(want) {

@@ -22,6 +22,7 @@ func environments(names ...string) map[string]bool {
 }
 
 var capabilityRegistry = map[string]Capability{
+	"python-stress-gpu":             {ID: "python-stress-gpu", Label: "Python 3.10-3.14", Remediation: "Install Python 3.10 through 3.14 with venv support.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"bash":                          {ID: "bash", Label: "Bash", Remediation: "Install Bash and ensure 'bash' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"powershell":                    {ID: "powershell", Label: "Windows PowerShell 5.1 or PowerShell 7", Remediation: "Install Windows PowerShell 5.1 or PowerShell 7.", Environments: environments("windows")},
 	"python-workspace-linux":        {ID: "python-workspace-linux", Label: "Python 3.9+, or Python 2.7 with toml==0.10.2", Remediation: "Install Python 3.9 or newer, or install Python 2.7 and run: python2.7 -m pip install --user toml==0.10.2", Environments: environments("linux-native", "linux-wsl")},
@@ -32,7 +33,7 @@ var capabilityRegistry = map[string]Capability{
 	"claude-plugin-management":      {ID: "claude-plugin-management", Label: "Claude Code with plugin management", Remediation: "Install or update Claude Code to a version that supports 'claude plugin'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"antigravity-plugin-management": {ID: "antigravity-plugin-management", Label: "Antigravity with plugin management", Remediation: "Install or update Antigravity to a version that supports 'agy plugin'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"apt-get":                       {ID: "apt-get", Label: "apt-get", Remediation: "Install apt and ensure 'apt-get' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
-	"ubuntu": {ID: "ubuntu", Label: "Ubuntu", Remediation: "Run this tool on Ubuntu.", Environments: environments("linux-native")},
+	"ubuntu":                        {ID: "ubuntu", Label: "Ubuntu", Remediation: "Run this tool on Ubuntu.", Environments: environments("linux-native")},
 	"debian-ubuntu":                 {ID: "debian-ubuntu", Label: "Debian or Ubuntu", Remediation: "Run this tool on a supported Debian or Ubuntu installation.", Environments: environments("linux-native")},
 	"wsl-ubuntu-supported":          {ID: "wsl-ubuntu-supported", Label: "WSL Ubuntu 22.04 or 24.04", Remediation: "Run this tool in WSL on Ubuntu 22.04 or 24.04.", Environments: environments("linux-wsl")},
 	"windows-build-supported":       {ID: "windows-build-supported", Label: "Windows 10 build 17763+ or Windows 11", Remediation: "Update Windows to Windows 10 build 17763 or newer, or Windows 11.", Environments: environments("windows")},

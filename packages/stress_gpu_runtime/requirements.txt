@@ -1,0 +1,2 @@
+# Install torch separately from the official CUDA wheel index.
+nvidia-ml-py==13.590.48
