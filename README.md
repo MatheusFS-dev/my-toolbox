@@ -246,6 +246,8 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Bash; sudo; Ubuntu; apt-get; cp; dpkg-query; grep; locale; mkdir; sed.
 - `toggle-polkit-prompts` (native Linux): Inspect and toggle the managed Polkit bypass for the active local user with confirmation. This covers Polkit-mediated settings and package actions, but not sudo, login or lock-screen prompts, app-specific passwords, other users, or remote or inactive sessions. Unexpected rules are left untouched.
   Requires: Bash; sudo; cat; chmod; id; mktemp; mv; rm; sh; tee.
+- `mount-drive` (native Linux): Inspect physical disks, then choose a non-system ext4 or FAT32 filesystem to label and mount. Optionally save a UUID-based `/etc/fstab` entry or recursively grant all users access. Review the planned changes before confirming. Use `tb mount-drive --list` to inspect without changing anything.
+  Requires: Python 3.9+; sudo.
 - `toggle-nopasswd-sudo` (Linux or WSL): Enable or disable passwordless `sudo` for one Linux or WSL user. Validates enabling changes and manages only the toolbox-owned sudoers file.
   Requires: Bash; sudo; visudo; `cat`; `chmod`; `grep`; `id`; `install`; `mktemp`; `rm`.
 

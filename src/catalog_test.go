@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "63c44d049ff66de8cf211984f08ad0828c1c98d4552e0180428a495c3dff1f25"
+	const want = "834a860327fadacae54d588d7d5530945f6b3e2e1a53fc9b035dc2bfa0da28f1"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -273,6 +273,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"setup-venv":                      "Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.",
 		"set-english-us-locale":          "Set persistent Ubuntu system and user locale to en_US.UTF-8, install English packs, and set GNOME region after showing differences and confirming. Backs up conflicting user overrides.",
 		"toggle-polkit-prompts":          "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
+		"mount-drive":                    "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
 		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates enabling changes and only manages the toolbox-owned sudoers file.",
 		"create-env-alias":                "Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
@@ -329,7 +330,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
-		"set-default-cwd", "install-monitor", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts",
+		"set-default-cwd", "install-monitor", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
 		"create-env-alias", "bootstrap-python-from-venv", "create-project-template",
 	}
 	if len(catalog.Commands) != len(want) {
@@ -388,6 +389,7 @@ func TestRepositoryListInteractiveCommandsHavePromptAuditCoverage(t *testing.T) 
 		"toggle-nopasswd-sudo":       "terminal Bash user and prompt tests",
 		"set-english-us-locale":      "isolated locale state and prompt tests",
 		"toggle-polkit-prompts":      "isolated Polkit rule and prompt tests",
+		"mount-drive":                "isolated disk protection and fstab tests",
 		"create-env-alias":           "utility Python retry tests",
 		"bootstrap-python-from-venv": "utility Python retry tests",
 		"create-project-template":    "utility Python retry tests",
