@@ -32,6 +32,7 @@ var capabilityRegistry = map[string]Capability{
 	"claude-plugin-management":      {ID: "claude-plugin-management", Label: "Claude Code with plugin management", Remediation: "Install or update Claude Code to a version that supports 'claude plugin'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"antigravity-plugin-management": {ID: "antigravity-plugin-management", Label: "Antigravity with plugin management", Remediation: "Install or update Antigravity to a version that supports 'agy plugin'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"apt-get":                       {ID: "apt-get", Label: "apt-get", Remediation: "Install apt and ensure 'apt-get' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
+	"ubuntu": {ID: "ubuntu", Label: "Ubuntu", Remediation: "Run this tool on Ubuntu.", Environments: environments("linux-native")},
 	"debian-ubuntu":                 {ID: "debian-ubuntu", Label: "Debian or Ubuntu", Remediation: "Run this tool on a supported Debian or Ubuntu installation.", Environments: environments("linux-native")},
 	"wsl-ubuntu-supported":          {ID: "wsl-ubuntu-supported", Label: "WSL Ubuntu 22.04 or 24.04", Remediation: "Run this tool in WSL on Ubuntu 22.04 or 24.04.", Environments: environments("linux-wsl")},
 	"windows-build-supported":       {ID: "windows-build-supported", Label: "Windows 10 build 17763+ or Windows 11", Remediation: "Update Windows to Windows 10 build 17763 or newer, or Windows 11.", Environments: environments("windows")},
@@ -44,7 +45,7 @@ var capabilityRegistry = map[string]Capability{
 }
 
 func init() {
-	for _, name := range []string{"awk", "cat", "chmod", "chown", "cmp", "cp", "cut", "date", "dirname", "env", "getent", "grep", "id", "install", "mktemp", "mv", "od", "rm", "sort", "tail", "tr"} {
+	for _, name := range []string{"awk", "cat", "dpkg-query", "chmod", "chown", "cmp", "cp", "cut", "date", "dirname", "env", "getent", "grep", "id", "install", "mktemp", "mv", "od", "rm", "sed", "sh", "sort", "tee", "locale", "locale-gen", "mkdir", "update-locale", "tail", "tr"} {
 		capabilityRegistry[name] = Capability{ID: name, Label: name, Remediation: fmt.Sprintf("Install the utility that provides '%s' and ensure it is on PATH.", name), Environments: environments("linux-native", "linux-wsl")}
 	}
 }

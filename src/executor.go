@@ -84,6 +84,9 @@ func (executor ProcessExecutor) supportsCapability(id string) bool {
 		return executor.supportsPluginManagement("claude")
 	case "antigravity-plugin-management":
 		return executor.supportsPluginManagement("agy")
+	case "ubuntu":
+		content, err := os.ReadFile("/etc/os-release")
+		return err == nil && osReleaseIs(content, "ubuntu")
 	case "debian-ubuntu":
 		content, err := os.ReadFile("/etc/os-release")
 		return err == nil && osReleaseIs(content, "debian", "ubuntu")

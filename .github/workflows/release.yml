@@ -64,6 +64,7 @@ jobs:
           sh scripts/install_test.sh
           sh scripts/cronjob_test.sh
           bash scripts/terminal-setup_test.sh
+          bash scripts/desktop-utils_test.sh
           sh scripts/build-release_test.sh
           sh scripts/build-markdown-reader_test.sh
       - name: Reject an already released commit
