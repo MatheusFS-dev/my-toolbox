@@ -136,6 +136,9 @@ func TestRepositoryScriptRequirementsIncludeEveryPreStartUtility(t *testing.T) {
 		"toggle-nopasswd-sudo": {
 			"bash", "sudo", "visudo", "cat", "chmod", "grep", "id", "install", "mktemp", "rm",
 		},
+		"install-vscode-nautilus": {
+			"bash", "sudo", "debian-ubuntu", "apt-get", "cut", "dirname", "getent", "id", "install",
+		},
 	}
 	for name, expected := range want {
 		command, ok := catalog.Find(name)

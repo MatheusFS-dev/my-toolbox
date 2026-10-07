@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "834a860327fadacae54d588d7d5530945f6b3e2e1a53fc9b035dc2bfa0da28f1"
+	const want = "d3477c99cc17427903a5cd4e1d42b047af2ec0621f3e520bb29decf60b44a8de"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -264,6 +264,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"setup-agents-project":            "Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.",
 		"setup-alacritty":                 "Build an Alacritty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Alacritty configuration is replaced without a backup.",
 		"setup-kitty":                     "Build a Kitty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Kitty configuration is backed up before replacement.",
+		"install-vscode-nautilus":         "Add an Open in VS Code action to the Nautilus context menu for local folders. Requires VS Code's `code` command, installs the required Nautilus extension, and restarts Nautilus.",
 		"setup-windows":                   "Set up Windows Terminal, PowerShell 7, selected fonts, and terminal tools with WinGet. Backs up managed configuration when possible and reports each result.",
 		"set-terminal-hotkey":             "Make Ctrl+Alt+T open the Windows default terminal application for the current user. Persists across sign-ins and supports `-Undo`.",
 		"setup-wsl":                       "Set up selected shell and terminal tools on Ubuntu 22.04 or 24.04 under WSL. Uses sudo for system dependencies, backs up managed configuration when possible, and continues past optional feature failures.",
@@ -329,7 +330,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-codex", "install-claude", "install-antigravity", "install-uv", "install-gh",
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
-		"setup-alacritty", "setup-kitty", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
+		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
 		"set-default-cwd", "install-monitor", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
 		"create-env-alias", "bootstrap-python-from-venv", "create-project-template",
 	}
@@ -379,6 +380,7 @@ func TestRepositoryListInteractiveCommandsHavePromptAuditCoverage(t *testing.T) 
 		"setup-agents-project":       "installer Python retry tests",
 		"setup-alacritty":            "terminal Bash prompt tests",
 		"setup-kitty":                "terminal Bash prompt tests",
+		"install-vscode-nautilus":    "Nautilus extension behavior and Bash syntax tests",
 		"setup-windows":              "Windows PowerShell prompt tests",
 		"set-terminal-hotkey":        "typed command arguments; no interactive input",
 		"setup-wsl":                  "terminal Bash prompt tests",

@@ -88,6 +88,29 @@ for terminal_name in alacritty kitty; do
     assert_missing_nautilus_is_skipped "$terminal_name"
 done
 
+assert_vscode_nautilus_installer() {
+    local installer
+    installer="$repository_root/packages/scripts/terminal/vscode/install_vscode_nautilus.sh"
+    if [[ ! -f "$installer" ]]; then
+        printf '%s\n' 'VS Code Nautilus installer is missing.' >&2
+        exit 1
+    fi
+    if [[ ! -x "$installer" ]]; then
+        printf '%s\n' 'VS Code Nautilus installer is not executable.' >&2
+        exit 1
+    fi
+    if ! grep -F "Error: Nautilus is not installed; install Nautilus before adding this integration." "$installer" >/dev/null; then
+        printf '%s\n' 'VS Code Nautilus installer does not reject a missing Nautilus installation.' >&2
+        exit 1
+    fi
+    if ! bash -n "$installer"; then
+        printf '%s\n' 'VS Code Nautilus installer has invalid Bash syntax.' >&2
+        exit 1
+    fi
+}
+
+assert_vscode_nautilus_installer
+
 assert_wsl_shift_enter_selection() {
     local output normalized_setup
     normalized_setup="$test_root/setup_wsl.sh"

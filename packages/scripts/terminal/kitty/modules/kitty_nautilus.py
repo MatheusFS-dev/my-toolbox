@@ -116,7 +116,7 @@ class KittyMenuProvider(GObject.GObject, Nautilus.MenuProvider):
         ]
 
     def get_background_items(self, current_folder):
-        """Return an Open Kitty Here item for a local directory background.
+        """Return an Open in Kitty item for a local directory background.
 
         Args:
             self (KittyMenuProvider): Provider evaluating the current folder.
@@ -136,7 +136,7 @@ class KittyMenuProvider(GObject.GObject, Nautilus.MenuProvider):
         return [
             self._create_item(
                 name="KittyOpen::background_directory",
-                label="Open Kitty Here",
+                label="Open in Kitty",
                 directory=directory,
             )
         ]

@@ -220,6 +220,8 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Bash; sudo; Debian or Ubuntu; apt-get; `chown`; `cut`; `dirname`; `getent`.
 - `setup-kitty` (native Linux): Build a Kitty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Kitty configuration is backed up before replacement.
   Requires: Bash; sudo; Debian or Ubuntu; apt-get; `chown`; `cut`; `dirname`; `getent`; `install`.
+- `install-vscode-nautilus` (native Linux): Add an Open in VS Code action to the Nautilus context menu for local folders. Requires VS Code's `code` command, installs the required Nautilus extension, and restarts Nautilus.
+  Requires: Bash; sudo; Debian or Ubuntu; apt-get; `cut`; `dirname`; `getent`; `id`; `install`.
 - `setup-windows` (Windows): Set up Windows Terminal, PowerShell 7, selected fonts, and terminal tools with WinGet. Backs up managed configuration when possible and reports each result.
   Requires: Windows PowerShell 5.1 or PowerShell 7; Windows 10 build 17763+ or Windows 11; WinGet.
 - `set-terminal-hotkey` (Windows): Make `Ctrl+Alt+T` open the Windows default terminal application for the current user. The Start Menu shortcut persists across sign-ins and reboots; run with `-Undo` to remove it.
