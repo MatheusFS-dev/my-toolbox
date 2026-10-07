@@ -209,10 +209,58 @@ assert_nopasswd_prompts_retry() {
     fi
 }
 
+assert_nopasswd_dotted_user_filename() {
+    local fixture_root output
+    fixture_root="$test_root/nopasswd-filename"
+    mkdir -p "$fixture_root/bin"
+    cat > "$fixture_root/bin/id" <<'SH'
+#!/bin/sh
+if [ "$1" = -u ]; then
+    if [ "$#" -eq 1 ]; then printf '0\n'; else printf '516675090\n'; fi
+    exit 0
+fi
+exit 0
+SH
+    cat > "$fixture_root/bin/sudo" <<'SH'
+#!/bin/sh
+if [ "$1" = -u ]; then
+    [ "$(cat "$TEST_MARKER" 2>/dev/null)" = '/etc/sudoers.d/zz-tb-uid-516675090-nopasswd' ]
+    exit $?
+fi
+if [ -f "$TEST_MARKER" ]; then printf 'NOPASSWD: ALL\n'; fi
+SH
+    cat > "$fixture_root/bin/install" <<'SH'
+#!/bin/sh
+for destination do :; done
+printf '%s\n' "$destination" > "$TEST_MARKER"
+SH
+    cat > "$fixture_root/bin/rm" <<'SH'
+#!/bin/sh
+case "$*" in
+    *'/etc/sudoers.d/'*) exit 0 ;;
+esac
+exec /bin/rm "$@"
+SH
+    printf '#!/bin/sh\nexit 0\n' > "$fixture_root/bin/visudo"
+    chmod +x "$fixture_root/bin/"*
+    printf '%s\n' '/etc/sudoers.d/99-tb-uid-516675090-nopasswd' > "$fixture_root/installed"
+    output="$(TEST_MARKER="$fixture_root/installed" PATH="$fixture_root/bin:$PATH" \
+        bash "$repository_root/packages/scripts/utils/toggle_nopasswd_sudo.sh" \
+        'matheus.f@local.inatel.br' -y 2>&1)" || {
+        printf '%s\n' "$output" >&2
+        exit 1
+    }
+    if [[ $(cat "$fixture_root/installed") != '/etc/sudoers.d/zz-tb-uid-516675090-nopasswd' ]]; then
+        printf 'toggle-nopasswd-sudo used an invalid sudoers filename.\n' >&2
+        exit 1
+    fi
+}
+
 assert_wsl_yes_no_retries
 assert_setup_venv_retries
 assert_default_cwd_retries
 assert_desktop_terminal_prompts_retry
+assert_nopasswd_dotted_user_filename
 if [[ $(id -u) -eq 0 ]]; then
     assert_nopasswd_prompts_retry
 fi

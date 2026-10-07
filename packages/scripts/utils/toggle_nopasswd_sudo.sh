@@ -2,7 +2,7 @@
 # Toggles passwordless sudo (NOPASSWD) for a user through /etc/sudoers.d.
 # The script detects the user's current state, reports it, and offers the
 # opposite action, so the same script enables and disables the permission.
-# The rule is managed in /etc/sudoers.d/99-<user>-nopasswd and always
+# The rule is managed in /etc/sudoers.d/zz-tb-uid-<uid>-nopasswd and always
 # validated with `visudo -cf` before installation.
 #
 # Usage: sudo bash toggle_nopasswd_sudo.sh [user] [-y] [-h]
@@ -88,15 +88,18 @@ if ! id "$TARGET_USER" >/dev/null 2>&1; then
     exit 1
 fi
 
-SUDOERS_FILE="/etc/sudoers.d/99-${TARGET_USER}-nopasswd"
+TARGET_UID="$(id -u "$TARGET_USER")"
+SUDOERS_FILE="/etc/sudoers.d/zz-tb-uid-${TARGET_UID}-nopasswd"
+PREVIOUS_SUDOERS_FILE="/etc/sudoers.d/99-tb-uid-${TARGET_UID}-nopasswd"
+LEGACY_SUDOERS_FILE="/etc/sudoers.d/99-${TARGET_USER}-nopasswd"
 
 # ---------------------------------------------------------------------------
 # State detection: does the user currently have passwordless sudo?
-# The source of truth is what sudo actually grants, covering our file, group
-# rules, and any other rule, not just whether our file exists.
+# Run a command as the target user without a password, since a NOPASSWD entry
+# in `sudo -l` may be overridden by a later matching PASSWD rule.
 # ---------------------------------------------------------------------------
 user_has_nopasswd() {
-    sudo -l -U "$TARGET_USER" 2>/dev/null | grep -q 'NOPASSWD'
+    sudo -u "$TARGET_USER" -- sudo -n id -u >/dev/null 2>&1
 }
 
 # Enable: install the NOPASSWD rule in the managed file after validation.
@@ -112,15 +115,17 @@ enable_nopasswd() {
         return 1
     fi
 
-    install -m 0440 -o root -g root "$tmp" "$SUDOERS_FILE"
-    rm -f "$tmp"
+    install -m 0440 -o root -g root "$tmp" "$SUDOERS_FILE" || { rm -f "$tmp"; return 1; }
+    rm -f "$tmp" || return 1
+    rm -f "$PREVIOUS_SUDOERS_FILE" "$LEGACY_SUDOERS_FILE" || return 1
     log_info "Rule installed at: ${SUDOERS_FILE}"
 }
 
 # Disable: remove only our managed file.
 disable_nopasswd() {
+    rm -f "$PREVIOUS_SUDOERS_FILE" "$LEGACY_SUDOERS_FILE" || return 1
     if [[ -f "$SUDOERS_FILE" ]]; then
-        rm -f "$SUDOERS_FILE"
+        rm -f "$SUDOERS_FILE" || return 1
         log_info "File removed: ${SUDOERS_FILE}"
     else
         log_warn "Our managed file does not exist (${SUDOERS_FILE});"
