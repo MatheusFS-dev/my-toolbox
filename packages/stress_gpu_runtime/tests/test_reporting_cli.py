@@ -68,7 +68,7 @@ class ReportingTests(unittest.TestCase):
             AssertionError: If terminal state remains changed.
         """
         output = io.StringIO()
-        with self.assertRaises(RuntimeError):
+        with patch("stress_gpu_runtime.reporting.os.name", "posix"), self.assertRaises(RuntimeError):
             with Dashboard(output, interactive=True) as dashboard:
                 dashboard.draw("first")
                 dashboard.draw("second")
