@@ -148,6 +148,35 @@ func TestStressGPUInstallRepairAndRollback(t *testing.T) {
 	}
 }
 
+// TestStressGPUInstallRequiresNumPy verifies the packaged runtime installs
+// NumPy before importing PyTorch's tensor conversion support.
+// Args: t (*testing.T): Test context.
+// Returns: None.
+// Raises: None. Failures use t.Fatal.
+func TestStressGPUInstallRequiresNumPy(t *testing.T) {
+	builtin := NewToolboxBuiltins("..", "linux-amd64", "1.0.0", io.Discard)
+	run := func(path string, arguments []string, output io.Writer) error {
+		if strings.Contains(strings.Join(arguments, " "), "-m venv") {
+			return stressGPUFakeRun(path, arguments, output)
+		}
+		for index, argument := range arguments {
+			if argument == "-r" && index+1 < len(arguments) {
+				content, err := os.ReadFile(arguments[index+1])
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(string(content), "numpy") {
+					return fmt.Errorf("NumPy is missing from packaged runtime requirements")
+				}
+			}
+		}
+		return nil
+	}
+	if err := builtin.installStressGPUWith([]string{"fake-python"}, run, os.Rename); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestStressGPURefusesUnrelatedWrapperAndState checks ownership guards.
 // Args: t (*testing.T): Test context.
 // Returns: None.
