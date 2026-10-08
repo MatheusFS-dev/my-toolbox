@@ -55,6 +55,16 @@ func main() {
 		MacroRoot:     filepath.Join(root, "packages", "macros"),
 		MacroWorkflow: DefaultMacroWorkflow{UI: ui, Output: os.Stdout},
 		Version:       version,
+		componentInstalled: func(name string) (bool, error) {
+			switch name {
+			case "uninstall-monitor":
+				return monitorInstalled()
+			case "uninstall-stress-gpu":
+				return stressGPUInstalled(platform)
+			default:
+				return false, fmt.Errorf("unknown component %q", name)
+			}
+		},
 	}
 	if err := app.Execute(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)

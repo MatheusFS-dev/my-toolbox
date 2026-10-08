@@ -39,6 +39,39 @@ func TestStressGPUCatalogChecksVisibility(t *testing.T) {
 	}
 }
 
+// TestStressGPUUninstallIsListed verifies stress-gpu cleanup is discoverable.
+// Args: t (*testing.T): Test context.
+// Returns: None.
+// Raises: None. Failures use t.Fatal.
+func TestStressGPUUninstallIsListed(t *testing.T) {
+	catalog, err := LoadCatalogFile("../commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, exists := catalog.Find("uninstall-stress-gpu")
+	if !exists || command.Visibility != "list" || command.Category != "Uninstall" || command.Protocol != "builtin" {
+		t.Fatalf("missing listed uninstaller: %#v", command)
+	}
+	for _, environment := range []string{"linux-native", "linux-wsl", "windows"} {
+		if !command.SupportsEnvironment(environment) {
+			t.Fatalf("unsupported environment %s", environment)
+		}
+	}
+}
+
+// TestStressGPUWrapperDelegatesUninstall verifies the launcher uses the
+// toolbox-owned removal command rather than deleting unverified paths.
+// Args: t (*testing.T): Test context.
+// Returns: None.
+// Raises: None. Failures use t.Fatal.
+func TestStressGPUWrapperDelegatesUninstall(t *testing.T) {
+	for _, platform := range []string{"linux-amd64", "windows-amd64"} {
+		if !strings.Contains(stressGPUWrapper(platform), "uninstall-stress-gpu") {
+			t.Fatalf("%s wrapper does not support --uninstall", platform)
+		}
+	}
+}
+
 // stressGPUFixture creates an installer with a fake command runner.
 // Args: t (*testing.T): Test context.
 // Returns: *ToolboxBuiltins: Installer. string: State directory. string: Wrapper.
@@ -145,6 +178,26 @@ func TestStressGPUInstallRepairAndRollback(t *testing.T) {
 		if !bytes.Equal(second, current) || !bytes.Equal(wrapperContent, content) {
 			t.Fatalf("%s damaged active installation", failure)
 		}
+	}
+}
+
+// TestStressGPUUninstallRemovesOnlyOwnedFiles verifies the runtime cleanup.
+// Args: t (*testing.T): Test context.
+// Returns: None.
+// Raises: None. Failures use t.Fatal.
+func TestStressGPUUninstallRemovesOnlyOwnedFiles(t *testing.T) {
+	builtin, state, wrapper := stressGPUFixture(t)
+	if err := builtin.installStressGPUWith([]string{"fake-python"}, stressGPUFakeRun, os.Rename); err != nil {
+		t.Fatal(err)
+	}
+	if err := builtin.uninstallStressGPU(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("runtime remains: %v", err)
+	}
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Fatalf("wrapper remains: %v", err)
 	}
 }
 

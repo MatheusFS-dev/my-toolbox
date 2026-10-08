@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "9a67a029fa85af3c90d4fd39682e818ec0cb3b2e8f4ce0380339a051951ab096"
+	const want = "7705895fba6411d48d8847254a53bd12a376d07bcc3175fdae040d5a903d392e"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -246,7 +246,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 	}
 	wantCategories := []string{
 		"Agents", "Base Tools", "Agent Plugins", "Agent Workspace", "Terminal",
-		"System Utilities", "Project Utilities",
+		"System Utilities", "Uninstall", "Project Utilities",
 	}
 	wantDescriptions := map[string]string{
 		"install-codex":                   "Install Codex for the current user on Linux or Windows. Skips installation when `codex` is already available.",
@@ -256,6 +256,8 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"install-gh":                      "Download, verify, and install the latest GitHub CLI for the current user. Shows PATH guidance when needed.",
 		"install-stress-gpu":              "Install or repair the NVIDIA stress-gpu application with an isolated virtual environment.",
 		"install-monitor":                 "Install or repair Monitor for the current Linux or WSL user with an isolated supervisor runtime.",
+		"uninstall-monitor":               "Remove the toolbox-owned Monitor runtime and launcher while preserving configuration.",
+		"uninstall-stress-gpu":            "Remove the toolbox-owned stress-gpu runtime and launcher.",
 		"install-superpowers-codex":       "Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-claude":      "Add the Superpowers plugin to Claude Code for the current user. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-antigravity": "Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
@@ -332,7 +334,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
-		"set-default-cwd", "install-monitor", "install-stress-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
+		"set-default-cwd", "install-monitor", "install-stress-gpu", "uninstall-monitor", "uninstall-stress-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
 		"create-env-alias", "bootstrap-python-from-venv", "create-project-template",
 	}
 	if len(catalog.Commands) != len(want) {

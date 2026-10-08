@@ -33,6 +33,9 @@ func TestInstallMonitorRefusesUnrecognizedWrapper(t *testing.T) {
 
 func TestRecognizedMonitorWrapperIsStableAndOwnerExecutable(t *testing.T) {
 	content := monitorWrapper("/opt/toolbox")
+	if !strings.Contains(content, "uninstall-monitor") {
+		t.Fatal("wrapper does not support --uninstall")
+	}
 	if !isOwnedMonitorWrapperContent([]byte(content)) {
 		t.Fatal("generated wrapper was not recognized")
 	}

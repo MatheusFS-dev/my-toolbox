@@ -36,18 +36,19 @@ type configuredCommand struct {
 
 // App coordinates command parsing, preflight configuration, and execution.
 type App struct {
-	Catalog       Catalog
-	Environment   string
-	Platform      string
-	UI            UI
-	Executor      Executor
-	Output        io.Writer
-	Error         io.Writer
-	ArticleRoot   string
-	MacroRoot     string
-	MacroWorkflow MacroWorkflow
-	Version       string
-	refreshRunner func(string) error
+	Catalog            Catalog
+	Environment        string
+	Platform           string
+	UI                 UI
+	Executor           Executor
+	Output             io.Writer
+	Error              io.Writer
+	ArticleRoot        string
+	MacroRoot          string
+	MacroWorkflow      MacroWorkflow
+	Version            string
+	refreshRunner      func(string) error
+	componentInstalled func(string) (bool, error)
 }
 
 // Execute handles one public tb invocation.
@@ -190,6 +191,28 @@ func (app App) Execute(arguments []string) error {
 			_, err := fmt.Fprintln(output, "Uninstall cancelled.")
 			return err
 		}
+		for _, name := range []string{"uninstall-monitor", "uninstall-stress-gpu"} {
+			if app.componentInstalled == nil {
+				continue
+			}
+			installed, err := app.componentInstalled(name)
+			if err != nil {
+				return err
+			}
+			if !installed {
+				continue
+			}
+			remove, err := app.confirmComponentUninstall(name)
+			if err != nil {
+				return err
+			}
+			if remove {
+				command := Command{Name: name, Description: "Uninstall component", Package: "toolbox", Protocol: "builtin"}
+				if err := app.Executor.Run(command, map[string]any{}, nil); err != nil {
+					return err
+				}
+			}
+		}
 		command := Command{Name: "uninstall", Description: "Uninstall toolbox", Package: "toolbox", Protocol: "builtin"}
 		return app.Executor.Run(command, map[string]any{}, nil)
 	default:
@@ -212,6 +235,16 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 		arguments := []string(nil)
 		if len(commands) == 1 {
 			arguments = directArguments
+		}
+		if command.Name == "uninstall-monitor" || command.Name == "uninstall-stress-gpu" {
+			confirmed, err := app.confirmComponentUninstall(command.Name)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				configured = append(configured, configuredCommand{command: command, skipped: "uninstall cancelled"})
+				continue
+			}
 		}
 		answers, skipped, err := app.configure(command, arguments)
 		if err != nil {
@@ -268,6 +301,22 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 	}
 	printSummary(output, executed, "", skipped, nil)
 	return nil
+}
+
+func (app App) confirmComponentUninstall(name string) (bool, error) {
+	titles := map[string]string{
+		"uninstall-monitor":    "Remove the toolbox-owned Monitor runtime and launcher? Configuration will be preserved.",
+		"uninstall-stress-gpu": "Remove the toolbox-owned stress-gpu runtime and launcher?",
+	}
+	answer, err := app.UI.Ask(Question{ID: "confirm-" + name, Type: "confirm", Title: titles[name]})
+	if err != nil {
+		return false, err
+	}
+	confirmed, valid := answer.(bool)
+	if !valid {
+		return false, fmt.Errorf("%s confirmation returned an invalid answer", name)
+	}
+	return confirmed, nil
 }
 
 func (app App) refreshRemembered(output io.Writer) error {

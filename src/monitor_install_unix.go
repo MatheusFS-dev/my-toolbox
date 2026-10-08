@@ -14,12 +14,12 @@ import (
 )
 
 const monitorRuntimeMarker = "{\"owner\":\"my-toolbox\",\"schema_version\":1}\n"
-const monitorWrapperMarker = "# my-toolbox monitor wrapper v1\n"
+const monitorWrapperMarker = "# my-toolbox monitor wrapper v2\n"
 
 var monitorVersionPattern = regexp.MustCompile(`(?m)^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"\s*$`)
 
 func monitorUpdateNeeded(activeRoot string) (bool, error) {
-	_, runtimeRoot, _, err := monitorPaths()
+	_, runtimeRoot, wrapper, err := monitorPaths()
 	if err != nil {
 		return false, err
 	}
@@ -33,6 +33,17 @@ func monitorUpdateNeeded(activeRoot string) (bool, error) {
 	if string(owner) != monitorRuntimeMarker {
 		return false, nil
 	}
+	content, err := os.ReadFile(wrapper)
+	wrapperNeedsUpdate := false
+	if os.IsNotExist(err) {
+		content = nil
+	} else if err != nil {
+		return false, fmt.Errorf("read installed Monitor wrapper: %w", err)
+	} else if !isOwnedMonitorWrapperContent(content) {
+		return false, nil
+	} else {
+		wrapperNeedsUpdate = string(content) != monitorWrapper("")
+	}
 	installed, err := monitorPackageVersion(filepath.Join(runtimeRoot, "app", "monitor_runtime", "__init__.py"))
 	if err != nil {
 		return false, fmt.Errorf("read installed Monitor version: %w", err)
@@ -42,7 +53,10 @@ func monitorUpdateNeeded(activeRoot string) (bool, error) {
 		return false, fmt.Errorf("read bundled Monitor version: %w", err)
 	}
 	comparison, err := compareVersions(bundled, installed)
-	return comparison > 0, err
+	if err != nil {
+		return false, err
+	}
+	return comparison > 0 || wrapperNeedsUpdate, nil
 }
 
 func monitorPackageVersion(path string) (string, error) {
@@ -59,6 +73,19 @@ func monitorPackageVersion(path string) (string, error) {
 
 func monitorWrapper(_ string) string {
 	return `#!/bin/sh
+# my-toolbox monitor wrapper v2
+set -eu
+data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"
+IFS= read -r current < "$data_root/current.txt"
+if [ "$#" -eq 1 ] && [ "$1" = --uninstall ]; then
+    exec "$data_root/versions/$current/tb" uninstall-monitor
+fi
+exec "$data_root/versions/$current/tb" __monitor "$@"
+`
+}
+
+func legacyMonitorWrapper() string {
+	return `#!/bin/sh
 # my-toolbox monitor wrapper v1
 set -eu
 data_root="${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox"
@@ -69,7 +96,7 @@ exec "$data_root/versions/$current/tb" __monitor "$@"
 
 func isOwnedMonitorWrapperContent(content []byte) bool {
 	normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
-	return strings.HasPrefix(string(normalized), "#!/bin/sh\n"+monitorWrapperMarker) && string(normalized) == monitorWrapper("")
+	return string(normalized) == monitorWrapper("") || string(normalized) == legacyMonitorWrapper()
 }
 
 func monitorPaths() (stateRoot, runtimeRoot, wrapper string, err error) {
@@ -239,4 +266,30 @@ func removeMonitor() error {
 		}
 	}
 	return nil
+}
+
+func monitorInstalled() (bool, error) {
+	_, runtimeRoot, _, err := monitorPaths()
+	if err != nil {
+		return false, err
+	}
+	marker, err := os.ReadFile(filepath.Join(runtimeRoot, "owned.json"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return string(marker) == monitorRuntimeMarker, nil
+}
+
+func (builtins *ToolboxBuiltins) uninstallMonitor() error {
+	if !strings.HasPrefix(builtins.platform, "linux-") {
+		return fmt.Errorf("Monitor supports Linux and WSL only")
+	}
+	if err := removeMonitor(); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintln(builtins.output, "Removed Monitor runtime and launcher. Configuration was preserved.")
+	return err
 }

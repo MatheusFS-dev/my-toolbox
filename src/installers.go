@@ -125,6 +125,10 @@ func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
 		return builtins.installStressGPU()
 	case "install-monitor":
 		return builtins.installMonitor()
+	case "uninstall-monitor":
+		return builtins.uninstallMonitor()
+	case "uninstall-stress-gpu":
+		return builtins.uninstallStressGPU()
 	case "install-superpowers-codex":
 		return runAgentPlugin("codex", []string{"plugin", "add", "superpowers@openai-curated"}, builtins.platform, builtins.output)
 	case "install-superpowers-claude":

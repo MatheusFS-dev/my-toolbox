@@ -195,15 +195,15 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 	}{
 		{
 			environment: "linux-native",
-			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\ninstall-vscode-nautilus\nlist\nmacros\nmount-drive\nsearch\nset-english-us-locale\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\ntoggle-polkit-prompts\nuninstall\nupdate\nversion\n",
+			want:        "bootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\ninstall-vscode-nautilus\nlist\nmacros\nmount-drive\nsearch\nset-english-us-locale\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\ntoggle-polkit-prompts\nuninstall\nuninstall-monitor\nuninstall-stress-gpu\nupdate\nversion\n",
 		},
 		{
 			environment: "linux-wsl",
-			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nupdate\nversion\n",
+			want:        "bootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nuninstall-monitor\nuninstall-stress-gpu\nupdate\nversion\n",
 		},
 		{
 			environment: "windows",
-			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nupdate\nversion\n",
+			want:        "create-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-uv\nlist\nmacros\nsearch\nset-terminal-hotkey\nset-vscode-wsl-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-project\nsetup-windows\nuninstall\nuninstall-stress-gpu\nupdate\nversion\n",
 		},
 	}
 	for _, test := range tests {
@@ -567,5 +567,45 @@ func TestUninstallCancellationRunsNothing(t *testing.T) {
 	}
 	if len(executor.runs) != 0 {
 		t.Fatalf("cancelled uninstall ran commands: %v", executor.runs)
+	}
+}
+
+func TestComponentUninstallRequiresConfirmation(t *testing.T) {
+	ui := &fakeUI{answers: map[string]any{"confirm-uninstall-stress-gpu": false}}
+	executor := &fakeExecutor{arguments: map[string][]string{}}
+	app := App{Catalog: testCatalog("uninstall-stress-gpu"), Environment: "linux-native", UI: ui, Executor: executor, Output: &bytes.Buffer{}}
+	if err := app.Execute([]string{"uninstall-stress-gpu"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.asked) != 1 || ui.asked[0].ID != "confirm-uninstall-stress-gpu" {
+		t.Fatalf("questions = %#v", ui.asked)
+	}
+	if len(executor.runs) != 0 {
+		t.Fatalf("declined uninstaller ran: %#v", executor.runs)
+	}
+}
+
+func TestUninstallOffersInstalledComponents(t *testing.T) {
+	ui := &fakeUI{answers: map[string]any{
+		"confirm-uninstall":            true,
+		"confirm-uninstall-monitor":    false,
+		"confirm-uninstall-stress-gpu": true,
+	}}
+	executor := &fakeExecutor{arguments: map[string][]string{}}
+	app := App{
+		Catalog:     testCatalog("uninstall-monitor", "uninstall-stress-gpu"),
+		Environment: "linux-native",
+		UI:          ui,
+		Executor:    executor,
+		Output:      &bytes.Buffer{},
+		componentInstalled: func(name string) (bool, error) {
+			return name == "uninstall-monitor" || name == "uninstall-stress-gpu", nil
+		},
+	}
+	if err := app.Execute([]string{"uninstall"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(executor.runs, []string{"uninstall-stress-gpu", "uninstall"}) {
+		t.Fatalf("runs = %#v", executor.runs)
 	}
 }

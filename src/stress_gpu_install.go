@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -44,9 +43,20 @@ func stressGPUPaths(platform string) (string, string, error) {
 // Raises: None.
 func stressGPUWrapper(platform string) string {
 	if platform == "windows-amd64" {
+		return "@echo off\r\nrem my-toolbox-stress-gpu wrapper v2\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif \"%~1\"==\"--uninstall\" if \"%~2\"==\"\" (set \"TOOLBOX_ROOT=%LOCALAPPDATA%\\my-toolbox\" & setlocal EnableDelayedExpansion & set /p toolbox_version=<\"!TOOLBOX_ROOT!\\current.txt\" & \"!TOOLBOX_ROOT!\\versions\\!toolbox_version!\\tb.exe\" uninstall-stress-gpu & exit /b !errorlevel!)\r\nset \"STRESS_STATE=%USERPROFILE%\\.stress-gpu\"\r\nsetlocal EnableDelayedExpansion\r\nset \"generation=\"\r\nset /p generation=<\"!STRESS_STATE!\\current.txt\"\r\necho(!generation!|findstr /r /x \"runtime-[0-9][0-9]*\" >nul\r\nif errorlevel 1 (echo Invalid stress-gpu runtime. Run tb install-stress-gpu. >&2 & exit /b 1)\r\nset \"PYTHONPATH=!STRESS_STATE!\\!generation!\\app\"\r\nset \"PYTHONNOUSERSITE=1\"\r\n\"!STRESS_STATE!\\!generation!\\venv\\Scripts\\python.exe\" -s -m stress_gpu_runtime %*\r\nexit /b !errorlevel!\r\n"
+	}
+	return "#!/bin/sh\n# my-toolbox-stress-gpu wrapper v2\nif [ \"$#\" -eq 1 ] && [ \"$1\" = --uninstall ]; then\n  data_root=\"${XDG_DATA_HOME:-$HOME/.local/share}/my-toolbox\"\n  IFS= read -r toolbox_version < \"$data_root/current.txt\"\n  exec \"$data_root/versions/$toolbox_version/tb\" uninstall-stress-gpu\nfi\nstate=\"$HOME/.stress-gpu\"\ngeneration=$(cat \"$state/current.txt\") || exit 1\ncase \"$generation\" in runtime-*) ;; *) echo 'Invalid stress-gpu runtime. Run tb install-stress-gpu.' >&2; exit 1 ;; esac\ncase \"$generation\" in *[!a-zA-Z0-9-]*) echo 'Invalid stress-gpu runtime.' >&2; exit 1 ;; esac\nexport PYTHONPATH=\"$state/$generation/app\"\nexport PYTHONNOUSERSITE=1\nexec \"$state/$generation/venv/bin/python\" -s -m stress_gpu_runtime \"$@\"\n"
+}
+
+func legacyStressGPUWrapper(platform string) string {
+	if platform == "windows-amd64" {
 		return "@echo off\r\nrem my-toolbox-stress-gpu wrapper v1\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nset \"STRESS_STATE=%USERPROFILE%\\.stress-gpu\"\r\nsetlocal EnableDelayedExpansion\r\nset \"generation=\"\r\nset /p generation=<\"!STRESS_STATE!\\current.txt\"\r\necho(!generation!|findstr /r /x \"runtime-[0-9][0-9]*\" >nul\r\nif errorlevel 1 (echo Invalid stress-gpu runtime. Run tb install-stress-gpu. >&2 & exit /b 1)\r\nset \"PYTHONPATH=!STRESS_STATE!\\!generation!\\app\"\r\nset \"PYTHONNOUSERSITE=1\"\r\n\"!STRESS_STATE!\\!generation!\\venv\\Scripts\\python.exe\" -s -m stress_gpu_runtime %*\r\nexit /b !errorlevel!\r\n"
 	}
 	return "#!/bin/sh\n# my-toolbox-stress-gpu wrapper v1\nstate=\"$HOME/.stress-gpu\"\ngeneration=$(cat \"$state/current.txt\") || exit 1\ncase \"$generation\" in runtime-*) ;; *) echo 'Invalid stress-gpu runtime. Run tb install-stress-gpu.' >&2; exit 1 ;; esac\ncase \"$generation\" in *[!a-zA-Z0-9-]*) echo 'Invalid stress-gpu runtime.' >&2; exit 1 ;; esac\nexport PYTHONPATH=\"$state/$generation/app\"\nexport PYTHONNOUSERSITE=1\nexec \"$state/$generation/venv/bin/python\" -s -m stress_gpu_runtime \"$@\"\n"
+}
+
+func isOwnedStressGPUWrapper(content []byte, platform string) bool {
+	return string(content) == stressGPUWrapper(platform) || string(content) == legacyStressGPUWrapper(platform)
 }
 
 // stressGPUPython selects a supported system Python without installing it.
@@ -130,7 +140,7 @@ func (builtins *ToolboxBuiltins) installStressGPUWith(python []string, run func(
 	expected := []byte(stressGPUWrapper(builtins.platform))
 	if info, statErr := os.Lstat(wrapper); statErr == nil {
 		content, readErr := os.ReadFile(wrapper)
-		if !info.Mode().IsRegular() || readErr != nil || !bytes.Equal(content, expected) {
+		if !info.Mode().IsRegular() || readErr != nil || !isOwnedStressGPUWrapper(content, builtins.platform) {
 			return fmt.Errorf("refusing to replace unrecognized stress-gpu wrapper %s", wrapper)
 		}
 	} else if !os.IsNotExist(statErr) {
@@ -247,6 +257,48 @@ func validStressGPUGeneration(generation string) bool {
 		}
 	}
 	return true
+}
+
+func stressGPUInstalled(platform string) (bool, error) {
+	state, _, err := stressGPUPaths(platform)
+	if err != nil {
+		return false, err
+	}
+	marker, err := os.ReadFile(filepath.Join(state, "owned.json"))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return string(marker) == stressGPUOwnership, nil
+}
+
+func (builtins *ToolboxBuiltins) uninstallStressGPU() error {
+	state, wrapper, err := stressGPUPaths(builtins.platform)
+	if err != nil {
+		return err
+	}
+	if content, readErr := os.ReadFile(wrapper); readErr == nil {
+		if isOwnedStressGPUWrapper(content, builtins.platform) {
+			if err := os.Remove(wrapper); err != nil {
+				return fmt.Errorf("remove stress-gpu wrapper: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(readErr) {
+		return readErr
+	}
+	installed, err := stressGPUInstalled(builtins.platform)
+	if err != nil {
+		return err
+	}
+	if installed {
+		if err := os.RemoveAll(state); err != nil {
+			return fmt.Errorf("remove stress-gpu runtime: %w", err)
+		}
+	}
+	_, err = fmt.Fprintln(builtins.output, "Removed stress-gpu runtime and launcher.")
+	return err
 }
 
 // publishStressGPUFile atomically writes a private pointer or launcher.

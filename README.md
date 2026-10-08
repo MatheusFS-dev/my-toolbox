@@ -238,7 +238,7 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 - `install-monitor` (Linux or WSL): Install or repair Monitor for the current Linux or WSL user with an isolated supervisor runtime.
   Requires: Python 3.9+.
 
-  Run `monitor <script.py> [more.py ...]` after installation. Monitor keeps private state in `~/.monitor`, executes targets with the selected Python 3 interpreter, and writes run artifacts below each script's `runs/monitor_logs/` directory. Use `monitor config`, `monitor --help`, and `monitor --version` for configuration and command details.
+  Run `monitor <script.py> [more.py ...]` after installation. Monitor keeps private state in `~/.monitor`, executes targets with the selected Python 3 interpreter, and writes run artifacts below each script's `runs/monitor_logs/` directory. Use `monitor config`, `monitor --help`, `monitor --version`, and `monitor --uninstall` for configuration and command details.
 
 - `install-stress-gpu` (Linux, WSL, or Windows): Install or repair the standalone NVIDIA GPU stress application in its own virtual environment.
   Requires: Python 3.10-3.14.
@@ -251,7 +251,13 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 
   The final report includes averages, peaks, temperature trend, thermal observations, allocated memory, stop reason, and errors. It is an observation report, not a hardware-health certification. After the report, choose whether to save `report.txt` and `samples.jsonl`, then supply a directory. Existing output replacement requires confirmation. Raw samples are temporarily spooled to disk so continuous runs do not grow process RAM indefinitely.
 
-  The private runtime lives in `~/.stress-gpu`, with a launcher at `~/.local/bin/stress-gpu` on Linux/WSL or `%LOCALAPPDATA%\my-toolbox\bin\stress-gpu.cmd` on Windows. Add that launcher directory to PATH if necessary. Rerun `tb install-stress-gpu` to update or repair the application. Failed installations retain the active generation. Previous generations remain available under the runtime directory, and `tb uninstall` leaves the application installed.
+  The private runtime lives in `~/.stress-gpu`, with a launcher at `~/.local/bin/stress-gpu` on Linux/WSL or `%LOCALAPPDATA%\my-toolbox\bin\stress-gpu.cmd` on Windows. Add that launcher directory to PATH if necessary. Rerun `tb install-stress-gpu` to update or repair the application. Failed installations retain the active generation. Previous generations remain available under the runtime directory. Run `stress-gpu --uninstall` to remove it.
+
+### Uninstall
+
+- `uninstall-monitor` (Linux or WSL): Remove the toolbox-owned Monitor runtime and launcher while preserving configuration.
+
+- `uninstall-stress-gpu` (Linux, WSL, or Windows): Remove the toolbox-owned stress-gpu runtime and launcher.
 
 - `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
   Requires: Bash; sudo; Python 3; GRUB configuration files; GRUB utilities; `awk`; `cat`; `cp`; `date`; `grep`.

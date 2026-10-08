@@ -37,11 +37,6 @@ func uninstallPlatform(dataRoot, wrapper, installerPath string, output io.Writer
 	if err := removeUnixCompletionProfiles(dataRoot); err != nil {
 		return "", err
 	}
-	if installerPath == "" {
-		if err := removeMonitor(); err != nil {
-			return "", err
-		}
-	}
 	if err := os.RemoveAll(dataRoot); err != nil {
 		return "", fmt.Errorf("remove toolbox data directory: %w", err)
 	}
