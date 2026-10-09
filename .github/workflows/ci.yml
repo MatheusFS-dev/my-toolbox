@@ -135,7 +135,8 @@ jobs:
       - run: shellcheck packages/macros/cronjob/codex_hi.sh scripts/cronjob_test.sh
       - run: bash scripts/terminal-setup_test.sh
       - run: bash scripts/desktop-utils_test.sh
+      - run: bash scripts/gpu-isolation_test.sh
       - run: python3 scripts/mount_drive_test.py
       - run: bash -n completions/tb.bash
       - run: zsh -n completions/_tb
-      - run: shellcheck install.sh completions/tb.bash scripts/build-release.sh scripts/build-release_test.sh scripts/build-markdown-reader.sh scripts/build-markdown-reader_test.sh scripts/completion_test.sh scripts/install_test.sh scripts/terminal-setup_test.sh scripts/testdata/go scripts/testdata/reader scripts/testdata/reader-build/cargo scripts/testdata/reader-build/readelf
+      - run: shellcheck install.sh completions/tb.bash packages/scripts/utils/isolate_gpu.sh scripts/build-release.sh scripts/build-release_test.sh scripts/build-markdown-reader.sh scripts/build-markdown-reader_test.sh scripts/completion_test.sh scripts/gpu-isolation_test.sh scripts/install_test.sh scripts/terminal-setup_test.sh scripts/testdata/go scripts/testdata/reader scripts/testdata/reader-build/cargo scripts/testdata/reader-build/readelf

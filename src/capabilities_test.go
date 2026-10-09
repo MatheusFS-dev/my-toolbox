@@ -73,6 +73,26 @@ func TestResolveRequirementsDerivesOfficialInstallerShellButNotGitHubCLI(t *test
 	}
 }
 
+func TestSupportsUbuntuGPUIsolationVersions(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"Ubuntu 24.04", "ID=ubuntu\nVERSION_ID=\"24.04\"\n", true},
+		{"Ubuntu 26.04", "ID=ubuntu\nVERSION_ID=26.04\n", true},
+		{"Ubuntu 25.04", "ID=ubuntu\nVERSION_ID=25.04\n", false},
+		{"Debian 24.04", "ID=debian\nVERSION_ID=24.04\n", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := supportsUbuntuGPUIsolation([]byte(test.content)); got != test.want {
+				t.Fatalf("supportsUbuntuGPUIsolation() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSupportedPowerShellPathPrefersPowerShell7(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("PowerShell host selection is Windows-specific")
@@ -127,6 +147,9 @@ func TestRepositoryScriptRequirementsIncludeEveryPreStartUtility(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
+		"isolate-gpu": {
+			"bash", "sudo", "ubuntu-isolate-gpu", "nvidia-smi", "awk", "cat", "chmod", "grep", "install", "mkdir", "mktemp", "pgrep", "rm", "sha256sum", "systemctl", "tr",
+		},
 		"setup-wsl": {
 			"bash", "sudo", "wsl-ubuntu-supported", "apt-get", "cut", "dirname", "env", "getent", "grep", "sort",
 		},

@@ -34,6 +34,7 @@ var capabilityRegistry = map[string]Capability{
 	"antigravity-plugin-management": {ID: "antigravity-plugin-management", Label: "Antigravity with plugin management", Remediation: "Install or update Antigravity to a version that supports 'agy plugin'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"apt-get":                       {ID: "apt-get", Label: "apt-get", Remediation: "Install apt and ensure 'apt-get' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"ubuntu":                        {ID: "ubuntu", Label: "Ubuntu", Remediation: "Run this tool on Ubuntu.", Environments: environments("linux-native")},
+	"ubuntu-isolate-gpu":            {ID: "ubuntu-isolate-gpu", Label: "Ubuntu 24.04 or 26.04", Remediation: "Run this tool on native Ubuntu 24.04 or 26.04.", Environments: environments("linux-native")},
 	"debian-ubuntu":                 {ID: "debian-ubuntu", Label: "Debian or Ubuntu", Remediation: "Run this tool on a supported Debian or Ubuntu installation.", Environments: environments("linux-native")},
 	"wsl-ubuntu-supported":          {ID: "wsl-ubuntu-supported", Label: "WSL Ubuntu 22.04 or 24.04", Remediation: "Run this tool in WSL on Ubuntu 22.04 or 24.04.", Environments: environments("linux-wsl")},
 	"windows-build-supported":       {ID: "windows-build-supported", Label: "Windows 10 build 17763+ or Windows 11", Remediation: "Update Windows to Windows 10 build 17763 or newer, or Windows 11.", Environments: environments("windows")},
@@ -43,10 +44,11 @@ var capabilityRegistry = map[string]Capability{
 	"grub-files":                    {ID: "grub-files", Label: "GRUB configuration files", Remediation: "Install and configure GRUB so /etc/default/grub and /boot/grub/grub.cfg exist.", Environments: environments("linux-native")},
 	"grub-utilities":                {ID: "grub-utilities", Label: "GRUB utilities", Remediation: "Install the GRUB utilities package that provides 'update-grub'.", Environments: environments("linux-native")},
 	"visudo":                        {ID: "visudo", Label: "visudo", Remediation: "Install sudo utilities so 'visudo' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
+	"nvidia-smi":                    {ID: "nvidia-smi", Label: "nvidia-smi", Remediation: "Install a compatible NVIDIA driver that provides 'nvidia-smi'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 }
 
 func init() {
-	for _, name := range []string{"awk", "cat", "dpkg-query", "chmod", "chown", "cmp", "cp", "cut", "date", "dirname", "env", "getent", "grep", "id", "install", "mktemp", "mv", "od", "rm", "sed", "sh", "sort", "tee", "locale", "locale-gen", "mkdir", "update-locale", "tail", "tr"} {
+	for _, name := range []string{"awk", "cat", "dpkg-query", "chmod", "chown", "cmp", "cp", "cut", "date", "dirname", "env", "getent", "grep", "id", "install", "mktemp", "mv", "od", "pgrep", "rm", "sed", "sh", "sha256sum", "sort", "systemctl", "tee", "locale", "locale-gen", "mkdir", "update-locale", "tail", "tr"} {
 		capabilityRegistry[name] = Capability{ID: name, Label: name, Remediation: fmt.Sprintf("Install the utility that provides '%s' and ensure it is on PATH.", name), Environments: environments("linux-native", "linux-wsl")}
 	}
 }

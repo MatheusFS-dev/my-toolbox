@@ -90,6 +90,9 @@ func (executor ProcessExecutor) supportsCapability(id string) bool {
 	case "ubuntu":
 		content, err := os.ReadFile("/etc/os-release")
 		return err == nil && osReleaseIs(content, "ubuntu")
+	case "ubuntu-isolate-gpu":
+		content, err := os.ReadFile("/etc/os-release")
+		return err == nil && supportsUbuntuGPUIsolation(content)
 	case "debian-ubuntu":
 		content, err := os.ReadFile("/etc/os-release")
 		return err == nil && osReleaseIs(content, "debian", "ubuntu")
@@ -169,6 +172,10 @@ func regularFile(path string) bool {
 
 func osReleaseIs(content []byte, identifiers ...string) bool {
 	return osReleaseVersionIs(content, "", identifiers...)
+}
+
+func supportsUbuntuGPUIsolation(content []byte) bool {
+	return osReleaseVersionIs(content, "ubuntu", "24.04", "26.04")
 }
 
 func osReleaseVersionIs(content []byte, identifier string, versions ...string) bool {

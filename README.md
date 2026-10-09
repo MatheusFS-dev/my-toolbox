@@ -253,11 +253,10 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 
   The private runtime lives in `~/.stress-gpu`, with a launcher at `~/.local/bin/stress-gpu` on Linux/WSL or `%LOCALAPPDATA%\my-toolbox\bin\stress-gpu.cmd` on Windows. Add that launcher directory to PATH if necessary. Rerun `tb install-stress-gpu` to update or repair the application. Failed installations retain the active generation. Previous generations remain available under the runtime directory. Run `stress-gpu --uninstall` to remove it.
 
-### Uninstall
+- `isolate-gpu` (native Ubuntu 24.04 or 26.04): Reserve non-desktop NVIDIA GPUs from GDM and Xorg by anchoring the desktop to the NVIDIA GPU currently used by Xorg. Supports status, dry-run, apply, and checksum-verified undo.
+  Requires: Bash; sudo; Ubuntu 24.04 or 26.04; nvidia-smi; awk; cat; chmod; grep; install; mkdir; mktemp; pgrep; rm; sha256sum; systemctl; tr.
 
-- `uninstall-monitor` (Linux or WSL): Remove the toolbox-owned Monitor runtime and launcher while preserving configuration.
-
-- `uninstall-stress-gpu` (Linux, WSL, or Windows): Remove the toolbox-owned stress-gpu runtime and launcher.
+  This tool requires GDM, an active Xorg session, and at least two NVIDIA GPUs. It writes only `/etc/X11/xorg.conf.d/90-tb-isolate-gpu.conf` and its checksum state under `/var/lib/my-toolbox/`. Run `tb isolate-gpu apply --dry-run` before applying, then restart GDM or reboot. Run `tb isolate-gpu undo` to remove an unchanged managed configuration. Wayland and non-Ubuntu systems are intentionally unsupported.
 
 - `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
   Requires: Bash; sudo; Python 3; GRUB configuration files; GRUB utilities; `awk`; `cat`; `cp`; `date`; `grep`.
@@ -282,6 +281,12 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Python 3.9+.
 
 On Python 3.9 and 3.10, project TOML parsing uses bundled Tomli 2.2.1 and requires no package installation.
+
+### Uninstall
+
+- `uninstall-monitor` (Linux or WSL): Remove the toolbox-owned Monitor runtime and launcher while preserving configuration.
+
+- `uninstall-stress-gpu` (Linux, WSL, or Windows): Remove the toolbox-owned stress-gpu runtime and launcher.
 
 Copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments. Alacritty and Kitty setup skip their optional file-manager integration when Nautilus is unavailable, and optional-step failures do not stop the remaining setup.
 
@@ -332,6 +337,7 @@ sh scripts/install_test.sh
 sh scripts/build-release_test.sh
 sh scripts/build-markdown-reader_test.sh
 bash scripts/terminal-setup_test.sh
+bash scripts/gpu-isolation_test.sh
 ```
 
 CI additionally validates release/version scripts, shell completion, PowerShell 5.1 and 7 installers and reader-build checks, the Windows terminal hotkey, WSL Shift+Enter bindings, shell syntax, ShellCheck, race detection, and cross-platform builds. The [reader build workflow](.github/workflows/markdown-reader.yml) builds and self-checks each reader on its native platform: Linux MUSL binaries must have no ELF interpreter or dynamic dependencies, and Windows MSVC binaries must have no dynamic VC/UCRT imports.
