@@ -111,4 +111,92 @@ mv "$temporary_root/$archive" "$output_directory/$archive"
     cd "$output_directory"
     sha256sum "$archive" > "$archive.sha256"
 )
+
+template_root="$repository_root/packages/agent-workspace-template/source"
+portable_root="$temporary_root/agent-configs-portable"
+portable_home="$portable_root/home"
+if [ ! -d "$template_root/skills" ] || [ ! -f "$template_root/instructions/global.md" ] || \
+    [ ! -f "$template_root/configs/codex/config.toml.template" ] || \
+    [ ! -f "$template_root/configs/claude/settings.json" ] || \
+    [ ! -f "$template_root/configs/antigravity/settings.json" ] || \
+    [ ! -f "$template_root/configs/statusline/statusline.py" ]; then
+    printf 'Agent workspace template is missing a required portable-package source.\n' >&2
+    exit 1
+fi
+
+mkdir -p "$portable_home/.codex/skills" \
+    "$portable_home/.claude/skills" \
+    "$portable_home/.gemini/antigravity-cli/skills"
+python3 - "$template_root" "$portable_home/.codex/config.toml" <<'PY'
+from pathlib import Path
+import sys
+import tomllib
+
+template_root = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+marker = "{{GLOBAL_INSTRUCTIONS}}"
+template = (template_root / "configs" / "codex" / "config.toml.template").read_text(
+    encoding="utf-8"
+)
+instructions = (template_root / "instructions" / "global.md").read_text(encoding="utf-8")
+
+if template.count(marker) != 1:
+    raise RuntimeError("Codex configuration template must contain one global-instructions marker.")
+if "'''" in instructions:
+    raise RuntimeError("Global instructions cannot contain three consecutive single quotes.")
+
+rendered = template.replace(marker, instructions)
+tomllib.loads(rendered)
+destination.write_text(rendered, encoding="utf-8")
+PY
+for profile in "$template_root"/configs/codex/*.config.toml; do
+    [ -f "$profile" ] || continue
+    cp "$profile" "$portable_home/.codex/$(basename "$profile")"
+done
+cp -R "$template_root/skills/." "$portable_home/.codex/skills"
+
+cp "$template_root/instructions/global.md" "$portable_home/.claude/CLAUDE.md"
+cp "$template_root/configs/claude/settings.json" "$portable_home/.claude/settings.json"
+cp "$template_root/configs/statusline/statusline.py" "$portable_home/.claude/statusline.py"
+cp -R "$template_root/skills/." "$portable_home/.claude/skills"
+
+mkdir -p "$portable_home/.gemini/antigravity-cli"
+cp "$template_root/instructions/global.md" "$portable_home/.gemini/GEMINI.md"
+cp "$template_root/configs/antigravity/settings.json" \
+    "$portable_home/.gemini/antigravity-cli/settings.json"
+cp "$template_root/configs/statusline/statusline.py" \
+    "$portable_home/.gemini/antigravity-cli/statusline.py"
+cp -R "$template_root/skills/." "$portable_home/.gemini/antigravity-cli/skills"
+
+cat > "$portable_root/README.md" <<'EOF'
+# Portable Agent Configuration Package
+
+This package configures Codex, Claude Code, and Antigravity CLI without
+installing my-toolbox, packages, or system software.
+
+Close those agents before copying files. The `home/` folder mirrors your user
+home directory. Copy its contents into `%USERPROFILE%` on Windows or `$HOME`
+on Linux. Back up existing `.codex`, `.claude`, and `.gemini` folders first,
+then replace them with the folders in `home/`.
+
+The package contains:
+
+- `.codex/config.toml`, the optional `research.config.toml` profile, and skills
+- `.claude/CLAUDE.md`, settings, status line, and skills
+- `.gemini/GEMINI.md`, Antigravity CLI settings, status line, and skills
+
+Python 3 is required only for the Claude Code and Antigravity CLI status lines.
+The remaining instructions, settings, and skills can still be copied when it
+is unavailable.
+
+No administrator account or `sudo` is required as long as you can write to
+your own home directory.
+EOF
+
+archive=agent-configs-portable.zip
+(
+    cd "$temporary_root"
+    zip -qry "$temporary_root/$archive" agent-configs-portable
+)
+mv "$temporary_root/$archive" "$output_directory/$archive"
 printf '%s\n' "$version" > "$output_directory/version.txt"

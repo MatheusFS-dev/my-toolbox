@@ -55,6 +55,10 @@ printf 'stale\n' > "$temporary_root/stale/stale-entry.txt"
 for platform in linux-amd64 linux-arm64; do
     tar -C "$temporary_root/stale" -czf "$temporary_root/dist/toolbox-$platform.tar.gz" stale-entry.txt
 done
+(
+    cd "$temporary_root/stale"
+    zip -q "$temporary_root/dist/agent-configs-portable.zip" stale-entry.txt
+)
 
 # Every invalid input must leave existing output intact and never invoke Go.
 export TB_TEST_GO_CALL_LOG="$temporary_root/go-calls"
@@ -69,7 +73,7 @@ expect_invalid() {
         exit 1
     fi
     if [ "$(cksum "$temporary_root/dist/"*)" != "$output_before" ] ||
-        [ "$(find "$temporary_root/dist" -type f | wc -l)" -ne 3 ]; then
+        [ "$(find "$temporary_root/dist" -type f | wc -l)" -ne 4 ]; then
         printf 'Invalid release input changed existing output.\n' >&2
         exit 1
     fi
@@ -235,5 +239,66 @@ if printf '%s\n' "$windows_entries" | grep -E '(^|/)__pycache__/|\.py[co]$' >/de
 fi
 if printf '%s\n' "$windows_entries" | grep -E '(^|/)\.git(/|$)' >/dev/null; then
     printf 'Windows release contains checkout metadata.\n' >&2
+    exit 1
+fi
+
+portable_archive="$temporary_root/dist/agent-configs-portable.zip"
+portable_entries=$(unzip -Z1 "$portable_archive")
+if printf '%s\n' "$portable_entries" | grep -Fx 'stale-entry.txt' >/dev/null; then
+    printf 'Portable agent configuration archive retained an older entry.\n' >&2
+    exit 1
+fi
+for required_entry in \
+    agent-configs-portable/ \
+    agent-configs-portable/README.md \
+    agent-configs-portable/home/ \
+    agent-configs-portable/home/.codex/ \
+    agent-configs-portable/home/.codex/config.toml \
+    agent-configs-portable/home/.codex/research.config.toml \
+    agent-configs-portable/home/.claude/ \
+    agent-configs-portable/home/.claude/CLAUDE.md \
+    agent-configs-portable/home/.claude/settings.json \
+    agent-configs-portable/home/.claude/statusline.py \
+    agent-configs-portable/home/.gemini/ \
+    agent-configs-portable/home/.gemini/GEMINI.md \
+    agent-configs-portable/home/.gemini/antigravity-cli/ \
+    agent-configs-portable/home/.gemini/antigravity-cli/settings.json \
+    agent-configs-portable/home/.gemini/antigravity-cli/statusline.py; do
+    if ! printf '%s\n' "$portable_entries" | grep -Fx "$required_entry" >/dev/null; then
+        printf 'Portable agent configuration archive is missing %s.\n' "$required_entry" >&2
+        exit 1
+    fi
+done
+for skill_path in "$repository_root"/packages/agent-workspace-template/source/skills/*; do
+    skill_name=$(basename "$skill_path")
+    for agent_skills in \
+        agent-configs-portable/home/.codex/skills \
+        agent-configs-portable/home/.claude/skills \
+        agent-configs-portable/home/.gemini/antigravity-cli/skills; do
+        required_entry="$agent_skills/$skill_name/SKILL.md"
+        if ! printf '%s\n' "$portable_entries" | grep -Fx "$required_entry" >/dev/null; then
+            printf 'Portable agent configuration archive is missing %s.\n' "$required_entry" >&2
+            exit 1
+        fi
+    done
+done
+if unzip -p "$portable_archive" agent-configs-portable/home/.codex/config.toml |
+    grep -F '{{GLOBAL_INSTRUCTIONS}}' >/dev/null; then
+    printf 'Portable Codex configuration has an unresolved instructions marker.\n' >&2
+    exit 1
+fi
+unzip -p "$portable_archive" agent-configs-portable/home/.codex/config.toml |
+    python3 -c 'import sys; import tomllib; tomllib.loads(sys.stdin.read())'
+unzip -p "$portable_archive" agent-configs-portable/home/.claude/CLAUDE.md |
+    cmp "$repository_root/packages/agent-workspace-template/source/instructions/global.md" -
+unzip -p "$portable_archive" agent-configs-portable/home/.gemini/GEMINI.md |
+    cmp "$repository_root/packages/agent-workspace-template/source/instructions/global.md" -
+if ! unzip -p "$portable_archive" agent-configs-portable/README.md |
+    grep -F 'Python 3 is required only for the Claude Code and Antigravity CLI status lines.' >/dev/null; then
+    printf 'Portable agent configuration archive does not document its status-line Python requirement.\n' >&2
+    exit 1
+fi
+if printf '%s\n' "$portable_entries" | grep -E '(^|/)\.git(/|$)|(^|/)__pycache__/|\.py[co]$' >/dev/null; then
+    printf 'Portable agent configuration archive contains checkout metadata or Python bytecode.\n' >&2
     exit 1
 fi

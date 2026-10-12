@@ -26,6 +26,7 @@
 
 - [Overview](#overview)
 - [Installation](#installation)
+- [Portable Agent Configuration Package](#portable-agent-configuration-package)
 - [Usage](#usage)
 - [Macros](#macros)
 - [Tool Catalog](#tool-catalog)
@@ -90,6 +91,70 @@ Bootstrap installation does not replace an existing toolbox. When a newer releas
 After a successful update, including when the toolbox is already current, `tb update` checks an installed Monitor runtime and updates it automatically when its package version is older than the version bundled with the active toolbox. It then lists previously used global agent setups and asks once whether to rerun all of them. The default answer is No. If confirmed, the active toolbox version reruns them in catalog order with each setup's own prompts and requirement checks. Refresh stops at the first failure and reports commands not run; a successful toolbox upgrade remains installed.
 
 Toolbox remembers successful runs of the global `setup-agents-codex`, `setup-agents-claude`, and `setup-agents-antigravity` commands. Earlier runs are not detected retroactively. Markers live in the stable `my-toolbox/used-tools` data directory and are removed by `tb uninstall`. Software installers, plugins, project setup, and terminal commands are excluded.
+
+## Portable Agent Configuration Package
+
+Each GitHub Release includes [agent-configs-portable.zip](https://github.com/MatheusFS-dev/my-toolbox/releases/latest/download/agent-configs-portable.zip). It contains ready-to-copy `.codex`, `.claude`, and `.gemini` user-configuration folders for Codex, Claude Code, and Antigravity CLI, including their shared instructions, settings, status lines, and skills. It does not install my-toolbox or any software, and it does not require administrator permissions or `sudo` on the receiving computer. Claude Code and Antigravity CLI use the included Python status-line scripts, so Python 3 must already be available for those status lines to run. The remaining instructions, settings, and skills can still be copied without Python.
+
+Extract the ZIP and copy the contents of its `agent-configs-portable/home/` folder into your user home directory: `%USERPROFILE%` on Windows or `$HOME` on Linux. The commands below make a timestamped backup of any existing managed agent directories before copying the replacements. Close the agents first.
+
+> [!WARNING]
+> These commands replace your existing `.codex`, `.claude`, and `.gemini` directories as complete units. They preserve a backup in your home directory, but do not merge local changes.
+
+### Windows PowerShell
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$assetUrl = 'https://github.com/MatheusFS-dev/my-toolbox/releases/latest/download/agent-configs-portable.zip'
+$workDir = Join-Path $env:TEMP "agent-configs-portable-$([guid]::NewGuid())"
+$archive = Join-Path $workDir 'agent-configs-portable.zip'
+New-Item -ItemType Directory -Path $workDir | Out-Null
+Invoke-WebRequest -Uri $assetUrl -OutFile $archive
+Expand-Archive -LiteralPath $archive -DestinationPath $workDir
+$packageHome = Join-Path $workDir 'agent-configs-portable\home'
+$missingFolders = @('.codex', '.claude', '.gemini') | Where-Object {
+    -not (Test-Path -LiteralPath (Join-Path $packageHome $_) -PathType Container)
+}
+if ($missingFolders.Count -gt 0) {
+    throw "The downloaded package is missing: $($missingFolders -join ', ')"
+}
+$backupDir = Join-Path $env:USERPROFILE "agent-config-backup-$([guid]::NewGuid())"
+New-Item -ItemType Directory -Path $backupDir | Out-Null
+'.codex', '.claude', '.gemini' | ForEach-Object {
+    $destination = Join-Path $env:USERPROFILE $_
+    if (Test-Path -LiteralPath $destination) {
+        Move-Item -LiteralPath $destination -Destination $backupDir
+    }
+}
+Copy-Item -Path (Join-Path $packageHome '*') -Destination $env:USERPROFILE -Recurse -Force
+```
+
+### Linux
+
+```sh
+set -eu
+asset_url='https://github.com/MatheusFS-dev/my-toolbox/releases/latest/download/agent-configs-portable.zip'
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+curl -fL "$asset_url" -o "$work_dir/agent-configs-portable.zip"
+unzip -q "$work_dir/agent-configs-portable.zip" -d "$work_dir"
+package_home="$work_dir/agent-configs-portable/home"
+for name in .codex .claude .gemini; do
+    [ -d "$package_home/$name" ] || {
+        printf 'Downloaded package is missing %s\n' "$name" >&2
+        exit 1
+    }
+done
+backup_dir=$(mktemp -d "$HOME/agent-config-backup.XXXXXX")
+for name in .codex .claude .gemini; do
+    if [ -e "$HOME/$name" ] || [ -L "$HOME/$name" ]; then
+        mv "$HOME/$name" "$backup_dir/$name"
+    fi
+done
+cp -a "$package_home/." "$HOME/"
+```
+
+The portable ZIP is assembled from the same pinned agent-workspace template as the installers. When that template updates, the existing template-update workflow creates a new release, so its portable ZIP updates too.
 
 ## Usage
 
