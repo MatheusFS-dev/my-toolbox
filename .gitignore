@@ -220,3 +220,4 @@ __marimo__/
 # Agent workspace template
 docs/superpowers/specs/
 docs/superpowers/plans/
+.worktrees/
