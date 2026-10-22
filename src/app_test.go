@@ -207,6 +207,7 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
+		test.want = strings.Replace(test.want, "create-project-template\n", "create-project-template\ngit-sync\n", 1)
 		t.Run(test.environment, func(t *testing.T) {
 			output := &bytes.Buffer{}
 			app := App{Catalog: catalog, Environment: test.environment, Output: output}
