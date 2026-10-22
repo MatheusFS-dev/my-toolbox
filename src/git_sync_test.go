@@ -46,8 +46,16 @@ func TestDiscoverGitRepositoryFromSubdirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if discovered.Root != repository {
-		t.Fatalf("root = %q, want %q", discovered.Root, repository)
+	discoveredInfo, err := os.Stat(discovered.Root)
+	if err != nil {
+		t.Fatalf("stat discovered root: %v", err)
+	}
+	repositoryInfo, err := os.Stat(repository)
+	if err != nil {
+		t.Fatalf("stat expected root: %v", err)
+	}
+	if !os.SameFile(discoveredInfo, repositoryInfo) {
+		t.Fatalf("root = %q, want same directory as %q", discovered.Root, repository)
 	}
 	if len(discovered.Remotes) != 2 || discovered.Remotes[0].Name != "backup" || discovered.Remotes[1].Name != "origin" {
 		t.Fatalf("remotes = %#v", discovered.Remotes)
