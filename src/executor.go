@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -266,6 +267,12 @@ func (executor ProcessExecutor) Questions(command Command, answers map[string]an
 // Returns:
 //   - error: Argument, execution, or unexpected adapter-state failure.
 func (executor ProcessExecutor) Run(command Command, answers map[string]any, arguments []string) error {
+	if command.Name == "git-sync" {
+		if len(arguments) != 0 {
+			return fmt.Errorf("git-sync does not accept arguments")
+		}
+		return RunGitSync(context.Background(), ExecGitRunner{Input: executor.Input}, currentDirectory(), executor.Platform, executor.Input, executor.Output, executor.Error)
+	}
 	if command.Protocol == "builtin" || command.Name == "update" {
 		return executor.Builtins.Run(command.Name, arguments)
 	}

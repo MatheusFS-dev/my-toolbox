@@ -340,6 +340,13 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 
 ### Project Utilities
 
+- `git-sync`: Synchronize tracked files between any two remote branches while preserving destination history and never force-pushing.
+  Requires: Git.
+
+  Run `tb git-sync` from a Git repository or any subdirectory. The interactive workflow detects the repository, remotes, and remote branches, then asks for the source and destination. It requires a clean working tree, shows added, modified, and deleted counts, and defaults the final confirmation to No. The tool creates a normal commit on top of the fetched destination branch and pushes it as a fast-forward update. It never rewrites destination history, stashes local work, or uses `--force` or `--force-with-lease`.
+
+  HTTPS remotes offer three credential modes: use the existing secure Git credential manager, explicitly enable Git's unencrypted `store` helper for that URL, or avoid persistent storage. SSH remotes continue through the user's existing SSH configuration. Tokens and passwords remain handled by Git and are never displayed, logged, or placed in command arguments by the toolbox.
+
 - `create-env-alias` (Linux or WSL): Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.
   Requires: Python 3.9+.
 - `bootstrap-python-from-venv` (Linux or WSL): Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.
@@ -355,7 +362,7 @@ On Python 3.9 and 3.10, project TOML parsing uses bundled Tomli 2.2.1 and requir
 
 - `uninstall-stress-gpu` (Linux, WSL, or Windows): Remove the toolbox-owned stress-gpu runtime and launcher.
 
-Copied Bash and PowerShell tools receive direct arguments unchanged. The three Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments. Alacritty and Kitty setup skip their optional file-manager integration when Nautilus is unavailable, and optional-step failures do not stop the remaining setup.
+Copied Bash and PowerShell tools receive direct arguments unchanged. Project Utilities are interactive and reject command-line arguments. Vendored Alacritty, Kitty, and WSL setup scripts target their documented Debian or Ubuntu environments. Alacritty and Kitty setup skip their optional file-manager integration when Nautilus is unavailable, and optional-step failures do not stop the remaining setup.
 
 ## Monitor
 

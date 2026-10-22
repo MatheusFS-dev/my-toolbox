@@ -45,6 +45,7 @@ var capabilityRegistry = map[string]Capability{
 	"grub-utilities":                {ID: "grub-utilities", Label: "GRUB utilities", Remediation: "Install the GRUB utilities package that provides 'update-grub'.", Environments: environments("linux-native")},
 	"visudo":                        {ID: "visudo", Label: "visudo", Remediation: "Install sudo utilities so 'visudo' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"nvidia-smi":                    {ID: "nvidia-smi", Label: "nvidia-smi", Remediation: "Install a compatible NVIDIA driver that provides 'nvidia-smi'.", Environments: environments("linux-native", "linux-wsl", "windows")},
+	"git":                           {ID: "git", Label: "Git", Remediation: "Install Git and ensure 'git' is on PATH.", Environments: environments("linux-native", "linux-wsl", "windows")},
 }
 
 func init() {
