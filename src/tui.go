@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
 
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
@@ -84,7 +86,7 @@ func (ui HuhUI) Search(articles []Article) error {
 //
 // Returns:
 //   - []string: Selected command names.
-//   - error: ErrCancelled for Ctrl+C or Escape, or a terminal rendering error.
+//   - error: ErrCancelled for Ctrl+C or a terminal rendering error.
 func (HuhUI) Select(commands []Command) ([]string, error) {
 	program := tea.NewProgram(newSelectorModel(commands, maxPresentationWidth, 24))
 	finalModel, err := program.Run()
@@ -195,16 +197,25 @@ func huhOptions(options []Option) []huh.Option[string] {
 }
 
 type selectorModel struct {
-	commands  []Command
-	selected  []bool
-	cursor    int
-	width     int
-	height    int
-	viewport  viewport.Model
-	rowStarts []int
-	rowEnds   []int
-	completed bool
-	cancelled bool
+	commands              []Command
+	selected              []bool
+	input                 textinput.Model
+	visibleCommandIndexes []int
+	cursor                int
+	width                 int
+	height                int
+	viewport              viewport.Model
+	rowStarts             []int
+	rowEnds               []int
+	confirming            bool
+	confirmRun            bool
+	completed             bool
+	cancelled             bool
+}
+
+type selectorControlHint struct {
+	key    string
+	action string
 }
 
 // newSelectorModel creates the categorized interactive selection state.
@@ -226,11 +237,17 @@ type selectorModel struct {
 //
 //	model := newSelectorModel(commands, 72, 24)
 func newSelectorModel(commands []Command, terminalWidth int, terminalHeight int) selectorModel {
+	input := textinput.New()
+	input.Prompt = "› "
+	input.Placeholder = "Type to filter tools"
+	input.Focus()
 	model := selectorModel{
 		commands: append([]Command(nil), commands...),
 		selected: make([]bool, len(commands)),
+		input:    input,
 	}
 	model.resize(terminalWidth, terminalHeight)
+	model.refreshVisibleCommands()
 	return model
 }
 
@@ -240,23 +257,25 @@ func newSelectorModel(commands []Command, terminalWidth int, terminalHeight int)
 //   - None.
 //
 // Returns:
-//   - tea.Cmd: Always nil because selection is driven only by terminal events.
+//   - tea.Cmd: Input-focus command for the search field.
 //
 // Raises:
 //   - None.
 func (model selectorModel) Init() tea.Cmd {
-	return nil
+	return model.input.Focus()
 }
 
 // Update applies the selector's supported keyboard and resize events.
 //
 // Args:
-//   - message: Bubble Tea event. Only Up, Down, Space, Enter, Escape, Ctrl+C,
-//     and terminal resize events change selector state.
+//   - message: Bubble Tea event. Typing filters tools, Up and Down move, Tab
+//     toggles, Enter opens run confirmation, Escape dismisses or clears,
+//     Ctrl+C cancels, and terminal resize events update the layout.
 //
 // Returns:
 //   - tea.Model: Updated selector value.
-//   - tea.Cmd: tea.Quit for completion or cancellation, otherwise nil.
+//   - tea.Cmd: tea.Quit for confirmed completion or cancellation, otherwise
+//     the search input command or nil.
 //
 // Raises:
 //   - None.
@@ -264,32 +283,81 @@ func (model selectorModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		model.resize(message.Width, message.Height)
+		return model, nil
 	case tea.KeyPressMsg:
-		switch {
-		case message.Code == tea.KeyUp:
-			if model.cursor > 0 {
-				model.cursor--
-				model.rebuildContent()
-			}
-		case message.Code == tea.KeyDown:
-			if model.cursor+1 < len(model.commands) {
-				model.cursor++
-				model.rebuildContent()
-			}
-		case message.Code == tea.KeySpace:
-			if len(model.commands) > 0 {
-				model.selected[model.cursor] = !model.selected[model.cursor]
-				model.rebuildContent()
-			}
-		case message.Code == tea.KeyEnter:
-			model.completed = true
-			return model, tea.Quit
-		case message.Code == tea.KeyEscape || (message.Code == 'c' && message.Mod.Contains(tea.ModCtrl)):
+		if message.Code == 'c' && message.Mod.Contains(tea.ModCtrl) {
 			model.cancelled = true
 			return model, tea.Quit
 		}
+		if model.confirming {
+			return model.updateConfirmation(message)
+		}
+		switch message.Code {
+		case tea.KeyUp:
+			model.moveCursor(-1)
+			return model, nil
+		case tea.KeyDown:
+			model.moveCursor(1)
+			return model, nil
+		case tea.KeyTab:
+			model.toggleFocusedCommand()
+			return model, nil
+		case tea.KeyEnter:
+			if model.selectedCount() > 0 {
+				model.confirming = true
+				model.confirmRun = false
+			}
+			return model, nil
+		case tea.KeyEscape:
+			if model.input.Value() != "" {
+				model.input.SetValue("")
+				model.refreshVisibleCommands()
+			}
+			return model, nil
+		}
+		previous := model.input.Value()
+		updatedInput, command := model.input.Update(message)
+		model.input = updatedInput
+		if model.input.Value() != previous {
+			model.refreshVisibleCommands()
+		}
+		return model, command
 	}
 	return model, nil
+}
+
+func (model selectorModel) updateConfirmation(message tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch message.Code {
+	case tea.KeyEscape:
+		model.confirming = false
+	case tea.KeyLeft, tea.KeyRight, tea.KeyTab:
+		model.confirmRun = !model.confirmRun
+	case tea.KeyEnter:
+		if model.confirmRun {
+			model.completed = true
+			return model, tea.Quit
+		}
+		model.confirming = false
+	}
+	return model, nil
+}
+
+func (model *selectorModel) moveCursor(delta int) {
+	position := model.focusedVisiblePosition()
+	if position < 0 {
+		return
+	}
+	position = min(max(0, position+delta), len(model.visibleCommandIndexes)-1)
+	model.cursor = model.visibleCommandIndexes[position]
+	model.rebuildContent()
+}
+
+func (model *selectorModel) toggleFocusedCommand() {
+	if model.focusedVisiblePosition() < 0 {
+		return
+	}
+	model.selected[model.cursor] = !model.selected[model.cursor]
+	model.rebuildContent()
 }
 
 // View renders the fixed title/footer and scrolling categorized tool rows.
@@ -298,14 +366,19 @@ func (model selectorModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 //   - None.
 //
 // Returns:
-//   - tea.View: ANSI-styled selector without borders or background styling.
+//   - tea.View: ANSI-styled selector. The confirmation state layers a bordered
+//     modal over the list viewport.
 //
 // Raises:
 //   - None.
 func (model selectorModel) View() tea.View {
 	title := presentationStyle("SELECT TOOLS", ansiBoldWhite, true)
 	footer := model.footer()
-	return tea.NewView(title + "\n\n" + model.viewport.View() + "\n" + footer)
+	base := title + "\n" + model.input.View() + "\n\n" + model.viewport.View() + "\n" + footer
+	if model.confirming {
+		return tea.NewView(model.selectorModalView(base))
+	}
+	return tea.NewView(base)
 }
 
 // selectedNames returns checked command names in unchanged catalog order.
@@ -339,17 +412,22 @@ func (model selectorModel) selectedNames() []string {
 // Raises:
 //   - None.
 func (model selectorModel) selectedCountText() string {
+	count := model.selectedCount()
+	noun := "tools"
+	if count == 1 {
+		noun = "tool"
+	}
+	return fmt.Sprintf("%d %s selected", count, noun)
+}
+
+func (model selectorModel) selectedCount() int {
 	count := 0
 	for _, selected := range model.selected {
 		if selected {
 			count++
 		}
 	}
-	noun := "tools"
-	if count == 1 {
-		noun = "tool"
-	}
-	return fmt.Sprintf("%d %s selected", count, noun)
+	return count
 }
 
 // resultError maps internal cancellation state to the public cancellation error.
@@ -358,7 +436,7 @@ func (model selectorModel) selectedCountText() string {
 //   - None.
 //
 // Returns:
-//   - error: ErrCancelled after Escape or Ctrl+C, otherwise nil.
+//   - error: ErrCancelled after Ctrl+C, otherwise nil.
 //
 // Raises:
 //   - None.
@@ -383,8 +461,9 @@ func (model selectorModel) resultError() error {
 func (model *selectorModel) resize(terminalWidth int, terminalHeight int) {
 	model.width = min(max(1, terminalWidth), maxPresentationWidth)
 	model.height = max(1, terminalHeight)
+	model.input.SetWidth(max(1, model.width-3))
 	footerHeight := len(strings.Split(model.footer(), "\n"))
-	viewportHeight := max(1, model.height-footerHeight-2)
+	viewportHeight := max(1, model.height-footerHeight-3)
 	model.viewport.SetWidth(model.width)
 	model.viewport.SetHeight(viewportHeight)
 	model.rebuildContent()
@@ -401,20 +480,27 @@ func (model *selectorModel) resize(terminalWidth int, terminalHeight int) {
 // Raises:
 //   - None.
 func (model *selectorModel) rebuildContent() {
+	if len(model.visibleCommandIndexes) == 0 {
+		model.rowStarts = nil
+		model.rowEnds = nil
+		model.viewport.SetContent(presentationStyle("No matching tools.", ansiGray, true))
+		return
+	}
 	lines := []string{}
 	model.rowStarts = make([]int, len(model.commands))
 	model.rowEnds = make([]int, len(model.commands))
-	commandIndex := 0
-	for groupIndex, group := range groupCommands(model.commands) {
+	visiblePosition := 0
+	for groupIndex, group := range groupCommands(model.visibleCommands()) {
 		if groupIndex > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, "  "+presentationStyle(group.Category, ansiBoldWhite, true))
 		for _, command := range group.Commands {
+			commandIndex := model.visibleCommandIndexes[visiblePosition]
 			model.rowStarts[commandIndex] = len(lines)
 			lines = append(lines, model.commandLines(command, commandIndex)...)
 			model.rowEnds[commandIndex] = len(lines) - 1
-			commandIndex++
+			visiblePosition++
 		}
 	}
 	model.viewport.SetContent(strings.Join(lines, "\n"))
@@ -473,7 +559,7 @@ func (model selectorModel) commandLines(command Command, index int) []string {
 // Raises:
 //   - None.
 func (model *selectorModel) keepFocusVisible() {
-	if len(model.commands) == 0 {
+	if model.focusedVisiblePosition() < 0 {
 		return
 	}
 	start := model.rowStarts[model.cursor]
@@ -494,20 +580,178 @@ func (model *selectorModel) keepFocusVisible() {
 //   - None.
 //
 // Returns:
-//   - string: Gray wrapped controls followed by a count whose number is green.
+//   - string: Wrapped controls with bold keys followed by a green count and
+//     white count grammar.
 //
 // Raises:
 //   - None.
 func (model selectorModel) footer() string {
-	controls := "↑/↓ move • space select • enter run • esc cancel"
-	lines := wrapText(controls, model.width)
-	for index, line := range lines {
-		lines[index] = presentationStyle(line, ansiGray, true)
-	}
+	lines := selectorControlHintLines(model.width, []selectorControlHint{
+		{key: "↑/↓", action: "move"},
+		{key: "tab", action: "toggle"},
+		{key: "enter", action: "run"},
+		{key: "esc", action: "clear"},
+		{key: "ctrl+c", action: "cancel"},
+	})
 	countText := model.selectedCountText()
 	separator := strings.IndexByte(countText, ' ')
 	count := countText[:separator]
 	grammar := countText[separator:]
-	lines = append(lines, presentationStyle(count, ansiGreen, true)+presentationStyle(grammar, ansiGray, true))
+	lines = append(lines, presentationStyle(count, ansiGreen, true)+presentationStyle(grammar, ansiWhite, true))
+	return strings.Join(lines, "\n")
+}
+
+func selectorControlHintLines(width int, hints []selectorControlHint) []string {
+	lines := []string{}
+	plainLine := ""
+	styledLine := ""
+	for index, hint := range hints {
+		plainHint := hint.key + " " + hint.action
+		styledHint := presentationStyle(hint.key, ansiBoldWhite, true) + presentationStyle(" "+hint.action, ansiGray, true)
+		if index > 0 {
+			plainHint = "• " + plainHint
+			styledHint = presentationStyle("• ", ansiGray, true) + styledHint
+		}
+		if plainLine != "" && lipgloss.Width(plainLine+" "+plainHint) > width {
+			lines = append(lines, styledLine)
+			plainLine = ""
+			styledLine = ""
+			if index > 0 {
+				plainHint = strings.TrimPrefix(plainHint, "• ")
+				styledHint = strings.TrimPrefix(styledHint, presentationStyle("• ", ansiGray, true))
+			}
+		}
+		if plainLine != "" {
+			plainLine += " "
+			styledLine += " "
+		}
+		plainLine += plainHint
+		styledLine += styledHint
+	}
+	if styledLine != "" {
+		lines = append(lines, styledLine)
+	}
+	return lines
+}
+
+func (model *selectorModel) refreshVisibleCommands() {
+	tokens := selectorSearchWords(model.input.Value())
+	indexesByCategory := map[string][]int{}
+	categories := []string{}
+	for index, command := range model.commands {
+		if commandMatchesSelectorQuery(command, tokens) {
+			if _, exists := indexesByCategory[command.Category]; !exists {
+				categories = append(categories, command.Category)
+			}
+			indexesByCategory[command.Category] = append(indexesByCategory[command.Category], index)
+		}
+	}
+	model.visibleCommandIndexes = model.visibleCommandIndexes[:0]
+	for _, category := range categories {
+		model.visibleCommandIndexes = append(model.visibleCommandIndexes, indexesByCategory[category]...)
+	}
+	if model.focusedVisiblePosition() < 0 {
+		if len(model.visibleCommandIndexes) > 0 {
+			model.cursor = model.visibleCommandIndexes[0]
+		} else {
+			model.cursor = 0
+		}
+	}
+	model.viewport.GotoTop()
+	model.rebuildContent()
+}
+
+func commandMatchesSelectorQuery(command Command, tokens []string) bool {
+	words := append(selectorSearchWords(command.Name), selectorSearchWords(command.Description)...)
+	for _, token := range tokens {
+		matched := false
+		for _, word := range words {
+			if strings.HasPrefix(word, token) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func selectorSearchWords(text string) []string {
+	return strings.FieldsFunc(strings.ToLower(normalizeText(text)), func(character rune) bool {
+		return !unicode.IsLetter(character) && !unicode.IsNumber(character)
+	})
+}
+
+func (model selectorModel) visibleCommands() []Command {
+	commands := make([]Command, 0, len(model.visibleCommandIndexes))
+	for _, index := range model.visibleCommandIndexes {
+		commands = append(commands, model.commands[index])
+	}
+	return commands
+}
+
+func (model selectorModel) focusedVisiblePosition() int {
+	for position, index := range model.visibleCommandIndexes {
+		if index == model.cursor {
+			return position
+		}
+	}
+	return -1
+}
+
+func (model selectorModel) selectorModalView(base string) string {
+	contentWidth := max(1, min(48, model.width-6))
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(ansiBlue)).
+		Background(lipgloss.Color("0")).
+		Padding(0, 1).
+		Width(contentWidth).
+		Render(model.confirmationContent(contentWidth))
+	modalWidth := lipgloss.Width(modal)
+	modalHeight := lipgloss.Height(modal)
+	baseLayer := lipgloss.NewLayer(base).Z(1)
+	modalLayer := lipgloss.NewLayer(modal).
+		X(max(0, (model.width-modalWidth)/2)).
+		Y(max(0, (model.height-modalHeight)/2)).
+		Z(2)
+	canvas := lipgloss.NewCanvas(model.width, model.height)
+	canvas.Compose(lipgloss.NewCompositor(
+		lipgloss.NewLayer(strings.Repeat(" ", model.width)).Y(max(0, model.height-1)),
+		baseLayer,
+		modalLayer,
+	))
+	return canvas.Render()
+}
+
+func (model selectorModel) confirmationContent(width int) string {
+	lines := []string{presentationStyle("RUN SELECTED TOOLS?", ansiBoldWhite, true), model.selectedCountText()}
+	names := model.selectedNames()
+	maxNames := min(len(names), max(1, model.height-8))
+	for _, name := range names[:min(len(names), maxNames)] {
+		for _, line := range wrapText("• "+name, width) {
+			lines = append(lines, presentationStyle(line, ansiGreen, true))
+		}
+	}
+	if remaining := len(names) - maxNames; remaining > 0 {
+		lines = append(lines, presentationStyle(fmt.Sprintf("and %d more", remaining), ansiGray, true))
+	}
+	lines = append(lines, "")
+	yes := " Yes "
+	no := " No "
+	if model.confirmRun {
+		yes = presentationStyle("[Yes]", ansiGreen, true)
+	} else {
+		no = presentationStyle("[No]", ansiGreen, true)
+	}
+	lines = append(lines, yes+"  "+no)
+	lines = append(lines, selectorControlHintLines(width, []selectorControlHint{
+		{key: "←/→ or tab", action: "choice"},
+		{key: "enter", action: "apply"},
+		{key: "esc", action: "back"},
+		{key: "ctrl+c", action: "cancel"},
+	})...)
 	return strings.Join(lines, "\n")
 }

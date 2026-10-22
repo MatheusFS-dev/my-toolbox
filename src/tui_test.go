@@ -23,10 +23,13 @@ func TestSelectorMovesOnlyAcrossCommandsAndTogglesSelection(t *testing.T) {
 	if model.cursor != 1 {
 		t.Fatalf("cursor = %d, want second command", model.cursor)
 	}
-	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	model = updated.(selectorModel)
 	if !model.selected[1] || model.selectedCountText() != "1 tool selected" {
 		t.Fatalf("selected = %v, count = %q", model.selected, model.selectedCountText())
+	}
+	if command != nil || model.completed || model.confirming {
+		t.Fatalf("Tab changed selector completion state: command = %v, completed = %t, confirming = %t", command, model.completed, model.confirming)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	model = updated.(selectorModel)
@@ -35,48 +38,281 @@ func TestSelectorMovesOnlyAcrossCommandsAndTogglesSelection(t *testing.T) {
 	}
 }
 
-func TestSelectorCompletesOrCancelsOnExactKeys(t *testing.T) {
-	tests := []struct {
-		name      string
-		message   tea.KeyPressMsg
-		completed bool
-		cancelled bool
-	}{
-		{name: "enter", message: tea.KeyPressMsg{Code: tea.KeyEnter}, completed: true},
-		{name: "escape", message: tea.KeyPressMsg{Code: tea.KeyEscape}, cancelled: true},
-		{name: "control-c", message: tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, cancelled: true},
+func TestSelectorUsesSpaceToEditTheFocusedSearchInput(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "One."}}, 72, 10)
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	model = updated.(selectorModel)
+
+	if model.selected[0] {
+		t.Fatal("Space selected the focused command")
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "Tool."}}, 72, 10)
-			updated, command := model.Update(test.message)
-			model = updated.(selectorModel)
-			if model.completed != test.completed || model.cancelled != test.cancelled {
-				t.Fatalf("completed = %t, cancelled = %t", model.completed, model.cancelled)
-			}
-			if command == nil {
-				t.Fatal("completion key returned no Bubble Tea command")
-			}
-		})
+	if model.input.Value() != " " || !model.input.Focused() {
+		t.Fatalf("search input = %q, focused = %t", model.input.Value(), model.input.Focused())
+	}
+}
+
+func TestSelectorFiltersCaseInsensitiveWordPrefixTokensAcrossNamesAndDescriptions(t *testing.T) {
+	commands := []Command{
+		{Name: "install-codex", Category: "Agents", Description: "Install Codex for the current user on Linux or Windows. Skips installation when codex exists."},
+		{Name: "setup-terminal", Category: "Terminal", Description: "Configure a terminal."},
+		{Name: "configure-terminal", Category: "Terminal", Description: "Set up a Windows terminal."},
+		{Name: "mount-drive", Category: "Storage", Description: "Mount a filesystem."},
+	}
+	model := newSelectorModel(commands, 72, 14)
+	model.input.SetValue("SeTuP")
+	model.refreshVisibleCommands()
+
+	if got := model.visibleCommandIndexes; len(got) != 1 || got[0] != 1 {
+		t.Fatalf("visible command indexes = %v, want [1]", got)
+	}
+	if model.cursor != 1 || !strings.Contains(model.View().Content, "setup-terminal") {
+		t.Fatalf("cursor = %d, view = %q", model.cursor, model.View().Content)
+	}
+
+	model.input.SetValue("set win")
+	model.refreshVisibleCommands()
+	if got := model.visibleCommandIndexes; len(got) != 1 || got[0] != 2 {
+		t.Fatalf("visible command indexes = %v, want [2]", got)
+	}
+}
+
+func TestSelectorFilteringPreservesCatalogOrderCategoriesAndHiddenSelections(t *testing.T) {
+	commands := []Command{
+		{Name: "alpha", Category: "First", Description: "Alpha tool."},
+		{Name: "beta", Category: "Second", Description: "Matches term."},
+		{Name: "gamma", Category: "First", Description: "Matches term too."},
+	}
+	model := newSelectorModel(commands, 72, 16)
+	model.selected[0] = true
+	model.input.SetValue("term")
+	model.refreshVisibleCommands()
+
+	if got := model.visibleCommandIndexes; len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("visible command indexes = %v, want [1 2]", got)
+	}
+	plainView := ansi.Strip(model.View().Content)
+	if strings.Index(plainView, "Second") > strings.Index(plainView, "First") {
+		t.Fatalf("filtered categories are out of catalog order: %q", plainView)
+	}
+	if model.selectedCountText() != "1 tool selected" || strings.Join(model.selectedNames(), ",") != "alpha" {
+		t.Fatalf("hidden selection was lost: count = %q, names = %v", model.selectedCountText(), model.selectedNames())
+	}
+}
+
+func TestSelectorGroupsInterleavedCategoriesWithoutLosingCommandIndexes(t *testing.T) {
+	commands := []Command{
+		{Name: "alpha", Category: "First", Description: "First alpha."},
+		{Name: "beta", Category: "Second", Description: "Second beta."},
+		{Name: "gamma", Category: "First", Description: "First gamma."},
+	}
+	model := newSelectorModel(commands, 72, 16)
+	if got := model.visibleCommandIndexes; len(got) != 3 || got[0] != 0 || got[1] != 2 || got[2] != 1 {
+		t.Fatalf("visible command indexes = %v, want [0 2 1]", got)
+	}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	model = updated.(selectorModel)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	model = updated.(selectorModel)
+	if !model.selected[2] || model.selected[1] {
+		t.Fatalf("selected commands = %v, want only gamma selected", model.selected)
+	}
+	plainView := ansi.Strip(model.View().Content)
+	if strings.Index(plainView, "alpha") > strings.Index(plainView, "gamma") || strings.Index(plainView, "gamma") > strings.Index(plainView, "beta") {
+		t.Fatalf("grouped command order = %q", plainView)
+	}
+}
+
+func TestSelectorClearsQueryAndHandlesEmptyResultsWithoutCancelling(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "Only tool."}}, 72, 12)
+	model.input.SetValue("absent")
+	model.refreshVisibleCommands()
+	if !strings.Contains(model.View().Content, "No matching tools.") {
+		t.Fatalf("no-results view = %q", model.View().Content)
+	}
+
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(selectorModel)
+	if command != nil || model.input.Value() != "" || model.cancelled || len(model.visibleCommandIndexes) != 1 {
+		t.Fatalf("escape changed selector unexpectedly: query = %q, cancelled = %t, visible = %v", model.input.Value(), model.cancelled, model.visibleCommandIndexes)
+	}
+	updated, command = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(selectorModel)
+	if command != nil || model.cancelled {
+		t.Fatalf("empty-query escape cancelled selector: command = %v, cancelled = %t", command, model.cancelled)
+	}
+}
+
+func TestSelectorMovesAcrossVisibleCommandsAndResizes(t *testing.T) {
+	commands := []Command{
+		{Name: "alpha", Category: "Tools", Description: "Matches filter."},
+		{Name: "beta", Category: "Tools", Description: "Ignored."},
+		{Name: "gamma", Category: "Tools", Description: "Matches filter."},
+	}
+	model := newSelectorModel(commands, 72, 12)
+	model.input.SetValue("match")
+	model.refreshVisibleCommands()
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	model = updated.(selectorModel)
+	if model.cursor != 2 {
+		t.Fatalf("cursor = %d, want original command index 2", model.cursor)
+	}
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+	model = updated.(selectorModel)
+	if model.width != 30 || model.viewport.Width() != 30 {
+		t.Fatalf("resized widths = %d and %d", model.width, model.viewport.Width())
+	}
+	for _, line := range strings.Split(model.View().Content, "\n") {
+		if lipgloss.Width(line) > 30 {
+			t.Fatalf("line width = %d, want at most 30: %q", lipgloss.Width(line), line)
+		}
+	}
+}
+
+func TestSelectorEnterOpensConfirmationForSelectedTools(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "One."}}, 72, 14)
+	model.selected[0] = true
+
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(selectorModel)
+
+	if command != nil || !model.confirming || model.completed || !model.selected[0] {
+		t.Fatalf("Enter state = command %v, confirming %t, completed %t, selected %v", command, model.confirming, model.completed, model.selected)
+	}
+}
+
+func TestSelectorEnterDoesNothingWithoutSelectedTools(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "One."}}, 72, 14)
+
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(selectorModel)
+
+	if command != nil || model.confirming || model.completed || model.selected[0] {
+		t.Fatalf("empty Enter state = command %v, confirming %t, completed %t, selected %v", command, model.confirming, model.completed, model.selected)
+	}
+}
+
+func TestSelectorConfirmationDefaultsToNoAndPreservesListOnDismissal(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "One."}}, 72, 16)
+	model.selected[0] = true
+	model.input.SetValue("one")
+	model.refreshVisibleCommands()
+	model.confirming = true
+	view := ansi.Strip(model.View().Content)
+	if !strings.Contains(view, "RUN SELECTED TOOLS?") || !strings.Contains(view, "[No]") || !strings.Contains(view, "←/→ or tab choice") {
+		t.Fatalf("confirmation view = %q", view)
+	}
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(selectorModel)
+	if command != nil || model.confirming || model.completed || model.input.Value() != "one" || !model.selected[0] {
+		t.Fatalf("No confirmation changed list: confirming %t, completed %t, query %q, selected %v", model.confirming, model.completed, model.input.Value(), model.selected)
+	}
+
+	model.confirming = true
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	model = updated.(selectorModel)
+	if model.confirming || model.input.Value() != "one" || !model.selected[0] {
+		t.Fatalf("escape changed list: confirming %t, query %q, selected %v", model.confirming, model.input.Value(), model.selected)
+	}
+}
+
+func TestSelectorConfirmationCanRunCancelAndTruncateSelectedNames(t *testing.T) {
+	commands := []Command{}
+	for _, name := range []string{"one", "two", "three", "four", "five"} {
+		commands = append(commands, Command{Name: name, Category: "Test", Description: "Tool."})
+	}
+	model := newSelectorModel(commands, 72, 11)
+	for index := range model.selected {
+		model.selected[index] = true
+	}
+	model.confirming = true
+	view := ansi.Strip(model.View().Content)
+	if !strings.Contains(view, "5 tools selected") || !strings.Contains(view, "and 2 more") {
+		t.Fatalf("truncated confirmation = %q", view)
+	}
+
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	model = updated.(selectorModel)
+	updated, command := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model = updated.(selectorModel)
+	if command == nil || !model.completed {
+		t.Fatalf("Yes confirmation did not complete: command = %v, completed = %t", command, model.completed)
+	}
+
+	model = newSelectorModel(commands, 72, 20)
+	model.confirming = true
+	updated, command = model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	model = updated.(selectorModel)
+	if command == nil || !model.cancelled || !errors.Is(model.resultError(), ErrCancelled) {
+		t.Fatalf("Ctrl+C did not cancel modal: command = %v, cancelled = %t", command, model.cancelled)
+	}
+}
+
+func TestSelectorConfirmationShowsAllSelectedNamesWhenHeightAllows(t *testing.T) {
+	commands := []Command{}
+	for _, name := range []string{"one", "two", "three", "four", "five"} {
+		commands = append(commands, Command{Name: name, Category: "Test", Description: "Tool."})
+	}
+	model := newSelectorModel(commands, 72, 20)
+	for index := range model.selected {
+		model.selected[index] = true
+	}
+	model.confirming = true
+	view := ansi.Strip(model.View().Content)
+	if !strings.Contains(view, "five") || strings.Contains(view, "and 2 more") {
+		t.Fatalf("spacious confirmation truncated names: %q", view)
+	}
+}
+
+func TestSelectorCancelsOnlyOnControlC(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "one", Category: "Test", Description: "Tool."}}, 72, 10)
+	updated, command := model.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	model = updated.(selectorModel)
+	if command == nil || !model.cancelled || !errors.Is(model.resultError(), ErrCancelled) {
+		t.Fatalf("Ctrl+C state: command = %v, cancelled = %t, error = %v", command, model.cancelled, model.resultError())
 	}
 }
 
 func TestSelectorRendersRequiredStylesWithoutBordersOrBackgrounds(t *testing.T) {
 	model := newSelectorModel([]Command{{Name: "selected-tool", Category: "Tools", Description: "A gray description."}}, 72, 10)
-	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	model = updated.(selectorModel)
 	view := model.View().Content
 
-	for _, sequence := range []string{"\x1b[1;37mSELECT TOOLS", "\x1b[34m›", "\x1b[32m◉", "\x1b[32mselected-tool", "\x1b[90mA gray description.", "\x1b[90m↑/↓ move", "\x1b[32m1\x1b[0m\x1b[90m tool selected"} {
+	for _, sequence := range []string{"\x1b[1;37mSELECT TOOLS", "\x1b[34m›", "\x1b[32m◉", "\x1b[32mselected-tool", "\x1b[90mA gray description.", "\x1b[32m1\x1b[0m\x1b[37m tool selected"} {
 		if !strings.Contains(view, sequence) {
 			t.Fatalf("selector view is missing %q: %q", sequence, view)
 		}
 	}
-	if !strings.Contains(view, "↑/↓ move • space select • enter run • esc cancel") {
+	plainView := ansi.Strip(view)
+	if strings.Contains(plainView, "type filter") || !strings.Contains(plainView, "↑/↓ move") || !strings.Contains(plainView, "tab toggle") || !strings.Contains(plainView, "enter run") || !strings.Contains(plainView, "esc clear") {
 		t.Fatalf("selector controls are not rendered in the documented order: %q", view)
 	}
 	if strings.Contains(view, "\x1b[4") || strings.ContainsAny(view, "│┌┐└┘") {
 		t.Fatalf("selector view contains background or border styling: %q", view)
+	}
+}
+
+func TestSelectorRendersBoldKeyHints(t *testing.T) {
+	model := newSelectorModel([]Command{{Name: "tool", Category: "Tools", Description: "A tool."}}, 72, 14)
+	view := model.View().Content
+	for _, sequence := range []string{
+		"\x1b[1;37m↑/↓\x1b[0m\x1b[90m move",
+		"\x1b[1;37mtab\x1b[0m\x1b[90m toggle",
+		"\x1b[1;37menter\x1b[0m\x1b[90m run",
+		"\x1b[1;37mctrl+c\x1b[0m\x1b[90m cancel",
+	} {
+		if !strings.Contains(view, sequence) {
+			t.Fatalf("selector view is missing bold key hint %q: %q", sequence, view)
+		}
+	}
+
+	model.selected[0] = true
+	model.confirming = true
+	view = model.confirmationContent(48)
+	if !strings.Contains(view, "\x1b[1;37m←/→ or tab\x1b[0m\x1b[90m choice") {
+		t.Fatalf("confirmation content is missing bold key hint: %q", view)
 	}
 }
 
@@ -119,7 +355,7 @@ func TestSelectorRendersBrightRedRequirementInsideCommandRow(t *testing.T) {
 		Name: "setup", Category: "Tools", Description: "Description.", Visibility: "list",
 		Protocol: "interactive-script", Environments: []string{"linux-native"},
 	}}}
-	model := newSelectorModel(filteredCommands(catalog, "linux-native", false), 30, 8)
+	model := newSelectorModel(filteredCommands(catalog, "linux-native", false), 30, 14)
 	view := model.View().Content
 	if !strings.Contains(view, "\x1b[91mRequires: Bash") {
 		t.Fatalf("selector lacks bright-red requirement: %q", view)

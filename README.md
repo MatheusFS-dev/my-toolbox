@@ -169,10 +169,12 @@ tb version
 tb help
 ```
 
-Run `tb list` to open the categorized selector. Use Up and Down to move, Space to toggle the focused tool, Enter to continue, and Escape or Ctrl+C to cancel.
+Run `tb list` to open the categorized selector. Type to filter command names and descriptions with case-insensitive word-prefix matching. Spaces, hyphens, and underscores separate query words, and every query word must match. Use Up and Down to move through visible tools, Tab to toggle the focused tool, then Enter to review the selected tools in a confirmation dialog. Space is part of the filter query. Escape clears a query and otherwise does nothing. Ctrl+C cancels.
 
 ```text
 SELECT TOOLS
+
+› Type to filter tools
 
   Agents
 › ◯ install-codex
@@ -183,11 +185,11 @@ SELECT TOOLS
     Install Claude Code for the current user on Linux or Windows. Skips
     installation when `claude` is already available.
 
-↑/↓ move • space select • enter run • esc cancel
+↑/↓ move • tab toggle • enter run • esc clear • ctrl+c cancel
 1 tool selected
 ```
 
-The example is shortened to show the row layout. The live selector wraps to the current terminal width, capped at 72 columns. Its title and controls remain visible while tool rows scroll; selected markers and names are green, while descriptions remain gray.
+The example is shortened to show the row layout. The live selector wraps to the current terminal width, capped at 72 columns. Its title, filter, and controls remain visible while tool rows scroll. Selected markers and names are green, while descriptions remain gray. The run confirmation defaults to No and shows the selected count and tool names before starting anything.
 
 Run `tb search` to browse the bundled Markdown guides. Type to filter by title, headings, or body text; use Up and Down to choose a result and Enter to open it. Search pauses while the bundled reader occupies the terminal. Escape or `q` closes the reader, including any open reader panel, and resumes the same query, selection, and results position.
 
