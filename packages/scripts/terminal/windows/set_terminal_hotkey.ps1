@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath $ShortcutPath) {
 
     if ($Undo) {
         Remove-Item -LiteralPath $ShortcutPath -Force
-        if ((Get-ChildItem -LiteralPath $ShortcutDirectory -Force).Count -eq 0) {
+        if (@(Get-ChildItem -LiteralPath $ShortcutDirectory -Force).Count -eq 0) {
             Remove-Item -LiteralPath $ShortcutDirectory -Force
         }
         Write-ToolboxSuccess 'Removed the persistent Ctrl+Alt+T terminal hotkey.'
