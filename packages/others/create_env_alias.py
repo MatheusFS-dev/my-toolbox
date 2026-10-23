@@ -9,6 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from toolbox_output import legacy_input, legacy_print
+
+
 ALIAS_PATTERN_TEMPLATE = r"^[ \t]*alias[ \t]+{name}=.*$"
 
 
@@ -261,7 +265,7 @@ def prompt_yes_no(question: str, default: Optional[bool]) -> bool:
         ValueError: If the answer is empty without a default or is not yes/no.
         EOFError: If interactive input closes before an answer.
     """
-    suffix = " [Y/n]" if default is True else " [y/N]" if default is False else " [y/n]"
+    suffix = " [Y/n]" if default is True else " [y/N]" if default is False else " (required)"
     while True:
         answer = input(question + suffix + ": ").strip().lower()
         if not answer and default is not None:
@@ -344,14 +348,19 @@ def run_interactive() -> None:
         if not prompt_yes_no("Apply these changes?", None):
             print("No changes made.")
             return
+    print("Writing shell aliases...")
     backups = apply_alias_updates(updates, create_backups)
     for backup in backups:
         print(f"[INFO] Backup created: {backup}")
     for path in updates:
         print(f"[OK] Updated {path}")
+    if hasattr(print, "output"):
+        print.output.success("Alias configuration completed successfully.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 1:
         raise SystemExit("create-env-alias does not accept arguments")
+    print = legacy_print("create-env-alias")
+    input = legacy_input("create-env-alias", output=print.output)
     run_interactive()

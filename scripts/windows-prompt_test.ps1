@@ -4,6 +4,25 @@ Set-StrictMode -Version 2.0
 $repositoryRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . (Join-Path $repositoryRoot 'packages/scripts/terminal/windows/modules/shared.ps1')
 . (Join-Path $repositoryRoot 'packages/scripts/terminal/windows/modules/wsl_path_prompt.ps1')
+. (Join-Path $repositoryRoot 'packages/scripts/terminal/windows/modules/output.ps1')
+
+$OriginalOutput = [Console]::Out
+$MenuWriter = New-Object IO.StringWriter
+$PreviousNoColor = $env:NO_COLOR
+try {
+    $env:NO_COLOR = '1'
+    [Console]::SetOut($MenuWriter)
+    Initialize-ToolboxOutput -ToolName 'test-tool'
+    $script:ToolboxClock = { '09:32:23' }
+    Write-ToolboxMenu -Question 'Choose an option' -Options @('1. First', '2. Second')
+} finally {
+    [Console]::SetOut($OriginalOutput)
+    $env:NO_COLOR = $PreviousNoColor
+}
+$ExpectedMenu = "`n[09:32:23 test-tool PROMPT] Choose an option`n  1. First`n  2. Second`n"
+if ($MenuWriter.ToString().Replace("`r`n", "`n") -cne $ExpectedMenu) {
+    throw "Menu output was not one labeled block: $($MenuWriter.ToString())"
+}
 
 $script:answers = @('maybe', 'no')
 $script:answerIndex = 0

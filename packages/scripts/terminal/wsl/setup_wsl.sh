@@ -3,6 +3,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULES_DIR="$SCRIPT_DIR/modules"
+source "${TOOLBOX_OUTPUT_HELPER:-$SCRIPT_DIR/../../lib/toolbox_output.sh}"
+tb_output_init setup-wsl
 
 FEATURES=(
     zsh rust zellij starship zellij_copy path word_navigation shift_enter zi eza
@@ -96,7 +98,7 @@ parse_args() {
                 EZA_VIEW_EXPLICIT=true
                 ;;
             --eza-view=*)
-                printf 'Error: --eza-view must be list or grid.\n' >&2
+                tb_error '--eza-view must be list or grid; choose one of those values and retry.' >&2
                 return 2
                 ;;
             --skip-zsh) SKIP[zsh]=true ;;
@@ -117,7 +119,7 @@ parse_args() {
             --skip-venv) SKIP[venv]=true ;;
             --skip-default-shell) SKIP[default_shell]=true ;;
             *)
-                printf 'Error: unknown argument: %s\n' "$1" >&2
+                tb_error "Unknown argument: $1. Review the usage and retry." >&2
                 usage >&2
                 return 2
                 ;;
@@ -133,19 +135,19 @@ validate_preflight() {
     local proc_version_file="$4"
 
     if [[ "$effective_uid" -ne 0 ]]; then
-        printf 'Error: run this installer through sudo.\n' >&2
+        tb_error 'Root access is required; run this installer through sudo.' >&2
         return 1
     fi
     if [[ -z "$sudo_user" || "$sudo_user" == root ]]; then
-        printf 'Error: SUDO_USER must identify the non-root invoking user.\n' >&2
+        tb_error 'SUDO_USER must identify the non-root invoking user; rerun through sudo from that account.' >&2
         return 1
     fi
     if [[ ! -r "$proc_version_file" ]] || ! grep -qi microsoft "$proc_version_file"; then
-        printf 'Error: this installer only supports WSL.\n' >&2
+        tb_error 'This installer only supports WSL; no changes were made.' >&2
         return 1
     fi
     if [[ ! -r "$os_release_file" ]]; then
-        printf 'Error: cannot read %s.\n' "$os_release_file" >&2
+        tb_error "Cannot read $os_release_file; restore the OS metadata file and retry." >&2
         return 1
     fi
 
@@ -153,7 +155,7 @@ validate_preflight() {
     # shellcheck disable=SC1090
     source "$os_release_file"
     if [[ "$ID" != ubuntu || ( "$VERSION_ID" != 22.04 && "$VERSION_ID" != 24.04 ) ]]; then
-        printf 'Error: only Ubuntu 22.04 and 24.04 are supported.\n' >&2
+        tb_error 'Only Ubuntu 22.04 and 24.04 are supported; no changes were made.' >&2
         return 1
     fi
 }
@@ -162,11 +164,12 @@ prompt_yes_no() {
     local prompt="$1"
     local answer=''
     while true; do
-        read -r -p "$prompt [Y/n]: " answer || { printf 'Input canceled.\n' >&2; exit 1; }
+        tb_prompt "$prompt [Y/n] (default: Y):"
+        read -r answer || { tb_info 'Input cancelled; no further changes were made.'; exit 1; }
         case "${answer,,}" in
             ''|y|yes) return 0 ;;
             n|no) return 1 ;;
-            *) printf 'Please enter yes, y, no, n, or press Enter for yes.\n' >&2 ;;
+            *) tb_warn 'Please enter yes, y, no, n, or press Enter for yes.' ;;
         esac
     done
 }
@@ -188,11 +191,12 @@ select_features() {
     if [[ "${SELECTED[eza]}" == true && "$ASSUME_YES" == false && "$EZA_VIEW_EXPLICIT" == false ]]; then
         local view=''
         while true; do
-            read -r -p 'eza view, list or grid [list]: ' view || { printf 'Input canceled.\n' >&2; exit 1; }
+            tb_prompt 'eza view, list or grid [default: list]'
+            read -r view || { tb_info 'Input cancelled; no further changes were made.'; exit 1; }
             case "${view,,}" in
                 ''|list) EZA_VIEW=list; break ;;
                 grid) EZA_VIEW=grid; break ;;
-                *) printf 'Please enter list, grid, or press Enter for list.\n' >&2 ;;
+                *) tb_warn 'Enter list or grid, or press Enter for list.' ;;
             esac
         done
     fi
@@ -299,11 +303,11 @@ execute_selected_features() {
     local feature status
     for feature in "${FEATURES[@]}"; do
         [[ "${SELECTED[$feature]}" == true ]] || continue
-        printf '\n==> %s\n' "${FEATURE_LABELS[$feature]}"
+        tb_info "Configuring ${FEATURE_LABELS[$feature]}..."
         status=0
         run_feature "$feature" || status=$?
         if (( status != 0 )); then
-            printf 'WARNING: %s failed with status %d; continuing.\n' "$feature" "$status" >&2
+            tb_warn "$feature failed with status $status; optional configuration is being skipped." >&2
         fi
     done
     return 0
@@ -312,19 +316,20 @@ execute_selected_features() {
 prepare_target() {
     local passwd_entry
     passwd_entry="$(getent passwd "$SUDO_USER")" || {
-        printf 'Error: SUDO_USER %s does not exist.\n' "$SUDO_USER" >&2
+        tb_error "SUDO_USER $SUDO_USER does not exist; correct the invoking account and retry." >&2
         return 1
     }
     TARGET_USER="$SUDO_USER"
     TARGET_HOME="$(cut -d: -f6 <<< "$passwd_entry")"
     if [[ -z "$TARGET_HOME" || ! -d "$TARGET_HOME" ]]; then
-        printf 'Error: cannot resolve a home directory for %s.\n' "$TARGET_USER" >&2
+        tb_error "Cannot resolve a home directory for $TARGET_USER; correct the account and retry." >&2
         return 1
     fi
     export TARGET_USER TARGET_HOME
 }
 
 main() {
+    tb_info 'Checking WSL and Ubuntu prerequisites...'
     reset_options
     parse_args "$@" || return $?
     if [[ "$SHOW_HELP" == true ]]; then
@@ -337,17 +342,18 @@ main() {
     select_features
     apply_dependency_cascades
 
-    printf 'Installing selected apt dependencies in one pass...\n'
+    tb_info 'Installing selected apt dependencies in one pass...'
     if ! install_apt_dependencies; then
-        printf 'WARNING: apt dependency installation failed; continuing.\n' >&2
+        tb_warn 'APT dependency installation failed; dependent optional features may be skipped.' >&2
     fi
 
     if ! run_as_target bash "$MODULES_DIR/backup_configs.sh"; then
-        printf 'WARNING: configuration backup failed; continuing.\n' >&2
+        tb_warn 'Configuration backup failed; continuing without a new backup.' >&2
     fi
 
     execute_selected_features
-    printf '\nWSL terminal setup finished. Restart the terminal to load shell changes.\n'
+    tb_info 'Restart the terminal to load shell changes.'
+    tb_success 'WSL terminal setup completed successfully.'
     return 0
 }
 

@@ -239,8 +239,7 @@ func (builtins *ToolboxBuiltins) installStressGPUWith(python []string, run func(
 		return fmt.Errorf("activate stress-gpu runtime: %w", err)
 	}
 	activated = true
-	_, err = fmt.Fprintf(builtins.output, "Installed stress-gpu to %s\nRun stress-gpu to select GPUs and configure the test. Add %s to PATH if needed.\nCUDA 12.8 compatibility is required. NVIDIA drivers and GPU availability are checked at application launch.\n", wrapper, filepath.Dir(wrapper))
-	return err
+	return builtins.info(fmt.Sprintf("Run stress-gpu to select GPUs and configure the test. Add %s to PATH if needed. CUDA 12.8 compatibility is required; NVIDIA drivers and GPU availability are checked at application launch.", filepath.Dir(wrapper)))
 }
 
 // validStressGPUGeneration accepts only generated directory basenames.
@@ -297,8 +296,7 @@ func (builtins *ToolboxBuiltins) uninstallStressGPU() error {
 			return fmt.Errorf("remove stress-gpu runtime: %w", err)
 		}
 	}
-	_, err = fmt.Fprintln(builtins.output, "Removed stress-gpu runtime and launcher.")
-	return err
+	return nil
 }
 
 // publishStressGPUFile atomically writes a private pointer or launcher.

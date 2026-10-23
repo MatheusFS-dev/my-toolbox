@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from toolbox_output import legacy_input, legacy_print
+
+
 
 @dataclass(frozen=True)
 class TemplateEntry:
@@ -234,7 +238,7 @@ def prompt_yes_no(question: str) -> bool:
         EOFError: If input closes before an answer.
     """
     while True:
-        answer = input(question + " [y/n]: ").strip().lower()
+        answer = input(question + " (required): ").strip().lower()
         if answer in {"y", "yes"}:
             return True
         if answer in {"n", "no"}:
@@ -277,11 +281,16 @@ def run_interactive() -> None:
         if not prompt_yes_no("Overwrite these same-type entries?"):
             print("No changes made.")
             return
+    print("Writing project template...")
     copy_template(source, destination, entries, overwrite=bool(conflicts))
     print(f"[OK] Copied project template into {destination}")
+    if hasattr(print, "output"):
+        print.output.success("Project template copied successfully.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 1:
         raise SystemExit("create-project-template does not accept arguments")
+    print = legacy_print("create-project-template")
+    input = legacy_input("create-project-template", output=print.output)
     run_interactive()

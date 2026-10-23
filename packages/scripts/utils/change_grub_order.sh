@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/toolbox_output.sh"
+tb_output_init change-grub-order
 
 GRUB_DEFAULT_FILE="/etc/default/grub"
 GRUB_CFG_FILE="/boot/grub/grub.cfg"
@@ -36,8 +39,7 @@ require_root() {
     # Returns:
     #     None.
     if [[ "${EUID}" -ne 0 ]]; then
-        echo "Error: run this script with sudo."
-        echo "Example: sudo ./change_grub_default.sh"
+        tb_error "Root access is required; rerun with sudo $0. Nothing changed." >&2
         exit 1
     fi
 }
@@ -49,23 +51,22 @@ require_files_and_commands() {
     # Returns:
     #     None.
     if [[ ! -f "${GRUB_DEFAULT_FILE}" ]]; then
-        echo "Error: ${GRUB_DEFAULT_FILE} was not found."
+        tb_error "$GRUB_DEFAULT_FILE was not found; restore GRUB configuration and retry." >&2
         exit 1
     fi
 
     if [[ ! -f "${GRUB_CFG_FILE}" ]]; then
-        echo "Error: ${GRUB_CFG_FILE} was not found."
-        echo "Try running: sudo update-grub"
+        tb_error "$GRUB_CFG_FILE was not found; run sudo update-grub and retry." >&2
         exit 1
     fi
 
     if ! command -v python3 >/dev/null 2>&1; then
-        echo "Error: python3 is required."
+        tb_error 'python3 is required; install it and retry. Nothing changed.' >&2
         exit 1
     fi
 
     if ! command -v update-grub >/dev/null 2>&1; then
-        echo "Error: update-grub was not found."
+        tb_error 'update-grub was not found; install the GRUB tools and retry. Nothing changed.' >&2
         exit 1
     fi
 }
@@ -345,20 +346,14 @@ print_entries() {
     local numeric_path
     local title_path
     local entry_id
-
-    echo
-    echo "Detected GRUB boot entries:"
-    echo
-
-    printf "%-6s %-14s %s\n" "No." "GRUB path" "Entry"
-    printf "%-6s %-14s %s\n" "----" "---------" "-----"
+    local options=('No.    GRUB path      Entry')
 
     for line in "${GRUB_ENTRIES[@]}"; do
         IFS=$'\t' read -r selection numeric_path title_path entry_id <<< "${line}"
-        printf "%-6s %-14s %s\n" "${selection}" "${numeric_path}" "${title_path}"
+        options+=("${selection} | ${numeric_path} | ${title_path}")
     done
+    tb_menu 'Detected GRUB boot entries:' "${options[@]}"
 
-    echo
 }
 
 resolve_default() {
@@ -380,36 +375,36 @@ resolve_default() {
         saved_entry="$(get_saved_grub_entry || true)"
 
         if [[ -z "${saved_entry}" ]]; then
-            echo "GRUB_DEFAULT=saved, but no saved_entry was found in ${GRUB_ENV_FILE}."
+            tb_warn "GRUB_DEFAULT=saved, but no saved_entry was found in ${GRUB_ENV_FILE}."
             return
         fi
 
         effective_value="${saved_entry}"
-        echo "GRUB_DEFAULT=saved"
-        echo "Saved entry: ${saved_entry}"
+        tb_info 'GRUB_DEFAULT=saved'
+        tb_info "Saved entry: ${saved_entry}"
     fi
 
     for line in "${GRUB_ENTRIES[@]}"; do
         IFS=$'\t' read -r selection numeric_path title_path entry_id <<< "${line}"
 
         if [[ "${effective_value}" == "${numeric_path}" ]]; then
-            echo "Resolved default: [${selection}] ${title_path}"
+            tb_info "Resolved default: [${selection}] ${title_path}"
             return
         fi
 
         if [[ "${effective_value}" == "${title_path}" ]]; then
-            echo "Resolved default: [${selection}] ${title_path}"
+            tb_info "Resolved default: [${selection}] ${title_path}"
             return
         fi
 
         if [[ -n "${entry_id}" && "${effective_value}" == "${entry_id}" ]]; then
-            echo "Resolved default: [${selection}] ${title_path}"
+            tb_info "Resolved default: [${selection}] ${title_path}"
             return
         fi
     done
 
-    echo "Could not resolve current default from parsed entries."
-    echo "Configured/effective value: ${effective_value}"
+    tb_warn 'Could not resolve the current default from parsed entries.'
+    tb_info "Configured/effective value: ${effective_value}"
 }
 
 prompt_yes_no() {
@@ -425,10 +420,12 @@ prompt_yes_no() {
 
     while true; do
         if [[ "${default_answer}" == "y" ]]; then
-            read -r -p "${prompt} [Y/n]: " answer
+            tb_prompt "${prompt} [Y/n] (default: Y):" >&2
+            read -r answer
             answer="${answer:-y}"
         else
-            read -r -p "${prompt} [y/N]: " answer
+            tb_prompt "${prompt} [y/N] (default: n):" >&2
+            read -r answer
             answer="${answer:-n}"
         fi
 
@@ -440,7 +437,7 @@ prompt_yes_no() {
                 return 1
                 ;;
             *)
-                echo "Please answer y or n."
+                tb_warn 'Please answer yes or no.' >&2
                 ;;
         esac
     done
@@ -461,15 +458,16 @@ choose_entry() {
     local entry_id
 
     while true; do
-        read -r -p "Select the new default entry number [1-${max_choice}]: " choice
+        tb_prompt "Select the new default entry number [required: 1-${max_choice}]" >&2
+        read -r choice
 
         if ! [[ "${choice}" =~ ^[0-9]+$ ]]; then
-            echo "Invalid input. Use a number."
+            tb_warn 'A selection is required; enter a number from the displayed list.' >&2
             continue
         fi
 
         if (( choice < 1 || choice > max_choice )); then
-            echo "Invalid choice. Use a number between 1 and ${max_choice}."
+            tb_warn "Enter a number between 1 and ${max_choice}." >&2
             continue
         fi
 
@@ -593,9 +591,7 @@ disable_save_default_if_requested() {
         return
     fi
 
-    echo
-    echo "Warning: GRUB_SAVEDEFAULT=true is active."
-    echo "That can make GRUB remember the last manually selected boot entry."
+    tb_warn 'GRUB_SAVEDEFAULT=true is active and can remember the last manually selected boot entry.'
 
     if prompt_yes_no "Disable GRUB_SAVEDEFAULT so the selected default stays fixed?" "y"; then
         python3 - "${GRUB_DEFAULT_FILE}" <<'PY'
@@ -660,14 +656,14 @@ main() {
     local selected_default
     local backup_path
 
-    print_header
+    tb_info 'Checking GRUB configuration and available boot entries...'
     require_root
     require_files_and_commands
 
     mapfile -t GRUB_ENTRIES < <(parse_grub_entries)
 
     if [[ "${#GRUB_ENTRIES[@]}" -eq 0 ]]; then
-        echo "Error: no GRUB menu entries were detected."
+        tb_error 'No GRUB menu entries were detected; nothing changed. Run update-grub and retry.' >&2
         exit 1
     fi
 
@@ -675,43 +671,36 @@ main() {
 
     current_default="$(get_configured_grub_default)"
 
-    echo "Current GRUB_DEFAULT value: ${current_default}"
+    tb_info "Current GRUB_DEFAULT value: ${current_default}"
     resolve_default "${current_default}"
-    echo
 
     if ! prompt_yes_no "Change the default boot entry?" "y"; then
-        echo "No changes made."
+        tb_info 'Change cancelled; no files were changed.'
         exit 0
     fi
 
     selected_default="$(choose_entry)"
 
-    echo
-    echo "New selected default:"
-    echo "${selected_default}"
-    echo
+    tb_info "New selected default: ${selected_default}"
 
     if ! prompt_yes_no "Apply this change?" "n"; then
-        echo "No changes made."
+        tb_info 'Change cancelled; no files were changed.'
         exit 0
     fi
 
     backup_path="$(backup_grub_default_file)"
-    echo "Backup created: ${backup_path}"
+    tb_info "Backup created: ${backup_path}"
 
     update_grub_default_value "${selected_default}"
     disable_save_default_if_requested
 
-    echo
-    echo "Running update-grub..."
+    tb_info 'Running update-grub...'
     update-grub
 
-    echo
-    echo "Done."
-    echo "New GRUB_DEFAULT value:"
+    tb_info 'New GRUB_DEFAULT value:'
     grep -E '^[[:space:]]*GRUB_DEFAULT=' "${GRUB_DEFAULT_FILE}"
-    echo
-    echo "Reboot to test the new default boot entry."
+    tb_info 'Reboot to test the new default boot entry.'
+    tb_success 'GRUB default boot entry updated successfully.'
 }
 
 main "$@"

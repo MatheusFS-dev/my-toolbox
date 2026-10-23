@@ -335,6 +335,8 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Bash; sudo; cat; chmod; id; mktemp; mv; rm; sh; tee.
 - `mount-drive` (native Linux): Inspect physical disks, then choose a non-system ext4 or FAT32 filesystem to label and mount. Optionally save a UUID-based `/etc/fstab` entry or recursively grant all users access. Review the planned changes before confirming. Use `tb mount-drive --list` to inspect without changing anything.
   Requires: Python 3.9+; sudo.
+- `ssh-tools` (Linux or WSL): Manage dedicated passwordless SSH profiles in a full-screen dashboard. Native Linux also offers direct Ethernet setup, rollback, and status monitoring. Updating or removing a local profile does not revoke keys copied to remote hosts.
+  Requires: OpenSSH client; ssh-keygen; ssh-copy-id.
 - `toggle-nopasswd-sudo` (Linux or WSL): Enable or disable passwordless `sudo` for one Linux or WSL user. Validates enabling changes and manages only the toolbox-owned sudoers file.
   Requires: Bash; sudo; visudo; `cat`; `chmod`; `grep`; `id`; `install`; `mktemp`; `rm`.
 
@@ -408,11 +410,28 @@ python3 -m unittest discover -s packages/agent-workspace-template/source/tests -
 python3 -m unittest discover -s packages/others/tests -v
 PYTHONPATH=packages/stress_gpu_runtime python3 -m unittest discover -s packages/stress_gpu_runtime/tests -v
 sh scripts/install_test.sh
+bash scripts/install_local_test.sh
 sh scripts/build-release_test.sh
 sh scripts/build-markdown-reader_test.sh
 bash scripts/terminal-setup_test.sh
 bash scripts/gpu-isolation_test.sh
 ```
+
+### Install this checkout locally
+
+From the repository root, build and activate the current source with the platform-specific local installer:
+
+```sh
+./install-local.sh
+```
+
+On native Windows x64, run in PowerShell:
+
+```powershell
+./install-local.ps1
+```
+
+The shell script supports Linux x64, Linux ARM64, and WSL. Both scripts require Go 1.25.8. They reuse the active installation's bundled Markdown reader when available. On a fresh installation, they build it from this checkout using the repository's reader build script, which requires Rust and the platform's native build and inspection tools. `TOOLBOX_READER` can select an existing reader for either script. The scripts stage a new timestamped local version, check the reader and `tb`, then activate it through the normal `tb` wrapper. Previous versions remain available. The published-release `install.sh` and `install.ps1` continue to install published releases.
 
 CI additionally validates release/version scripts, shell completion, PowerShell 5.1 and 7 installers and reader-build checks, the Windows terminal hotkey, WSL Shift+Enter bindings, shell syntax, ShellCheck, race detection, and cross-platform builds. The [reader build workflow](.github/workflows/markdown-reader.yml) builds and self-checks each reader on its native platform: Linux MUSL binaries must have no ELF interpreter or dynamic dependencies, and Windows MSVC binaries must have no dynamic VC/UCRT imports.
 

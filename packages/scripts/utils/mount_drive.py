@@ -12,6 +12,9 @@ import sys
 import tempfile
 import textwrap
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from toolbox_output import legacy_input, legacy_print
+
 
 SUPPORTED = {"ext4": "e2label", "vfat": "fatlabel"}
 GREY = "\033[90m"
@@ -292,9 +295,10 @@ def display(rows, width=None, color=None):
     width = max(32, min(72, width or shutil.get_terminal_size((80, 24)).columns))
     if color is None:
         color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    lines = []
 
     def emit(line, tone=None):
-        print(f"{tone}{line}{RESET}" if color and tone else line)
+        lines.append(f"{tone}{line}{RESET}" if color and tone else line)
 
     def field(name, value, prefix, tone=None):
         label = f"{prefix}{name:<12}"
@@ -312,21 +316,20 @@ def display(rows, width=None, color=None):
         for chunk in chunks:
             emit(value_prefix + chunk, tone)
 
-    print("\nPhysical disks and filesystems")
     for line in textwrap.wrap(
             "Green: selectable   Gray: OS disk (locked)   Yellow: unsupported or unformatted",
             width=width):
-        print(line)
+        lines.append(line)
     for line in textwrap.wrap("UUID: stable filesystem ID used for persistent mounts.", width=width):
-        print(line)
-    print()
+        lines.append(line)
+    lines.append("")
     group_open = False
     for index, row in enumerate(rows, 1):
         tone = GREY if row["protected"] else GREEN if row["selectable"] else YELLOW
         if row["depth"] == 0:
             if group_open:
                 emit("╰─", group_tone)
-                print()
+                lines.append("")
             group_tone = GREY if row["protected"] else CYAN
             status = "OS disk · locked" if row["protected"] else "physical disk"
             emit(f"╭─ [{index}] {row['path']}  ·  {status}", group_tone)
@@ -353,7 +356,13 @@ def display(rows, width=None, color=None):
         mount_field(current_mount(row) or "-", prefix, detail_tone)
     if group_open:
         emit("╰─", group_tone)
-        print()
+        lines.append("")
+    if hasattr(print, "output"):
+        print.output.menu("Physical disks and filesystems", lines, color_options=False)
+    else:
+        print("Physical disks and filesystems")
+        for line in lines:
+            print(line)
 
 
 def ask_yes_no(prompt, default=False):
@@ -531,8 +540,11 @@ def main():
         if not ask_yes_no("Apply these changes?", default=True):
             print("Cancelled.")
             return
+        print("Writing filesystem and mount configuration...")
         apply_change(row, target, label, persistent, chmod_all)
         print(f"Mounted {row['path']} at {target}.")
+        if hasattr(print, "output"):
+            print.output.success("Drive configuration completed successfully.")
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled.")
     except (ValueError, RuntimeError, subprocess.CalledProcessError, OSError) as error:
@@ -541,4 +553,6 @@ def main():
 
 
 if __name__ == "__main__":
+    print = legacy_print("mount-drive")
+    input = legacy_input("mount-drive", output=print.output)
     main()

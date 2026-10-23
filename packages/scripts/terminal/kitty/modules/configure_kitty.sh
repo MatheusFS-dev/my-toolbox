@@ -15,15 +15,15 @@ configure_kitty() {
     if [[ -f "$kitty_config_file" ]]; then
         local backup_file="${kitty_config_file}.backup.$(date +%Y%m%d-%H%M%S)"
         cp "$kitty_config_file" "$backup_file"
-        echo "Existing Kitty configuration backed up to $backup_file"
+        tb_info "Existing Kitty configuration backed up to $backup_file"
     fi
 
     if [[ "$AUTO_START_ZELLIJ" =~ ^[Yy]$ ]]; then
-        echo "Kitty will auto-start Zellij."
-        echo "Warning: run Codex directly in Kitty, outside Zellij, when terminal pets are required."
+        tb_info "Kitty will auto-start Zellij."
+        tb_warn "run Codex directly in Kitty, outside Zellij, when terminal pets are required."
         shell_command="$HOME/.cargo/bin/zellij -l welcome"
     else
-        echo "Kitty will open Zsh directly."
+        tb_info "Kitty will open Zsh directly."
     fi
 
     cat > "$kitty_config_file" <<EOF_CONFIG
@@ -95,7 +95,7 @@ detect_urls yes
 allow_hyperlinks yes
 EOF_CONFIG
 
-    echo "Kitty configuration written to $kitty_config_file"
+    tb_info "Kitty configuration written to $kitty_config_file"
 }
 
 run_step "Kitty configuration" "configure_kitty"

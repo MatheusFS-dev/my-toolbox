@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/../../lib/toolbox_output.sh"
+tb_output_init set-default-cwd
+
 START_MARKER='# >>> project-template:wsl:default-cwd >>>'
 END_MARKER='# <<< project-template:wsl:default-cwd <<<'
 
 fail() {
-    printf 'Error: %s\n' "$1" >&2
+    tb_error "$1" >&2
     exit 1
 }
 
@@ -62,13 +67,14 @@ if (( $# != 0 )); then
 fi
 
 while true; do
-    read -r -p 'Enter the default shell directory: ' target || fail 'Input canceled.'
+    tb_prompt 'Enter the default shell directory: '
+    read -r target || fail 'Input canceled.'
     if [[ -z "$target" ]]; then
-        printf 'Warning: A directory is required.\n' >&2
+        tb_warn 'A value is required; enter a value to continue.' >&2
     elif [[ "$target" != /* ]]; then
-        printf 'Warning: The directory must be an absolute path.\n' >&2
+        tb_warn 'The directory must be an absolute path.' >&2
     elif [[ ! -d "$target" ]]; then
-        printf 'Warning: The directory does not exist: %s\n' "$target" >&2
+        tb_warn "The directory does not exist: $target" >&2
     else
         break
     fi
@@ -111,26 +117,28 @@ for file in "${files[@]}"; do
     fi
 done
 
+tb_info 'Writing shell configuration...'
 for index in "${!files[@]}"; do
     file="${files[$index]}"
     if [[ "${changed[$index]}" == true ]]; then
         backup=''
         if [[ -f "$file" ]]; then backup="$(make_backup "$file")"; fi
         mv -f -- "${temps[$index]}" "$file"
-        temps[$index]=''
+        temps[index]=''
         backups+=("$backup")
     else
         backups+=('')
     fi
 done
 
-printf 'Configured default shell directory: %s\n' "$target"
+tb_info "Configured default shell directory: $target"
 for index in "${!files[@]}"; do
     if [[ -n "${backups[$index]}" ]]; then
-        printf 'Backup for %s: %s\n' "${files[$index]}" "${backups[$index]}"
+        tb_info "Backup for ${files[$index]}: ${backups[$index]}"
     elif [[ "${changed[$index]}" == true ]]; then
-        printf 'Backup for %s: none (file was created)\n' "${files[$index]}"
+        tb_info "Backup for ${files[$index]}: none (file was created)"
     else
-        printf 'Backup for %s: none (already current)\n' "${files[$index]}"
+        tb_info "Backup for ${files[$index]}: none (already current)"
     fi
 done
+tb_success 'Default shell directory configured successfully.'

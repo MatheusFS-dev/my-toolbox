@@ -90,6 +90,15 @@ function Write-Status {
     Write-Host $Text -ForegroundColor $Color
 }
 
+function Show-PathGuide {
+    Write-Status -Kind INFO -Message 'If tb command is not recognized, do:'
+    Write-Status -Kind INFO -Message 'For this PowerShell session:'
+    Write-Status -Kind INFO -Message '$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"'
+    Write-Status -Kind INFO -Message 'Persist for future PowerShell sessions:'
+    Write-Status -Kind INFO -Message 'New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null'
+    Write-Status -Kind INFO -Message 'Add-Content -Path $PROFILE -Value ''$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"'''
+}
+
 function Start-Stage {
     <#
     .SYNOPSIS
@@ -706,6 +715,7 @@ try {
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         if ($CurrentVersion -eq $ExpectedVersion) {
             Write-Status -Kind OK -Message "Toolbox $CurrentVersion is already current."
+            Show-PathGuide
             $InstallSucceeded = $true
             return
         }
@@ -719,6 +729,7 @@ try {
         Enable-ToolboxCompletion
         Enable-ToolboxPath
         Complete-Stage
+        Show-PathGuide
         $InstallSucceeded = $true
         return
     }
@@ -862,6 +873,7 @@ try {
     }
     Write-Status -Kind OK -Message "Installed my-toolbox $Version."
     Complete-Stage
+    Show-PathGuide
     $InstallSucceeded = $true
 } catch {
     $Failure = "[FAIL] Stage $CurrentStage/7: $CurrentStageName"

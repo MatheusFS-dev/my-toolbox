@@ -9,7 +9,7 @@ add_word_navigation() {
 
     if [[ -f "$zshrc" ]]; then
         if ! grep -qF "bindkey '^[[1;5C' forward-word" "$zshrc"; then
-            echo "Adding word navigation bindings to $zshrc..."
+            tb_info "Adding word navigation bindings to $zshrc..."
             cat >> "$zshrc" << 'EOF'
 
 # Word navigation with CTRL + Arrows
@@ -26,7 +26,7 @@ EOF
 
     if [[ -f "$bashrc" ]]; then
         if ! grep -qF "forward-word" "$bashrc"; then
-            echo "Adding word navigation bindings to $bashrc..."
+            tb_info "Adding word navigation bindings to $bashrc..."
             cat >> "$bashrc" << 'EOF'
 
 # Word navigation with CTRL + Arrows

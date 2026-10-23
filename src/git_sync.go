@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GitRunner executes Git without a shell.
@@ -313,25 +314,34 @@ func ExecuteGitSync(ctx context.Context, runner GitRunner, plan GitSyncPlan) (re
 func RunGitSync(ctx context.Context, runner GitRunner, directory, platform string, input io.Reader, output, errorOutput io.Writer) error {
 	_ = platform
 	_ = errorOutput
+	messages := newToolOutput(output, "git-sync", time.Now, detectToolColor(output))
+	if err := messages.Info("Checking the repository and configured remotes..."); err != nil {
+		return err
+	}
 	repository, err := DiscoverGitRepository(ctx, runner, directory)
 	if err != nil {
 		return err
 	}
 	reader := bufio.NewReader(input)
-	fmt.Fprintf(output, "GIT REMOTE SYNC\n\nRepository\n  %s\n\n", repository.Root)
-	source, err := selectRemote(reader, output, "Select the source remote", repository.Remotes)
+	if err := messages.Info(fmt.Sprintf("Repository: %s", repository.Root)); err != nil {
+		return err
+	}
+	source, err := selectRemote(reader, messages, "Select the source remote", repository.Remotes)
 	if err != nil {
 		return err
 	}
-	sourceEnvironment, err := chooseCredentialMode(ctx, runner, repository, source, reader, output)
+	sourceEnvironment, err := chooseCredentialMode(ctx, runner, repository, source, reader, messages)
 	if err != nil {
+		return err
+	}
+	if err := messages.Info(fmt.Sprintf("Fetching branches from %s...", source.Name)); err != nil {
 		return err
 	}
 	sourceBranches, err := fetchRemoteBranches(ctx, runner, repository, source, sourceEnvironment)
 	if err != nil {
 		return err
 	}
-	sourceBranch, err := selectBranch(reader, output, "Select the source branch", sourceBranches)
+	sourceBranch, err := selectBranch(reader, messages, "Select the source branch", sourceBranches)
 	if err != nil {
 		return err
 	}
@@ -341,24 +351,29 @@ func RunGitSync(ctx context.Context, runner GitRunner, directory, platform strin
 			destinations = append(destinations, remote)
 		}
 	}
-	destination, err := selectRemote(reader, output, "Select the destination remote", destinations)
+	destination, err := selectRemote(reader, messages, "Select the destination remote", destinations)
 	if err != nil {
 		return err
 	}
-	environment, err := chooseCredentialMode(ctx, runner, repository, destination, reader, output)
+	environment, err := chooseCredentialMode(ctx, runner, repository, destination, reader, messages)
 	if err != nil {
+		return err
+	}
+	if err := messages.Info(fmt.Sprintf("Fetching branches from %s...", destination.Name)); err != nil {
 		return err
 	}
 	destinationBranches, err := fetchRemoteBranches(ctx, runner, repository, destination, environment)
 	if err != nil {
 		return err
 	}
-	destinationBranch, err := selectBranch(reader, output, "Select the destination branch", destinationBranches)
+	destinationBranch, err := selectBranch(reader, messages, "Select the destination branch", destinationBranches)
 	if err != nil {
 		return err
 	}
 	defaultMessage := fmt.Sprintf("Sync %s/%s to %s/%s", source.Name, sourceBranch.Name, destination.Name, destinationBranch.Name)
-	fmt.Fprintf(output, "Commit message [%s]\n> ", defaultMessage)
+	if err := messages.Prompt(fmt.Sprintf("Commit message [default: %s]", defaultMessage)); err != nil {
+		return err
+	}
 	message, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read commit message: %w", err)
@@ -368,37 +383,48 @@ func RunGitSync(ctx context.Context, runner GitRunner, directory, platform strin
 		message = defaultMessage
 	}
 	selection := GitSyncSelection{SourceRemote: source, SourceBranch: sourceBranch, DestinationRemote: destination, DestinationBranch: destinationBranch, CommitMessage: message, Environment: environment}
+	if err := messages.Info("Checking the selected branch snapshots..."); err != nil {
+		return err
+	}
 	plan, err := PlanGitSync(ctx, runner, repository, selection)
 	if err != nil {
 		return err
 	}
 	if plan.Changes == (GitSyncChanges{}) {
-		fmt.Fprintln(output, "Nothing to synchronize. The tracked snapshots are identical.")
-		return nil
+		return messages.Warn("Skipping synchronization because the tracked snapshots are identical.")
 	}
-	fmt.Fprintf(output, "\nSYNC OVERVIEW\n\nSource\n  %s/%s\n  %s\n\nDestination\n  %s/%s\n  %s\n\nChanges\n  %d added, %d modified, %d deleted\n\nThe destination history will be preserved. No force push will be used.\n\nContinue? [No/yes]\n> ", source.Name, sourceBranch.Name, source.FetchURL, destination.Name, destinationBranch.Name, destination.PushURL, plan.Changes.Added, plan.Changes.Modified, plan.Changes.Deleted)
+	overview := fmt.Sprintf("Source: %s/%s (%s)\nDestination: %s/%s (%s)\nChanges: %d added, %d modified, %d deleted\nThe destination history will be preserved. No force push will be used.", source.Name, sourceBranch.Name, source.FetchURL, destination.Name, destinationBranch.Name, destination.PushURL, plan.Changes.Added, plan.Changes.Modified, plan.Changes.Deleted)
+	if err := messages.Info(overview); err != nil {
+		return err
+	}
+	if err := messages.Prompt("Continue? [y/N] (default: n):"); err != nil {
+		return err
+	}
 	confirmation, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read confirmation: %w", err)
 	}
-	if strings.ToLower(strings.TrimSpace(confirmation)) != "yes" {
-		fmt.Fprintln(output, "Synchronization cancelled.")
-		return nil
+	if !isYesConfirmation(confirmation) {
+		return messages.Info("Synchronization cancelled; no synchronization commit was created.")
+	}
+	if err := messages.Info("Synchronizing tracked files and pushing the destination branch..."); err != nil {
+		return err
 	}
 	result, err := ExecuteGitSync(ctx, runner, plan)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(output, "Synchronization completed.\n\nCommit\n  %s\n", result.Commit)
-	return nil
+	return messages.Success(fmt.Sprintf("Synchronized tracked files in commit %s.", result.Commit))
 }
 
-func chooseCredentialMode(ctx context.Context, runner GitRunner, repository GitRepository, remote GitRemote, reader *bufio.Reader, output io.Writer) ([]string, error) {
+func chooseCredentialMode(ctx context.Context, runner GitRunner, repository GitRepository, remote GitRemote, reader *bufio.Reader, output *toolOutput) ([]string, error) {
 	parsed, err := url.Parse(remote.PushURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return nil, nil
 	}
-	fmt.Fprintln(output, "How should Git remember credentials?\n  1. Secure credential manager\n  2. Plaintext Git storage\n  3. Do not save")
+	if err := output.Menu("How should Git remember credentials?", []string{"1. Secure credential manager", "2. Plaintext Git storage", "3. Do not save"}); err != nil {
+		return nil, err
+	}
 	choice, err := readChoice(reader, output, 3)
 	if err != nil {
 		return nil, err
@@ -412,12 +438,17 @@ func chooseCredentialMode(ctx context.Context, runner GitRunner, repository GitR
 		}
 		return nil, nil
 	case 2:
-		fmt.Fprintln(output, "Warning: Git will store credentials unencrypted in the user credentials file. Continue? [No/yes]")
+		if err := output.Warn("Git will store credentials unencrypted in the user credentials file."); err != nil {
+			return nil, err
+		}
+		if err := output.Prompt("Continue with plaintext credential storage? [y/N] (default: n):"); err != nil {
+			return nil, err
+		}
 		confirmation, readErr := reader.ReadString('\n')
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return nil, readErr
 		}
-		if strings.ToLower(strings.TrimSpace(confirmation)) != "yes" {
+		if !isYesConfirmation(confirmation) {
 			return nil, fmt.Errorf("plaintext credential storage was not confirmed")
 		}
 		if _, configErr := runner.Run(ctx, repository.Root, nil, "config", "--global", scope, "store"); configErr != nil {
@@ -427,6 +458,11 @@ func chooseCredentialMode(ctx context.Context, runner GitRunner, repository GitR
 	default:
 		return []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0="}, nil
 	}
+}
+
+func isYesConfirmation(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "y" || normalized == "yes"
 }
 
 func secureCredentialHelper(helper string) bool {
@@ -439,10 +475,13 @@ func secureCredentialHelper(helper string) bool {
 	return false
 }
 
-func selectRemote(reader *bufio.Reader, output io.Writer, title string, remotes []GitRemote) (GitRemote, error) {
-	fmt.Fprintln(output, title)
+func selectRemote(reader *bufio.Reader, output *toolOutput, title string, remotes []GitRemote) (GitRemote, error) {
+	lines := []string{}
 	for index, remote := range remotes {
-		fmt.Fprintf(output, "  %d. %s\n     %s\n", index+1, remote.Name, remote.FetchURL)
+		lines = append(lines, fmt.Sprintf("%d. %s (%s)", index+1, remote.Name, remote.FetchURL))
+	}
+	if err := output.Menu(title, lines); err != nil {
+		return GitRemote{}, err
 	}
 	choice, err := readChoice(reader, output, len(remotes))
 	if err != nil {
@@ -451,14 +490,17 @@ func selectRemote(reader *bufio.Reader, output io.Writer, title string, remotes 
 	return remotes[choice-1], nil
 }
 
-func selectBranch(reader *bufio.Reader, output io.Writer, title string, branches []GitBranch) (GitBranch, error) {
-	fmt.Fprintln(output, title)
+func selectBranch(reader *bufio.Reader, output *toolOutput, title string, branches []GitBranch) (GitBranch, error) {
+	lines := []string{}
 	for index, branch := range branches {
 		label := ""
 		if branch.Default {
 			label = " (default)"
 		}
-		fmt.Fprintf(output, "  %d. %s%s\n", index+1, branch.Name, label)
+		lines = append(lines, fmt.Sprintf("%d. %s%s", index+1, branch.Name, label))
+	}
+	if err := output.Menu(title, lines); err != nil {
+		return GitBranch{}, err
 	}
 	choice, err := readChoice(reader, output, len(branches))
 	if err != nil {
@@ -467,9 +509,8 @@ func selectBranch(reader *bufio.Reader, output io.Writer, title string, branches
 	return branches[choice-1], nil
 }
 
-func readChoice(reader *bufio.Reader, output io.Writer, maximum int) (int, error) {
+func readChoice(reader *bufio.Reader, output *toolOutput, maximum int) (int, error) {
 	for {
-		fmt.Fprint(output, "> ")
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return 0, err
@@ -481,7 +522,9 @@ func readChoice(reader *bufio.Reader, output io.Writer, maximum int) (int, error
 		if errors.Is(err, io.EOF) {
 			return 0, fmt.Errorf("input ended before a valid selection")
 		}
-		fmt.Fprintf(output, "Enter a number from 1 to %d.\n", maximum)
+		if err := output.Warn(fmt.Sprintf("A selection is required; enter a number from 1 to %d.", maximum)); err != nil {
+			return 0, err
+		}
 	}
 }
 

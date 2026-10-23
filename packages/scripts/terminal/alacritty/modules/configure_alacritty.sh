@@ -12,7 +12,7 @@ configure_alacritty() {
     mkdir -p "$alacritty_config_dir"
 
     if [[ "$AUTO_START_ZELLIJ" =~ ^[Yy]$ ]]; then
-        echo "Alacritty will auto start Zellij."
+        tb_info "Alacritty will auto start Zellij."
         cat > "$alacritty_config_file" <<EOF
 [shell]
 program = "$HOME/.cargo/bin/zellij"
@@ -41,7 +41,7 @@ mods = "Shift"
 chars = "\n"
 EOF
     else
-        echo "Alacritty will open a shell without Zellij."
+        tb_info "Alacritty will open a shell without Zellij."
         cat > "$alacritty_config_file" <<EOF
 [shell]
 program = "/bin/zsh"
@@ -70,8 +70,8 @@ chars = "\n"
 EOF
     fi
 
-    echo "Alacritty configuration written to $alacritty_config_file"
-    echo "Alacritty configured with selection.save_to_clipboard = false"
+    tb_info "Alacritty configuration written to $alacritty_config_file"
+    tb_info "Alacritty configured with selection.save_to_clipboard = false"
 }
 
 run_step "Alacritty configuration" "configure_alacritty"

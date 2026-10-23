@@ -487,6 +487,11 @@ try {
     $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
     $ChecksBeforeSuccess = $global:ToolboxInstallerReaderChecks.Count
     $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
+    if (-not $Output.Contains('If tb command is not recognized, do:') -or
+        -not $Output.Contains('$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"') -or
+        -not $Output.Contains('Add-Content -Path $PROFILE')) {
+        throw "Installer output is missing the manual PATH guide. Output: $Output"
+    }
     if ($global:ToolboxInstallerReaderChecks.Count -ne ($ChecksBeforeSuccess + 1) -or
         -not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5\libexec\tb-markdown-reader.exe'))) {
         throw 'Successful installation did not validate and publish the bundled reader.'
@@ -593,6 +598,9 @@ try {
     [IO.File]::WriteAllBytes($WindowsPowerShellProfile, $UnrelatedProfileBytes)
     Remove-Item -LiteralPath $PowerShellProfile -Force
     $RepairOutput = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
+    if (-not $RepairOutput.Contains('If tb command is not recognized, do:')) {
+        throw "Repair output is missing the manual PATH guide. Output: $RepairOutput"
+    }
     if (-not $RepairOutput.Contains('is already installed')) {
         throw "Existing installation did not take the repair path. Output: $RepairOutput"
     }

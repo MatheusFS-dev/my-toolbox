@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MODULE_DIR/../../../lib/toolbox_output.sh"
+tb_output_init setup-wsl
 
 write_managed_block() {
     local file="$1"

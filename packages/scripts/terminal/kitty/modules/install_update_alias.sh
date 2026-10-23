@@ -37,14 +37,14 @@ if replaced:
     with open(file_path, "w") as f:
         f.writelines(lines)
 ' "$file" "$alias_name" "$alias_line"
-            echo "Updated existing 'update' alias in $file"
+            tb_info "Updated existing 'update' alias in $file"
         else
             {
                 echo ""
                 echo "# Custom update alias"
                 echo "$alias_line"
             } >> "$file"
-            echo "Added 'update' alias to $file"
+            tb_info "Added 'update' alias to $file"
         fi
     done
 }

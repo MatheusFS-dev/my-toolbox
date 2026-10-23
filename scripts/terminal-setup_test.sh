@@ -18,6 +18,9 @@ make_fixture() {
     fi
 
     cat > "$fixture_root/modules/shared.sh" <<'SH'
+tb_info() { printf '[00:00:00 test INFO] %s\n' "$1"; }
+tb_warn() { printf '[00:00:00 test WARN] %s\n' "$1"; }
+tb_error() { printf '[00:00:00 test ERROR] %s\n' "$1"; }
 run_as_user() {
     "$@"
 }
@@ -99,7 +102,7 @@ assert_vscode_nautilus_installer() {
         printf '%s\n' 'VS Code Nautilus installer is not executable.' >&2
         exit 1
     fi
-    if ! grep -F "Error: Nautilus is not installed; install Nautilus before adding this integration." "$installer" >/dev/null; then
+    if ! grep -F "Nautilus is not installed; install it before retrying. Nothing changed." "$installer" >/dev/null; then
         printf '%s\n' 'VS Code Nautilus installer does not reject a missing Nautilus installation.' >&2
         exit 1
     fi
@@ -117,7 +120,7 @@ assert_wsl_shift_enter_selection() {
     tr -d '\r' < "$repository_root/packages/scripts/terminal/wsl/setup_wsl.sh" > "$normalized_setup"
     output="$({
         # shellcheck source=/dev/null
-        source "$normalized_setup"
+        TOOLBOX_OUTPUT_HELPER="$repository_root/packages/scripts/lib/toolbox_output.sh" source "$normalized_setup"
         reset_options
         parse_args --yes --skip-shift-enter
         select_features
@@ -154,7 +157,7 @@ assert_wsl_yes_no_retries() {
     set +e
     output="$({
         # shellcheck source=/dev/null
-        source "$normalized_setup"
+        TOOLBOX_OUTPUT_HELPER="$repository_root/packages/scripts/lib/toolbox_output.sh" source "$normalized_setup"
         prompt_yes_no 'Enable test feature?'
     } <<< $'maybe\nno' 2>&1)"
     status=$?
@@ -211,6 +214,8 @@ assert_desktop_terminal_prompts_retry() {
             # The dynamically sourced prompt function reads this variable.
             # shellcheck disable=SC2034
             ASSUME_YES=false
+            source "$repository_root/packages/scripts/lib/toolbox_output.sh"
+            tb_output_init "setup-$terminal_name"
             # shellcheck source=/dev/null
             source "$prompt_library"
             prompt_yes_no 'Install test feature?' y

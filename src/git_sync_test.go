@@ -162,17 +162,108 @@ func TestRunGitSyncCancelsBeforeMutation(t *testing.T) {
 	if !strings.Contains(output.String(), "Synchronization cancelled") {
 		t.Fatalf("output = %q", output.String())
 	}
+	if !strings.Contains(output.String(), "[y/N] (default: n):") {
+		t.Fatalf("confirmation does not show its default: %q", output.String())
+	}
+	if strings.Contains(output.String(), "[No/yes]") {
+		t.Fatalf("output contains a legacy default marker: %q", output.String())
+	}
+	assertGitSyncOutputContract(t, output.String())
+	if strings.Contains(output.String(), " SUCCESS]") {
+		t.Fatalf("cancelled output contains success: %q", output.String())
+	}
+}
+
+func TestRunGitSyncWritesOneSuccessSummary(t *testing.T) {
+	repository := newGitSyncRepository(t)
+	runGit(t, repository, "push", "backup", "HEAD:main")
+	if err := os.WriteFile(filepath.Join(repository, "paper.tex"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repository, "add", "paper.tex")
+	runGit(t, repository, "commit", "-m", "change source")
+	runGit(t, repository, "push", "origin", "HEAD:main")
+	input := strings.NewReader("2\n1\n1\n1\n\nyes\n")
+	output := &bytes.Buffer{}
+
+	err := RunGitSync(context.Background(), ExecGitRunner{}, repository, "linux-amd64", input, output, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGitSyncOutputContract(t, output.String())
+	if count := strings.Count(output.String(), " SUCCESS]"); count != 1 {
+		t.Fatalf("success count = %d, output = %q", count, output.String())
+	}
+	if !strings.Contains(output.String(), "Synchronizing tracked files") {
+		t.Fatalf("output omitted pre-action progress: %q", output.String())
+	}
+}
+
+func assertGitSyncOutputContract(t *testing.T, output string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	if len(lines) == 0 || lines[0] != "" {
+		t.Fatalf("output does not start with one empty line: %q", output)
+	}
+	inMenu := false
+	for _, line := range lines[1:] {
+		if line == "" {
+			t.Fatalf("output contains an unprefixed empty line: %q", output)
+		}
+		if strings.HasPrefix(line, "  ") && inMenu {
+			continue
+		}
+		if !strings.Contains(line, " git-sync ") || !strings.HasPrefix(line, "[") {
+			t.Fatalf("unprefixed git-sync output line %q in %q", line, output)
+		}
+		inMenu = strings.Contains(line, " PROMPT] Select ") || strings.Contains(line, " PROMPT] How should ")
+	}
 }
 
 func TestSecureCredentialModeRejectsNonSecureCacheHelper(t *testing.T) {
 	repository := GitRepository{Root: t.TempDir()}
 	remote := GitRemote{Name: "origin", PushURL: "https://example.com/team/project.git"}
 	reader := bufio.NewReader(strings.NewReader("1\n"))
-	output := &bytes.Buffer{}
+	destination := &bytes.Buffer{}
+	output := newToolOutput(destination, "git-sync", fixedOutputClock, colorModeNever)
 
 	_, err := chooseCredentialMode(context.Background(), credentialGitRunner{helper: "cache"}, repository, remote, reader, output)
+	if strings.Contains(destination.String(), "Selection (required)") || strings.Count(destination.String(), " PROMPT]") != 1 {
+		t.Fatalf("credential menu = %q", destination.String())
+	}
 	if err == nil || !strings.Contains(err.Error(), "no secure Git credential manager") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPlaintextCredentialModeAcceptsAdvertisedYesShortcut(t *testing.T) {
+	repository := GitRepository{Root: t.TempDir()}
+	remote := GitRemote{Name: "origin", PushURL: "https://example.com/team/project.git"}
+	runner := &recordingGitRunner{}
+	output := newToolOutput(&bytes.Buffer{}, "git-sync", fixedOutputClock, colorModeNever)
+
+	_, err := chooseCredentialMode(context.Background(), runner, repository, remote, bufio.NewReader(strings.NewReader("2\ny\n")), output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 1 || strings.Join(runner.calls[0], " ") != "config --global credential.https://example.com/team/project.git.helper store" {
+		t.Fatalf("credential configuration calls = %#v", runner.calls)
+	}
+}
+
+func TestGitSyncSelectionMenusUsePromptLevel(t *testing.T) {
+	outputText := &bytes.Buffer{}
+	output := newToolOutput(outputText, "git-sync", fixedOutputClock, colorModeNever)
+	remotes := []GitRemote{{Name: "origin", FetchURL: "https://example.com/repo"}}
+	if _, err := selectRemote(bufio.NewReader(strings.NewReader("1\n")), output, "Select the source remote", remotes); err != nil {
+		t.Fatal(err)
+	}
+	branches := []GitBranch{{Name: "main"}}
+	if _, err := selectBranch(bufio.NewReader(strings.NewReader("1\n")), output, "Select the source branch", branches); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(outputText.String(), "Selection (required)") || strings.Count(outputText.String(), " PROMPT]") != 2 {
+		t.Fatalf("selection menus = %q", outputText.String())
 	}
 }
 

@@ -206,8 +206,7 @@ func (builtins *ToolboxBuiltins) installMonitor() error {
 		_ = os.Rename(backup, runtimeRoot)
 		return fmt.Errorf("publish Monitor wrapper: %w", err)
 	}
-	_, err = fmt.Fprintf(builtins.output, "Installed monitor to %s\n", wrapper)
-	return err
+	return nil
 }
 
 func runInstallerCommand(path string, arguments []string, output io.Writer) error {
@@ -290,6 +289,5 @@ func (builtins *ToolboxBuiltins) uninstallMonitor() error {
 	if err := removeMonitor(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(builtins.output, "Removed Monitor runtime and launcher. Configuration was preserved.")
-	return err
+	return builtins.info("Configuration was preserved.")
 }

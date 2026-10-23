@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 var version = "development"
@@ -25,6 +27,12 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "__monitor" {
 		os.Exit(runMonitorCLI(root, version, os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "__ssh-tools-status" {
+		if len(os.Args) != 2 {
+			os.Exit(1)
+		}
+		os.Exit(runSSHStatusDisplay(root, os.Stdout, os.Stderr))
 	}
 	catalog, err := LoadCatalogFile(filepath.Join(root, "commands.json"))
 	if err != nil {
@@ -67,7 +75,16 @@ func main() {
 		},
 	}
 	if err := app.Execute(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		tool := "tb"
+		if len(os.Args) > 1 {
+			tool = os.Args[1]
+		}
+		messages := newToolOutput(os.Stderr, tool, time.Now, detectToolColor(os.Stderr))
+		if errors.Is(err, ErrCancelled) {
+			_ = messages.Info("Cancelled; nothing changed.")
+		} else {
+			_ = messages.Error(fmt.Sprintf("Operation did not complete and may have made partial changes. Review the cause and retry: %v", err))
+		}
 		os.Exit(1)
 	}
 }

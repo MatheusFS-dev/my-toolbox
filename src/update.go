@@ -45,8 +45,7 @@ func (builtins *ToolboxBuiltins) update() error {
 		return err
 	}
 	if comparison == 0 {
-		_, err := fmt.Fprintf(builtins.output, "Toolbox %s is already current.\n", latest)
-		return err
+		return builtins.info(fmt.Sprintf("Toolbox %s is already current.", latest))
 	}
 	if comparison < 0 {
 		return fmt.Errorf("latest release %s is older than installed version %s", latest, builtins.version)

@@ -2,12 +2,13 @@
 import math
 
 
-def prompt_configuration(devices, input_fn=input):
+def prompt_configuration(devices, input_fn=input, warning_fn=print):
     """Gather GPU selection, relative load and duration with input validation.
 
     Args:
         devices (list[dict]): Visible device descriptions with CUDA ordinals.
         input_fn (Callable[[str], str]): Prompt callback.
+        warning_fn (Callable[[str], None]): Validation warning callback.
 
     Returns:
         dict: Selected devices, load_percent and optional duration_seconds.
@@ -32,7 +33,7 @@ def prompt_configuration(devices, input_fn=input):
             selected = [by_ordinal[number] for number in numbers]
             break
         except (ValueError, KeyError):
-            print("Enter distinct GPU numbers from the displayed list, or all.")
+            warning_fn("Enter distinct GPU numbers from the displayed list, or all.")
     while True:
         try:
             load = float(input_fn("Relative compute and available VRAM usage, 1-100% [100]: ").strip() or "100")
@@ -40,7 +41,7 @@ def prompt_configuration(devices, input_fn=input):
                 raise ValueError("Load is outside the supported range.")
             break
         except ValueError:
-            print("Enter a finite percentage from 1 to 100.")
+            warning_fn("Enter a finite percentage from 1 to 100.")
     while True:
         answer = input_fn("Duration in seconds, or loop until Ctrl+C [loop]: ").strip().lower()
         if answer in ("", "loop"):
@@ -52,5 +53,5 @@ def prompt_configuration(devices, input_fn=input):
                 raise ValueError("Duration must be positive.")
             break
         except ValueError:
-            print("Enter positive finite seconds or loop.")
+            warning_fn("Enter positive finite seconds or loop.")
     return {"devices": selected, "load_percent": load, "duration_seconds": duration}

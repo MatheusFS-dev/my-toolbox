@@ -1,9 +1,12 @@
 """Isolated checks for the packaged mount-drive utility."""
 
 import importlib.util
+import io
 from pathlib import Path
 import unittest
 from unittest import mock
+
+from packages.toolbox_output import legacy_print
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "packages/scripts/utils/mount_drive.py"
@@ -14,6 +17,17 @@ spec.loader.exec_module(mount_drive)
 
 class MountDriveTests(unittest.TestCase):
     """Check disk protection and persistent mount edits without touching devices."""
+
+    def test_disk_selection_display_uses_one_prompt_header(self):
+        """Keep the decorated disk list in one readable prompt block."""
+        destination = io.StringIO()
+        writer = legacy_print("mount-drive", stdout=destination)
+        with mock.patch.object(mount_drive, "print", writer, create=True):
+            mount_drive.display([], width=72, color=False)
+        rendered = destination.getvalue()
+        self.assertEqual(rendered.count(" PROMPT]"), 1)
+        self.assertIn("  Green: selectable", rendered)
+        self.assertNotIn("mount-drive INFO] Green:", rendered)
 
     def test_os_disk_is_locked(self):
         disks = [

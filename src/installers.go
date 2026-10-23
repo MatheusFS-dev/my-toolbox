@@ -26,6 +26,9 @@ type ToolboxBuiltins struct {
 	version  string
 	output   io.Writer
 	client   *http.Client
+	now      func() time.Time
+	color    toolColorMode
+	messages *toolOutput
 }
 
 // NewToolboxBuiltins constructs the production builtin executor.
@@ -45,6 +48,8 @@ func NewToolboxBuiltins(root, platform, version string, output io.Writer) *Toolb
 		version:  version,
 		output:   output,
 		client:   &http.Client{Timeout: 2 * time.Minute},
+		now:      time.Now,
+		color:    detectToolColor(output),
 	}
 }
 
@@ -110,38 +115,78 @@ func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
 	if len(arguments) != 0 {
 		return fmt.Errorf("%s does not accept arguments", name)
 	}
-	switch name {
-	case "install-codex":
-		return builtins.runOfficialInstaller("https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1", nil)
-	case "install-claude":
-		return builtins.runOfficialInstaller("https://claude.ai/install.sh", "https://claude.ai/install.ps1", nil)
-	case "install-antigravity":
-		return builtins.runOfficialInstaller("https://antigravity.google/cli/install.sh", "https://antigravity.google/cli/install.ps1", nil)
-	case "install-uv":
-		return builtins.runOfficialInstaller("https://astral.sh/uv/install.sh", "https://astral.sh/uv/install.ps1", []string{"UV_NO_MODIFY_PATH=1"})
-	case "install-gh":
-		return builtins.installGH()
-	case "install-stress-gpu":
-		return builtins.installStressGPU()
-	case "install-monitor":
-		return builtins.installMonitor()
-	case "uninstall-monitor":
-		return builtins.uninstallMonitor()
-	case "uninstall-stress-gpu":
-		return builtins.uninstallStressGPU()
-	case "install-superpowers-codex":
-		return runAgentPlugin("codex", []string{"plugin", "add", "superpowers@openai-curated"}, builtins.platform, builtins.output)
-	case "install-superpowers-claude":
-		return runAgentPlugin("claude", []string{"plugin", "install", "superpowers@claude-plugins-official", "--scope", "user"}, builtins.platform, builtins.output)
-	case "install-superpowers-antigravity":
-		return runAgentPlugin("agy", []string{"plugin", "install", "https://github.com/obra/superpowers"}, builtins.platform, builtins.output)
-	case "update":
-		return builtins.update()
-	case "uninstall":
-		return builtins.uninstall()
-	default:
-		return fmt.Errorf("unsupported builtin command %q", name)
+	return builtins.withToolOutput(name, func() error {
+		switch name {
+		case "install-codex":
+			return builtins.runOfficialInstaller("https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1", nil)
+		case "install-claude":
+			return builtins.runOfficialInstaller("https://claude.ai/install.sh", "https://claude.ai/install.ps1", nil)
+		case "install-antigravity":
+			return builtins.runOfficialInstaller("https://antigravity.google/cli/install.sh", "https://antigravity.google/cli/install.ps1", nil)
+		case "install-uv":
+			return builtins.runOfficialInstaller("https://astral.sh/uv/install.sh", "https://astral.sh/uv/install.ps1", []string{"UV_NO_MODIFY_PATH=1"})
+		case "install-gh":
+			return builtins.installGH()
+		case "install-stress-gpu":
+			return builtins.installStressGPU()
+		case "install-monitor":
+			return builtins.installMonitor()
+		case "uninstall-monitor":
+			return builtins.uninstallMonitor()
+		case "uninstall-stress-gpu":
+			return builtins.uninstallStressGPU()
+		case "install-superpowers-codex":
+			return runAgentPlugin("codex", []string{"plugin", "add", "superpowers@openai-curated"}, builtins.platform, builtins.output)
+		case "install-superpowers-claude":
+			return runAgentPlugin("claude", []string{"plugin", "install", "superpowers@claude-plugins-official", "--scope", "user"}, builtins.platform, builtins.output)
+		case "install-superpowers-antigravity":
+			return runAgentPlugin("agy", []string{"plugin", "install", "https://github.com/obra/superpowers"}, builtins.platform, builtins.output)
+		case "update":
+			return builtins.update()
+		case "uninstall":
+			return builtins.uninstall()
+		default:
+			return fmt.Errorf("unsupported builtin command %q", name)
+		}
+	})
+}
+
+func (builtins *ToolboxBuiltins) withToolOutput(name string, action func() error) error {
+	color := builtins.color
+	if builtins.now == nil {
+		builtins.now = time.Now
+		color = detectToolColor(builtins.output)
 	}
+	builtins.messages = newToolOutput(builtins.output, name, builtins.now, color)
+	progress := "Installing..."
+	if strings.HasPrefix(name, "uninstall") || name == "uninstall" {
+		progress = "Removing..."
+	} else if name == "update" {
+		progress = "Checking for updates..."
+	}
+	if err := builtins.messages.Info(progress); err != nil {
+		return err
+	}
+	if err := action(); err != nil {
+		return err
+	}
+	return builtins.messages.Success("Completed successfully.")
+}
+
+func (builtins *ToolboxBuiltins) info(message string) error {
+	if builtins.messages != nil {
+		return builtins.messages.Info(message)
+	}
+	_, err := fmt.Fprintln(builtins.output, message)
+	return err
+}
+
+func (builtins *ToolboxBuiltins) warn(message string) error {
+	if builtins.messages != nil {
+		return builtins.messages.Warn(message)
+	}
+	_, err := fmt.Fprintln(builtins.output, message)
+	return err
 }
 
 func (builtins *ToolboxBuiltins) runOfficialInstaller(linuxURL, windowsURL string, environment []string) error {
@@ -344,9 +389,8 @@ func (builtins *ToolboxBuiltins) installGH() error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(builtins.output, "Installed gh to %s\n", destination)
-	if err == nil && !directoryOnPath(filepath.Dir(destination), builtins.platform == "windows-amd64") {
-		_, err = fmt.Fprintf(builtins.output, "Add %s to PATH to run gh.\n", filepath.Dir(destination))
+	if !directoryOnPath(filepath.Dir(destination), builtins.platform == "windows-amd64") {
+		err = builtins.info(fmt.Sprintf("Add %s to PATH to run gh.", filepath.Dir(destination)))
 	}
 	return err
 }

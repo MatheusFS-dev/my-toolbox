@@ -11,16 +11,14 @@
 #   -h, --help  show this help
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/toolbox_output.sh"
+tb_output_init toggle-nopasswd-sudo
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-log_info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-log_ok()    { echo -e "${GREEN}[ OK ]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info()  { tb_info "$*"; }
+log_ok()    { tb_success "$*"; }
+log_warn()  { tb_warn "$*"; }
+log_error() { tb_error "$*" >&2; }
 
 usage() {
     cat <<EOF
@@ -67,7 +65,8 @@ if [[ -z "$TARGET_USER" ]]; then
         TARGET_USER="$SUDO_USER"
     else
         while true; do
-            read -rp "Target user: " TARGET_USER || { log_error "Input canceled."; exit 1; }
+            tb_prompt 'Target user'
+            read -r TARGET_USER || { log_info 'Input cancelled; nothing changed.'; exit 1; }
             if [[ -z "$TARGET_USER" ]]; then
                 log_warn "Target user cannot be empty."
             elif ! id "$TARGET_USER" >/dev/null 2>&1; then
@@ -140,7 +139,7 @@ report_external_nopasswd() {
             | grep -v "^${SUDOERS_FILE}$" || true)"
     if [[ -n "$hits" ]]; then
         log_warn "NOPASSWD rules also appear in:"
-        while IFS= read -r f; do echo "         $f"; done <<<"$hits"
+        while IFS= read -r f; do tb_warn "$f"; done <<<"$hits"
     fi
     log_warn "It may also be a group rule, for example %sudo or %admin."
 }
@@ -158,18 +157,17 @@ else
     ACTION_DESC="enable passwordless sudo"
 fi
 
-echo
 log_info "Target user ......: ${TARGET_USER}"
 log_info "Current state ....: sudo ${CURRENT}"
 log_info "Offered action ...: ${ACTION_DESC}"
-echo
 
 # ---------------------------------------------------------------------------
 # Confirmation
 # ---------------------------------------------------------------------------
 if [[ "$ASSUME_YES" -ne 1 ]]; then
     while true; do
-        read -rp "Do you want to ${ACTION_DESC} for '${TARGET_USER}'? [y/N]: " confirm || { log_error "Input canceled."; exit 1; }
+        tb_prompt "Do you want to ${ACTION_DESC} for '${TARGET_USER}'? [y/N] (default: n):"
+        read -r confirm || { log_info 'Input cancelled; nothing changed.'; exit 1; }
         case "${confirm,,}" in
             y|yes) break ;;
             ''|n|no) log_info "Operation canceled. No changes made."; exit 0 ;;
@@ -182,6 +180,7 @@ fi
 # Application + result verification
 # ---------------------------------------------------------------------------
 if [[ "$ACTION" == "enable" ]]; then
+    tb_info "Writing the managed sudoers rule for ${TARGET_USER}..."
     enable_nopasswd || { log_error "Failed to enable NOPASSWD."; exit 1; }
     if user_has_nopasswd; then
         log_ok "Done: '${TARGET_USER}' now uses passwordless sudo."
@@ -191,6 +190,7 @@ if [[ "$ACTION" == "enable" ]]; then
         exit 1
     fi
 else
+    tb_info "Removing the managed sudoers rule for ${TARGET_USER}..."
     disable_nopasswd
     if ! user_has_nopasswd; then
         log_ok "Done: '${TARGET_USER}' now needs a password for sudo."

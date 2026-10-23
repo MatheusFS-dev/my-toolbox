@@ -114,22 +114,46 @@ func (HuhUI) Select(commands []Command) ([]string, error) {
 func (HuhUI) Ask(question Question) (any, error) {
 	var field huh.Field
 	var value any
+	title := questionTitle(question)
+	required := question.Required != nil && *question.Required
 	switch question.Type {
 	case "text":
-		answer := ""
-		field = huh.NewInput().Title(question.Title).Value(&answer)
+		answer, _ := question.Default.(string)
+		input := huh.NewInput().Title(title).Value(&answer)
+		if required {
+			input.Validate(validateRequiredText)
+		}
+		field = input
 		value = &answer
 	case "confirm":
-		answer := false
-		field = huh.NewConfirm().Title(question.Title).Value(&answer)
+		answer, _ := question.Default.(bool)
+		field = huh.NewConfirm().Title(title).Value(&answer)
 		value = &answer
 	case "single":
-		answer := ""
-		field = huh.NewSelect[string]().Title(question.Title).Options(huhOptions(question.Options)...).Value(&answer)
+		answer, _ := question.Default.(string)
+		selectField := huh.NewSelect[string]().Title(title).Options(huhOptions(question.Options)...).Value(&answer)
+		if required {
+			selectField.Validate(func(value string) error {
+				if value == "" {
+					return errors.New("A value is required; select a value to continue.")
+				}
+				return nil
+			})
+		}
+		field = selectField
 		value = &answer
 	case "multiple":
-		answer := []string{}
-		field = huh.NewMultiSelect[string]().Title(question.Title).Options(huhOptions(question.Options)...).Value(&answer)
+		answer := questionStringSlice(question.Default)
+		multiple := huh.NewMultiSelect[string]().Title(title).Options(huhOptions(question.Options)...).Value(&answer)
+		if required {
+			multiple.Validate(func(value []string) error {
+				if len(value) == 0 {
+					return errors.New("A value is required; select at least one value to continue.")
+				}
+				return nil
+			})
+		}
+		field = multiple
 		value = &answer
 	default:
 		return nil, fmt.Errorf("unsupported question type %q", question.Type)
@@ -152,6 +176,58 @@ func (HuhUI) Ask(question Question) (any, error) {
 	}
 }
 
+func questionTitle(question Question) string {
+	if question.Required == nil || *question.Required || question.Default == nil {
+		return question.Title
+	}
+	label := fmt.Sprint(question.Default)
+	switch value := question.Default.(type) {
+	case bool:
+		if value {
+			return question.Title + " [Y/n] (default: Y):"
+		} else {
+			return question.Title + " [y/N] (default: n):"
+		}
+	case []any:
+		if len(value) == len(question.Options) {
+			label = "all"
+		} else {
+			label = strings.Join(questionStringSlice(value), ", ")
+		}
+	case []string:
+		if len(value) == len(question.Options) {
+			label = "all"
+		} else {
+			label = strings.Join(value, ", ")
+		}
+	}
+	return question.Title + " [default: " + label + "]"
+}
+
+func questionStringSlice(value any) []string {
+	switch values := value.(type) {
+	case []string:
+		return append([]string(nil), values...)
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, raw := range values {
+			if text, valid := raw.(string); valid {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return []string{}
+	}
+}
+
+func validateRequiredText(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New("A value is required; enter a value to continue.")
+	}
+	return nil
+}
+
 // toolboxHuhForm applies the toolbox focus and selection colors to one field.
 func toolboxHuhForm(field huh.Field) *huh.Form {
 	theme := huh.Theme(huh.ThemeFunc(toolboxHuhStyles))
@@ -164,6 +240,7 @@ func toolboxHuhForm(field huh.Field) *huh.Form {
 func toolboxHuhStyles(isDark bool) *huh.Styles {
 	styles := huh.ThemeCharm(isDark)
 	blue := lipgloss.Color("4")
+	orange := lipgloss.Color("208")
 	styles.Focused.Title = styles.Focused.Title.Foreground(blue)
 	styles.Focused.NoteTitle = styles.Focused.NoteTitle.Foreground(blue)
 	styles.Focused.Directory = styles.Focused.Directory.Foreground(blue)
@@ -176,6 +253,8 @@ func toolboxHuhStyles(isDark bool) *huh.Styles {
 	styles.Focused.Next = styles.Focused.Next.Background(blue)
 	styles.Focused.TextInput.Cursor = styles.Focused.TextInput.Cursor.Foreground(blue)
 	styles.Focused.TextInput.Prompt = styles.Focused.TextInput.Prompt.Foreground(blue)
+	styles.Focused.ErrorIndicator = styles.Focused.ErrorIndicator.Foreground(orange)
+	styles.Focused.ErrorMessage = styles.Focused.ErrorMessage.Foreground(orange)
 	styles.Group.Title = styles.Focused.Title
 	return styles
 }

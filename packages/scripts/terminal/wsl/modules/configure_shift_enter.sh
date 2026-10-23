@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/shared.sh"
 
 module_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 powershell_path="$(wslpath -u 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')"
 
 if [[ ! -x "$powershell_path" ]]; then
-    printf '%s\n' 'WARNING: Windows PowerShell is unavailable; Shift+Enter host bindings were skipped.' >&2
+    tb_warn 'Windows PowerShell is unavailable; Shift+Enter host bindings were skipped.' >&2
     exit 0
 fi
 

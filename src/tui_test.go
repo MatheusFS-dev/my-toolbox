@@ -11,6 +11,36 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func requiredFlag(value bool) *bool {
+	return &value
+}
+
+func TestQuestionTitleDisplaysReadableFunctionalDefaults(t *testing.T) {
+	tests := []struct {
+		question Question
+		want     string
+	}{
+		{Question{Title: "Continue?", Type: "confirm", Default: true, Required: requiredFlag(false)}, "Continue? [Y/n] (default: Y):"},
+		{Question{Title: "Destination", Type: "text", Default: "/path", Required: requiredFlag(false)}, "Destination [default: /path]"},
+		{Question{Title: "Targets", Type: "multiple", Default: []any{"a", "b"}, Required: requiredFlag(false), Options: []Option{{Value: "a"}, {Value: "b"}}}, "Targets [default: all]"},
+		{Question{Title: "Name", Type: "text", Required: requiredFlag(true)}, "Name"},
+	}
+	for _, test := range tests {
+		if got := questionTitle(test.question); got != test.want {
+			t.Fatalf("questionTitle(%#v) = %q, want %q", test.question, got, test.want)
+		}
+	}
+}
+
+func TestRequiredTextRejectsWhitespace(t *testing.T) {
+	if err := validateRequiredText(" \t"); err == nil || err.Error() != "A value is required; enter a value to continue." {
+		t.Fatalf("validation error = %v", err)
+	}
+	if err := validateRequiredText("value"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSelectorMovesOnlyAcrossCommandsAndTogglesSelection(t *testing.T) {
 	commands := []Command{
 		{Name: "one", Category: "First", Description: "First tool."},

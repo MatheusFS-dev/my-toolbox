@@ -16,10 +16,10 @@ configure_zellij_copy_behavior() {
 
     if [[ ! -f "$zellij_config_file" ]]; then
         if [[ -n "$zellij_bin" && -x "$zellij_bin" ]]; then
-            echo "Creating default Zellij config at $zellij_config_file"
+            tb_info "Creating default Zellij config at $zellij_config_file"
             "$zellij_bin" setup --dump-config > "$zellij_config_file"
         else
-            echo "Zellij binary not found. Creating minimal Zellij config."
+            tb_info "Zellij binary not found. Creating minimal Zellij config."
             : > "$zellij_config_file"
         fi
     fi
@@ -39,7 +39,7 @@ configure_zellij_copy_behavior() {
     set_zellij_option "copy_on_select" "true"
     set_zellij_option "copy_clipboard" '"system"'
 
-    echo "Zellij system clipboard behavior configured in $zellij_config_file"
+    tb_info "Zellij system clipboard behavior configured in $zellij_config_file"
 }
 
 run_step "Zellij copy behavior configuration" "configure_zellij_copy_behavior"

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../lib/toolbox_output.sh"
+tb_output_init setup-alacritty
+export TB_OUTPUT_TOOL=setup-alacritty
+echo() { tb_info "$*"; }
 
 # Parse command line arguments
 ASSUME_YES=false
@@ -42,17 +47,22 @@ prompt_yes_no() {
     local default_val="$2"
     if [[ "$ASSUME_YES" == "true" ]]; then
         echo "Using default: $default_val" >&2
-        echo "$default_val"
+        printf '%s\n' "$default_val"
         return
     fi
     local input_val
     while true; do
-        read -r -p "$prompt_msg [Default: $default_val]: " input_val || { echo "Input canceled." >&2; exit 1; }
+        if [[ "$default_val" == "y" ]]; then
+            tb_prompt "$prompt_msg [Y/n] (default: Y):" >&2
+        else
+            tb_prompt "$prompt_msg [y/N] (default: n):" >&2
+        fi
+        read -r input_val || { tb_info "Input cancelled; no further changes were made." >&2; exit 1; }
         [[ -n "$input_val" ]] || input_val="$default_val"
         case "${input_val,,}" in
-            y|yes) echo "y"; return ;;
-            n|no) echo "n"; return ;;
-            *) echo "Please enter yes, y, no, n, or press Enter for $default_val." >&2 ;;
+            y|yes) printf 'y\n'; return ;;
+            n|no) printf 'n\n'; return ;;
+            *) tb_warn "Please enter yes, y, no, n, or press Enter for $default_val." >&2 ;;
         esac
     done
 }
@@ -130,15 +140,13 @@ if [[ "$RUN_EZA" == "y" ]]; then
     if [[ "$ASSUME_YES" == "true" ]]; then
         echo "Using default: 1" >&2
     else
-        echo "Choose ls/eza display mode:"
-        echo "  1) List (one per line) [Default]"
-        echo "  2) Side-by-side"
+        tb_menu "Choose ls/eza display mode [default: 1]:" "1) List (one per line)" "2) Side-by-side" >&2
         while true; do
-            read -r -p "Selection [1/2] [Default: 1]: " input_val || { echo "Input canceled." >&2; exit 1; }
+            read -r input_val || { tb_info "Input cancelled; no further changes were made." >&2; exit 1; }
             case "$input_val" in
                 ''|1) EZA_LIST_VIEW="1"; break ;;
                 2) EZA_LIST_VIEW="2"; break ;;
-                *) echo "Please enter 1, 2, or press Enter for 1." >&2 ;;
+                *) tb_warn "Enter 1 or 2, or press Enter for 1." >&2 ;;
             esac
         done
     fi
@@ -203,10 +211,9 @@ echo ""
 
 
 # --- Main execution ---
-echo "Starting Alacritty + Zellij setup..."
+tb_info "Installing the selected Alacritty and shell components..."
 echo ""
 
-SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 MODULES_DIR="$SCRIPT_DIR/modules"
 
 if [[ "$RUN_ZSH" == "y" ]]; then
@@ -295,6 +302,6 @@ if [[ -n "$SUDO_USER" ]]; then
 fi
 
 echo ""
-echo "Setup complete."
 echo "You can now launch Alacritty from your application menu or by running: alacritty"
 echo "If you use Zsh, restart your shell or run: source ~/.zshrc"
+tb_success "Alacritty terminal setup completed successfully."

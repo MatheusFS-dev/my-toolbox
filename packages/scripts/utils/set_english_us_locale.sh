@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/../lib/toolbox_output.sh"
+tb_output_init set-english-us-locale
+
 TARGET_LOCALE=en_US.UTF-8
 TARGET_LANGUAGE=en_US:en
 ROOT=
@@ -13,16 +18,17 @@ SYSTEM_LOCALE="$ROOT/etc/default/locale"
 USER_LOCALE="$USER_HOME/.config/environment.d/90-locale.conf"
 
 if [[ ${1:-} == --help ]]; then
-    echo 'Usage: set-english-us-locale [status]'
+    tb_info 'Usage: set-english-us-locale [status]'
     exit 0
 fi
 if [[ $# -gt 1 || ( $# -eq 1 && $1 != status ) ]]; then
-    echo 'Usage: set-english-us-locale [status]' >&2
+    tb_error 'Usage: set-english-us-locale [status]' >&2
     exit 64
 fi
 if [[ ${LOCALE_TEST_MODE:-0} != 1 ]]; then
+    # shellcheck disable=SC1091
     . /etc/os-release
-    if [[ $ID != ubuntu ]]; then echo 'Ubuntu is required.' >&2; exit 1; fi
+    if [[ $ID != ubuntu ]]; then tb_error 'Ubuntu is required; run this tool on Ubuntu.' >&2; exit 1; fi
 fi
 
 report=()
@@ -58,18 +64,18 @@ fi
 if [[ -n $region && $region != "'en_US.UTF-8'" && $region != en_US.UTF-8 ]]; then report+=('GNOME region differs'); fi
 
 if (( ${#report[@]} )); then
-    printf '%s\n' "${report[@]}"
+    for message in "${report[@]}"; do tb_info "$message"; done
     action=setup
 else
-    echo 'English US locale is already configured.'
+    tb_info 'English US locale is already configured.'
     action=reinstall
 fi
-echo 'A complete logout and new login are needed for session changes.'
+tb_info 'A complete logout and new login are needed for session changes.'
 [[ ${1:-} == status ]] && exit 0
-printf 'Confirm %s of English US locale? [y/N]: ' "$action"
-read -r answer || exit 1
-case "$answer" in y|Y|yes|YES) ;; *) echo 'Canceled; no changes made.'; exit 0 ;; esac
+tb_ask_yes_no "Confirm $action of English US locale?" no || { tb_info 'Cancelled; nothing changed.'; exit 1; }
+if [[ $TB_ANSWER != yes ]]; then tb_info 'Cancelled; nothing changed.'; exit 0; fi
 
+tb_info 'Installing locale packages and writing locale configuration...'
 if [[ ${LOCALE_TEST_MODE:-0} != 1 ]]; then
     sudo apt-get update
     sudo apt-get install -y locales language-pack-en language-pack-gnome-en
@@ -90,4 +96,4 @@ mkdir -p "$(dirname "$USER_LOCALE")"
 if [[ -f $USER_LOCALE ]]; then cp -p -- "$USER_LOCALE" "${USER_LOCALE}.locale-backup"; fi
 printf 'LANG=%s\nLANGUAGE=%s\n' "$TARGET_LOCALE" "$TARGET_LANGUAGE" > "$USER_LOCALE"
 if [[ ${LOCALE_TEST_MODE:-0} != 1 && -n $region ]]; then gsettings set org.gnome.system.locale region "$TARGET_LOCALE"; fi
-echo 'Done. Log out completely and log back in.'
+tb_success 'English US locale configured successfully. Log out completely and log back in.'

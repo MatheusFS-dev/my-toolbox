@@ -29,7 +29,7 @@ install_git_clone_wrapper() {
             rm -f "$temp_file"
         fi
 
-        echo "Configuring git clone auto-cd wrapper in $file..."
+        tb_info "Configuring git clone auto-cd wrapper in $file..."
         cat >> "$file" << 'EOF'
 
 # >>> git-clone-cd-wrapper >>>

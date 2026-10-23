@@ -13,7 +13,7 @@ install_kitty() {
     # leaving a root-owned cache that makes Kitty exit during startup.
     repair_user_ownership "$HOME/.cache/kitty"
 
-    echo "Installing the latest Kitty release..."
+    tb_info "Installing the latest Kitty release..."
     run_as_user sh -c 'curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin'
     run_as_user mkdir -p "$local_bin" "$applications_dir"
     run_as_user ln -sf "$kitty_app/bin/kitty" "$kitty_app/bin/kitten" "$local_bin/"

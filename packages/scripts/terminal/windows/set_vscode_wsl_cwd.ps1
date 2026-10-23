@@ -7,6 +7,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 . (Join-Path $PSScriptRoot 'modules/wsl_path_prompt.ps1')
+. (Join-Path $PSScriptRoot 'modules/output.ps1')
+Initialize-ToolboxOutput -ToolName 'set-vscode-wsl-cwd'
 
 function Find-JsonStringEnd {
     param([Parameter(Mandatory = $true)][string]$Text, [Parameter(Mandatory = $true)][int]$Start)
@@ -333,16 +335,17 @@ function Open-VSCodeWslFolder {
 }
 
 try {
+    Write-ToolboxInfo 'Checking the VS Code WSL terminal profile...'
     if ($args.Count -ne 0) { throw 'Unexpected arguments.' }
     $settingsPath = Join-Path $env:APPDATA 'Code\User\settings.json'
 
     if ($Undo) {
         if ($PSBoundParameters.ContainsKey('WslPath')) { throw '-WslPath cannot be used with -Undo.' }
         if (Remove-VSCodeWslProfile -SettingsPath $settingsPath) {
-            Write-Output 'Removed the managed VS Code WSL terminal profile.'
+            Write-ToolboxSuccess 'Removed the managed VS Code WSL terminal profile successfully.'
         }
         else {
-            Write-Output 'No managed VS Code WSL terminal profile was found.'
+            Write-ToolboxInfo 'No managed VS Code WSL terminal profile was found; nothing changed.'
         }
         exit 0
     }
@@ -352,13 +355,14 @@ try {
 
     $backupPath = Set-VSCodeWslProfile -SettingsPath $settingsPath -WslPath $wslPath
     $folderUri = Open-VSCodeWslFolder -WslExe $wslExe -WslPath $wslPath
-    Write-Output "Configured WSL directory: $wslPath"
-    Write-Output "Opened VS Code workspace: $folderUri"
-    if ($backupPath) { Write-Output "Backup: $backupPath" }
-    else { Write-Output 'Backup: none (settings were created or already current)' }
+    Write-ToolboxInfo "Configured WSL directory: $wslPath"
+    Write-ToolboxInfo "Opened VS Code workspace: $folderUri"
+    if ($backupPath) { Write-ToolboxInfo "Backup: $backupPath" }
+    else { Write-ToolboxInfo 'Backup: none because settings were created or already current.' }
+    Write-ToolboxSuccess 'Configured the VS Code WSL working directory successfully.'
     exit 0
 }
 catch {
-    [Console]::Error.WriteLine("Error: $($_.Exception.Message)")
+    Write-ToolboxError "VS Code WSL configuration failed: $($_.Exception.Message). Correct the reported issue and retry; earlier completed changes may remain."
     exit 1
 }

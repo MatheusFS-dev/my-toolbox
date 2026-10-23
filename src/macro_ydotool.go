@@ -59,7 +59,7 @@ func (workflow DefaultMacroWorkflow) runYdotool(macro Macro) error {
 	}
 	path, err := findRuntime(goos, home)
 	if err != nil {
-		answer, askErr := workflow.UI.Ask(Question{ID: "install-ydotool", Type: "confirm", Title: "ydotool 1.x is required. Build and install v1.0.4 in ~/.local/bin (requires CMake, Make, and a C compiler)?"})
+		answer, askErr := workflow.UI.Ask(Question{ID: "install-ydotool", Type: "confirm", Title: "ydotool 1.x is required. Build and install v1.0.4 in ~/.local/bin (requires CMake, Make, and a C compiler)?", Default: false, Required: questionRequired(false)})
 		if askErr != nil {
 			return askErr
 		}

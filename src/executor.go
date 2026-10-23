@@ -240,9 +240,11 @@ func (executor ProcessExecutor) Questions(command Command, answers map[string]an
 			return ProtocolResponse{
 				Status: "question",
 				Question: &Question{
-					ID:    defaultArgumentsQuestionID,
-					Type:  "confirm",
-					Title: fmt.Sprintf("Use all default values for %s?", command.Name),
+					ID:       defaultArgumentsQuestionID,
+					Type:     "confirm",
+					Title:    fmt.Sprintf("Use all default values for %s?", command.Name),
+					Default:  false,
+					Required: questionRequired(false),
 				},
 			}, nil
 		}
@@ -267,6 +269,12 @@ func (executor ProcessExecutor) Questions(command Command, answers map[string]an
 // Returns:
 //   - error: Argument, execution, or unexpected adapter-state failure.
 func (executor ProcessExecutor) Run(command Command, answers map[string]any, arguments []string) error {
+	if command.Name == "ssh-tools" {
+		if len(arguments) != 0 {
+			return fmt.Errorf("ssh-tools does not accept arguments")
+		}
+		return RunSSHTools(executor.Root, executor.Environment, executor.Platform, executor.Input, executor.Output, executor.Error)
+	}
 	if command.Name == "git-sync" {
 		if len(arguments) != 0 {
 			return fmt.Errorf("git-sync does not accept arguments")

@@ -4,6 +4,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'modules/output.ps1')
+Initialize-ToolboxOutput -ToolName 'set-terminal-hotkey'
+Write-ToolboxInfo 'Checking the current Ctrl+Alt+T shortcut...'
+
+try {
 
 $ManagedDescription = 'Managed by my-toolbox: opens the Windows default terminal application.'
 $ShortcutDirectory = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\My Toolbox'
@@ -29,7 +34,7 @@ if (Test-Path -LiteralPath $ShortcutPath) {
         if ((Get-ChildItem -LiteralPath $ShortcutDirectory -Force).Count -eq 0) {
             Remove-Item -LiteralPath $ShortcutDirectory -Force
         }
-        Write-Output 'Removed the persistent Ctrl+Alt+T terminal hotkey.'
+        Write-ToolboxSuccess 'Removed the persistent Ctrl+Alt+T terminal hotkey.'
         return
     }
 
@@ -37,11 +42,11 @@ if (Test-Path -LiteralPath $ShortcutPath) {
     $HotkeyParts = @($ExistingShortcut.Hotkey.ToUpperInvariant().Split('+') | Sort-Object)
     $HotkeyMatches = [string]::Join('+', $HotkeyParts) -ceq 'ALT+CTRL+T'
     if ($TargetMatches -and $HotkeyMatches) {
-        Write-Output 'Ctrl+Alt+T is already configured to open the Windows default terminal application.'
+        Write-ToolboxSuccess 'Ctrl+Alt+T is already configured to open the Windows default terminal application.'
         return
     }
 } elseif ($Undo) {
-    Write-Output 'The Ctrl+Alt+T terminal hotkey is not configured.'
+    Write-ToolboxInfo 'The Ctrl+Alt+T terminal hotkey is not configured; nothing changed.'
     return
 }
 
@@ -53,5 +58,9 @@ $Shortcut.Hotkey = 'Ctrl+Alt+T'
 $Shortcut.Description = $ManagedDescription
 $Shortcut.Save()
 
-Write-Output 'Configured Ctrl+Alt+T to open the Windows default terminal application.'
-Write-Output 'The per-user hotkey persists across sign-ins and reboots.'
+Write-ToolboxSuccess 'Configured the persistent Ctrl+Alt+T terminal hotkey successfully.'
+}
+catch {
+    Write-ToolboxError "Terminal hotkey update failed: $($_.Exception.Message). Correct the reported issue and retry; any existing shortcut was left unchanged when possible."
+    exit 1
+}

@@ -4,7 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/shared.sh"
 
 plugin_dir="$HOME/.oh-my-zsh/custom/plugins/fzf-tab"
 if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
-    printf 'Oh My Zsh is required for fzf-tab.\n' >&2
+    tb_error 'Oh My Zsh is required for fzf-tab; install it and retry this optional feature.' >&2
     exit 1
 fi
 mkdir -p "$(dirname "$plugin_dir")"

@@ -8,22 +8,22 @@ install_zsh_and_oh_my_zsh() {
     local oh_my_zsh_dir="$HOME/.oh-my-zsh"
     local plugin_dir="$oh_my_zsh_dir/custom/plugins/zsh-syntax-highlighting"
 
-    echo "Installing Zsh prerequisites. This requires sudo."
+    tb_info "Installing Zsh prerequisites. This requires sudo."
     apt update
     apt install -y git-core zsh curl
 
     if [[ ! -d "$oh_my_zsh_dir" ]]; then
-        echo "Installing Oh My Zsh..."
+        tb_info "Installing Oh My Zsh..."
         run_as_user env RUNZSH=no CHSH=no sh -c "$(curl -fsSL https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
     else
-        echo "Oh My Zsh already installed, skipping."
+        tb_info "Oh My Zsh already installed, skipping."
     fi
 
     run_as_user mkdir -p "$oh_my_zsh_dir/custom/plugins"
     if [[ ! -d "$plugin_dir" ]]; then
         run_as_user git clone https://github.com/zsh-users/zsh-syntax-highlighting "$plugin_dir"
     else
-        echo "zsh-syntax-highlighting already exists, skipping clone"
+        tb_info "zsh-syntax-highlighting already exists, skipping clone"
     fi
 
     local zshrc="$HOME/.zshrc"
@@ -59,7 +59,7 @@ ZSH_HIGHLIGHT_STYLES[unknown-token]='fg=red,bold'
 EOF
         fi
     else
-        echo "Warning: $zshrc not found, skipping plugin configuration."
+        tb_warn "$zshrc not found, skipping plugin configuration."
     fi
 }
 

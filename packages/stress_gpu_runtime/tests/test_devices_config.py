@@ -1,5 +1,6 @@
 """CPU-only discovery and interactive configuration tests."""
 import unittest
+import io
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -119,6 +120,24 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result["devices"], [{"ordinal": 1}])
         self.assertEqual(result["load_percent"], 25)
         self.assertEqual(result["duration_seconds"], 1.5)
+
+    def test_invalid_inputs_use_warning_output(self):
+        """Route validation failures through the terminal contract.
+
+        Args:
+            None.
+        Returns:
+            None.
+        Raises:
+            AssertionError: If validation bypasses the supplied warning sink.
+        """
+        warnings = []
+        prompt_configuration(
+            [{"ordinal": 0}],
+            Mock(side_effect=["2", "0", "", "0", "", "bad", ""]),
+            warnings.append,
+        )
+        self.assertEqual(len(warnings), 2)
 
 class CanonicalUUIDTests(unittest.TestCase):
     """Pin the actual PyTorch UUID representation and NVML lookup contract."""

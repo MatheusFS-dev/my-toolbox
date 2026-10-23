@@ -90,7 +90,7 @@ func (workflow DefaultMacroWorkflow) run(macro Macro) error {
 	}
 	runtimePath, err := findRuntime(goos, home)
 	if err != nil {
-		answer, askErr := workflow.UI.Ask(Question{ID: "install-autohotkey", Type: "confirm", Title: "AutoHotkey v2 is required. Install it now?"})
+		answer, askErr := workflow.UI.Ask(Question{ID: "install-autohotkey", Type: "confirm", Title: "AutoHotkey v2 is required. Install it now?", Default: false, Required: questionRequired(false)})
 		if askErr != nil {
 			return askErr
 		}
@@ -134,7 +134,7 @@ func (workflow DefaultMacroWorkflow) macroArguments(macro Macro) ([]string, erro
 	arguments := []string{}
 	for _, argument := range macro.Arguments {
 		for {
-			answer, askErr := workflow.UI.Ask(Question{ID: "macro-" + argument.ID, Type: "text", Title: argument.Prompt + " [default: " + argument.Default + "]"})
+			answer, askErr := workflow.UI.Ask(Question{ID: "macro-" + argument.ID, Type: "text", Title: argument.Prompt, Default: argument.Default, Required: questionRequired(false)})
 			if askErr != nil {
 				return nil, askErr
 			}
@@ -402,7 +402,7 @@ func extractTarGzip(archive, destination string) error {
 
 func (workflow DefaultMacroWorkflow) download(macro Macro) error {
 	_, _, home, _, output := workflow.settings()
-	answer, err := workflow.UI.Ask(Question{ID: "macro-download-directory", Type: "text", Title: "Existing directory to download into"})
+	answer, err := workflow.UI.Ask(Question{ID: "macro-download-directory", Type: "text", Title: "Existing directory to download into", Required: questionRequired(true)})
 	if err != nil {
 		return err
 	}
@@ -433,7 +433,7 @@ func (workflow DefaultMacroWorkflow) download(macro Macro) error {
 	destinationExists := false
 	if _, err := os.Lstat(destination); err == nil {
 		destinationExists = true
-		answer, askErr := workflow.UI.Ask(Question{ID: "macro-overwrite", Type: "confirm", Title: "Overwrite " + destination + "?"})
+		answer, askErr := workflow.UI.Ask(Question{ID: "macro-overwrite", Type: "confirm", Title: "Overwrite " + destination + "?", Default: false, Required: questionRequired(false)})
 		if askErr != nil {
 			return askErr
 		}

@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from toolbox_output import legacy_input, legacy_print
+
+
 try:
     import tomllib
 except ImportError:
@@ -923,7 +927,7 @@ def prompt_yes_no(question: str, default: Optional[bool]) -> bool:
         ValueError: If the answer is empty without a default or not yes/no.
         EOFError: If input closes before an answer.
     """
-    suffix = " [Y/n]" if default is True else " [y/N]" if default is False else " [y/n]"
+    suffix = " [Y/n]" if default is True else " [y/N]" if default is False else " (required)"
     while True:
         answer = input(question + suffix + ": ").strip().lower()
         if not answer and default is not None:
@@ -1036,17 +1040,23 @@ def run_interactive() -> None:
     if not prompt_yes_no("Write these files?", None):
         print("No changes made.")
         return
+    print("Writing project metadata...")
     backups = write_bootstrap_files(plan, create_backups)
     for backup in backups:
         print(f"[INFO] Backup created: {backup}")
     for path in plan.files:
         print(f"[OK] Wrote {path}")
     if uv_executable is not None:
+        print("Running uv lock...")
         subprocess.run([uv_executable, "lock"], cwd=plan.project, check=True)
         print("[OK] Created uv.lock")
+    if hasattr(print, "output"):
+        print.output.success("Python project bootstrap completed successfully.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 1:
         raise SystemExit("bootstrap-python-from-venv does not accept arguments")
+    print = legacy_print("bootstrap-python-from-venv")
+    input = legacy_input("bootstrap-python-from-venv", output=print.output)
     run_interactive()

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/shared.sh"
 
 stamp="${BACKUP_STAMP:-$(date +%Y%m%d-%H%M%S)}"
 backup_dir="$HOME/.local/state/project-template/wsl-backups/${stamp}-$$"
@@ -10,5 +11,5 @@ mkdir -p "$backup_dir/zellij"
 [[ ! -f "$HOME/.config/zellij/config.kdl" ]] || \
     cp -p "$HOME/.config/zellij/config.kdl" "$backup_dir/zellij/config.kdl"
 
-printf 'Backups stored in %s\n' "$backup_dir"
+tb_info "Backups stored in $backup_dir"
 

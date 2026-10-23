@@ -176,9 +176,11 @@ func (app App) Execute(arguments []string) error {
 			return fmt.Errorf("tb uninstall does not accept arguments")
 		}
 		answer, err := app.UI.Ask(Question{
-			ID:    "confirm-uninstall",
-			Type:  "confirm",
-			Title: "Uninstall my-toolbox and remove all installed versions?",
+			ID:       "confirm-uninstall",
+			Type:     "confirm",
+			Title:    "Uninstall my-toolbox and remove all installed versions?",
+			Default:  false,
+			Required: questionRequired(false),
 		})
 		if err != nil {
 			return err
@@ -260,6 +262,7 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 
 	executed := []string{}
 	skipped := []string{}
+	selfReportedLifecycle := len(configured) == 1 && (configured[0].command.Name == "git-sync" || configured[0].command.Name == "ssh-tools")
 	for index, configuredTool := range configured {
 		if configuredTool.skipped != "" {
 			if err := rememberTool(app.Platform, configuredTool.command.Name); err != nil {
@@ -278,7 +281,9 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 					notRun = append(notRun, remaining.command.Name)
 				}
 			}
-			printSummary(output, executed, configuredTool.command.Name, allSkipped, notRun)
+			if !selfReportedLifecycle {
+				printSummary(output, executed, configuredTool.command.Name, allSkipped, notRun)
+			}
 			return fmt.Errorf("preflight %s: %w", configuredTool.command.Name, err)
 		}
 		if err := app.Executor.Run(configuredTool.command, configuredTool.answers, configuredTool.arguments); err != nil {
@@ -291,7 +296,9 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 					notRun = append(notRun, remaining.command.Name)
 				}
 			}
-			printSummary(output, executed, configuredTool.command.Name, allSkipped, notRun)
+			if !selfReportedLifecycle {
+				printSummary(output, executed, configuredTool.command.Name, allSkipped, notRun)
+			}
 			return fmt.Errorf("execute %s: %w", configuredTool.command.Name, err)
 		}
 		if err := rememberTool(app.Platform, configuredTool.command.Name); err != nil {
@@ -299,7 +306,9 @@ func (app App) executeBatch(commands []Command, directArguments []string, output
 		}
 		executed = append(executed, configuredTool.command.Name)
 	}
-	printSummary(output, executed, "", skipped, nil)
+	if !selfReportedLifecycle {
+		printSummary(output, executed, "", skipped, nil)
+	}
 	return nil
 }
 
@@ -308,7 +317,7 @@ func (app App) confirmComponentUninstall(name string) (bool, error) {
 		"uninstall-monitor":    "Remove the toolbox-owned Monitor runtime and launcher? Configuration will be preserved.",
 		"uninstall-stress-gpu": "Remove the toolbox-owned stress-gpu runtime and launcher?",
 	}
-	answer, err := app.UI.Ask(Question{ID: "confirm-" + name, Type: "confirm", Title: titles[name]})
+	answer, err := app.UI.Ask(Question{ID: "confirm-" + name, Type: "confirm", Title: titles[name], Default: false, Required: questionRequired(false)})
 	if err != nil {
 		return false, err
 	}
@@ -361,7 +370,7 @@ func (app App) refreshRemembered(output io.Writer) error {
 	if _, err := fmt.Fprintf(output, "Remembered global tools: %s\n", joinNames(names)); err != nil {
 		return err
 	}
-	answer, err := app.UI.Ask(Question{ID: "refresh-remembered-tools", Type: "confirm", Title: "Rerun all remembered global tools?"})
+	answer, err := app.UI.Ask(Question{ID: "refresh-remembered-tools", Type: "confirm", Title: "Rerun all remembered global tools?", Default: false, Required: questionRequired(false)})
 	if err != nil {
 		return err
 	}

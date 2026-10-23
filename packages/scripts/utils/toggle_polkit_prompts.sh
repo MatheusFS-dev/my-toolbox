@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/toolbox_output.sh"
+tb_output_init toggle-polkit-prompts
 
 readonly DEFAULT_RULE_DIR="/etc/polkit-1/rules.d"
 readonly RULE_NAME="00-current-user-no-auth.rules"
@@ -205,7 +208,7 @@ validate_environment() {
     local target_user="$2"
 
     if [[ ! -d "$rule_dir" ]]; then
-        printf 'Error: Polkit rule directory does not exist: %s\n' "$rule_dir" >&2
+        tb_error "Polkit rule directory does not exist: $rule_dir. Nothing changed." >&2
         return 1
     fi
 
@@ -214,12 +217,12 @@ validate_environment() {
     fi
 
     if ! id -u "$target_user" >/dev/null 2>&1; then
-        printf 'Error: target user does not exist: %s\n' "$target_user" >&2
+        tb_error "Target user does not exist: $target_user. Nothing changed." >&2
         return 1
     fi
 
     if [[ $EUID -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
-        printf 'Error: sudo is required to modify %s\n' "$rule_dir" >&2
+        tb_error "sudo is required to modify $rule_dir; install sudo or run as root." >&2
         return 1
     fi
 }
@@ -335,24 +338,23 @@ enable_bypass() {
     state="$(get_state "$rule_file" "$target_user")"
     case "$state" in
         disabled)
-            printf 'Authentication prompts: DISABLED (already disabled)\n'
-            printf 'User: %s\n' "$target_user"
+            tb_info 'Authentication prompts: DISABLED (already disabled)'
+            tb_info "User: $target_user"
             return 0
             ;;
         legacy)
             write_rule_atomic "$rule_dir" "$rule_file" "$target_user"
-            printf 'Authentication prompts: DISABLED (migrated legacy rule)\n'
-            printf 'User: %s\n' "$target_user"
+            tb_info 'Authentication prompts: DISABLED (migrated legacy rule)'
+            tb_info "User: $target_user"
             ;;
         conflict)
-            printf 'Authentication prompts: CONFLICT\n' >&2
-            printf 'Refusing to overwrite unexpected file: %s\n' "$rule_file" >&2
+            tb_error "Authentication prompts: CONFLICT. Refusing to overwrite unexpected file: $rule_file. Remove or reconcile it, then retry." >&2
             return "$EXIT_CONFLICT"
             ;;
         enabled)
             write_rule_atomic "$rule_dir" "$rule_file" "$target_user"
-            printf 'Authentication prompts: DISABLED\n'
-            printf 'User: %s\n' "$target_user"
+            tb_info 'Authentication prompts: DISABLED'
+            tb_info "User: $target_user"
             ;;
     esac
 }
@@ -374,17 +376,16 @@ disable_bypass() {
     state="$(get_state "$rule_file" "$target_user")"
     case "$state" in
         enabled)
-            printf 'Authentication prompts: ENABLED (already enabled)\n'
+            tb_info 'Authentication prompts: ENABLED (already enabled)'
             return 0
             ;;
         conflict)
-            printf 'Authentication prompts: CONFLICT\n' >&2
-            printf 'Refusing to remove unexpected file: %s\n' "$rule_file" >&2
+            tb_error "Authentication prompts: CONFLICT. Refusing to remove unexpected file: $rule_file. Reconcile it manually, then retry." >&2
             return "$EXIT_CONFLICT"
             ;;
         disabled|legacy)
             run_privileged rm -- "$rule_file"
-            printf 'Authentication prompts: ENABLED\n'
+            tb_info 'Authentication prompts: ENABLED'
             ;;
     esac
 }
@@ -406,19 +407,18 @@ show_status() {
     state="$(get_state "$rule_file" "$target_user")"
     case "$state" in
         enabled)
-            printf 'Authentication prompts: ENABLED\n'
+            tb_info 'Authentication prompts: ENABLED'
             ;;
         disabled)
-            printf 'Authentication prompts: DISABLED\n'
-            printf 'User: %s\n' "$target_user"
+            tb_info 'Authentication prompts: DISABLED'
+            tb_info "User: $target_user"
             ;;
         legacy)
-            printf 'Authentication prompts: DISABLED (legacy rule detected)\n'
-            printf 'User: %s\n' "$target_user"
+            tb_warn 'Authentication prompts: DISABLED (legacy rule detected)'
+            tb_info "User: $target_user"
             ;;
         conflict)
-            printf 'Authentication prompts: CONFLICT\n' >&2
-            printf 'Unexpected file occupies the managed path: %s\n' "$rule_file" >&2
+            tb_error "Authentication prompts: CONFLICT. Unexpected file occupies the managed path: $rule_file." >&2
             return "$EXIT_CONFLICT"
             ;;
     esac
@@ -458,6 +458,7 @@ main() {
             ;;
     esac
 
+    tb_info 'Checking the managed Polkit authorization rule...'
     rule_dir="$(resolve_rule_dir)"
     rule_file="$rule_dir/$RULE_NAME"
     target_user="$(resolve_target_user)"
@@ -470,26 +471,28 @@ main() {
             return "$EXIT_CONFLICT"
         fi
         show_status "$rule_file" "$target_user"
-        printf '%s\n' 'This bypass authorizes all Polkit actions for the active local user, including Polkit-mediated settings and package actions.'
-        printf '%s\n' 'sudo, login and lock-screen prompts, app-specific passwords, other users, and remote or inactive sessions are unaffected.'
+        tb_warn 'This bypass authorizes all Polkit actions for the active local user, including Polkit-mediated settings and package actions.'
+        tb_info 'sudo, login and lock-screen prompts, app-specific passwords, other users, and remote or inactive sessions are unaffected.'
         if [[ "$command" == toggle ]]; then
             if [[ "$state" == enabled ]]; then command=on; else command=off; fi
         fi
         if [[ "$command" == on && "$state" == enabled ]] || [[ "$command" == off && "$state" != enabled ]]; then
-            printf 'Apply %s? [y/N]: ' "$command"
+            tb_prompt "Apply $command? [y/N] (default: n):"
             read -r answer || return 1
-            case "$answer" in y|Y|yes|YES) ;; *) printf '%s\n' 'Canceled; no changes made.'; return 0 ;; esac
+            case "$answer" in y|Y|yes|YES) ;; *) tb_info 'Cancelled; no changes made.'; return 0 ;; esac
         else
-            printf '%s\n' 'Requested state is already active; no changes made.'
+            tb_info 'Requested state is already active; no changes made.'
             return 0
         fi
     fi
 
     case "$command" in
         on)
+            tb_info 'Writing the managed Polkit authorization rule...'
             enable_bypass "$rule_dir" "$rule_file" "$target_user"
             ;;
         off)
+            tb_info 'Removing the managed Polkit authorization rule...'
             disable_bypass "$rule_file" "$target_user"
             ;;
         status)
@@ -512,6 +515,7 @@ main() {
             esac
             ;;
     esac
+    tb_success 'Polkit authentication prompt state processed successfully.'
 }
 
 main "$@"

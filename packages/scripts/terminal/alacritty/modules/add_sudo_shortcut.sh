@@ -23,10 +23,10 @@ EOF
 
     if [[ -f "$zshrc" ]]; then
         if ! grep -qF "sudo-command-line()" "$zshrc"; then
-            echo "Adding sudo shortcut to $zshrc..."
+            tb_info "Adding sudo shortcut to $zshrc..."
             echo "$sudo_code" >> "$zshrc"
         else
-            echo "sudo shortcut already present in $zshrc, skipping."
+            tb_info "sudo shortcut already present in $zshrc, skipping."
         fi
     fi
 }

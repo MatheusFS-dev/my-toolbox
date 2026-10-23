@@ -34,9 +34,9 @@ func (builtins *ToolboxBuiltins) uninstall() error {
 		return err
 	}
 	if builtins.platform == "windows-amd64" {
-		_, err = fmt.Fprintf(builtins.output, "Uninstall scheduled; status will be written to %s after tb exits.\n", statusPath)
+		err = builtins.info(fmt.Sprintf("Uninstall is scheduled; status will be written to %s after tb exits.", statusPath))
 	} else {
-		_, err = fmt.Fprintln(builtins.output, "Uninstalled my-toolbox.")
+		err = nil
 	}
 	return err
 }
@@ -92,7 +92,7 @@ func (builtins *ToolboxBuiltins) remove(installerPath string) (string, error) {
 			if installerPath != "" {
 				return "", fmt.Errorf("refusing to update with unrecognized wrapper %s", wrapper)
 			}
-			if _, err := fmt.Fprintf(builtins.output, "Preserving unrecognized wrapper %s.\n", wrapper); err != nil {
+			if err := builtins.warn(fmt.Sprintf("Preserving unrecognized wrapper %s.", wrapper)); err != nil {
 				return "", err
 			}
 		} else if !os.IsNotExist(statErr) {

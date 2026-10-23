@@ -46,6 +46,9 @@ var capabilityRegistry = map[string]Capability{
 	"visudo":                        {ID: "visudo", Label: "visudo", Remediation: "Install sudo utilities so 'visudo' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
 	"nvidia-smi":                    {ID: "nvidia-smi", Label: "nvidia-smi", Remediation: "Install a compatible NVIDIA driver that provides 'nvidia-smi'.", Environments: environments("linux-native", "linux-wsl", "windows")},
 	"git":                           {ID: "git", Label: "Git", Remediation: "Install Git and ensure 'git' is on PATH.", Environments: environments("linux-native", "linux-wsl", "windows")},
+	"ssh":                           {ID: "ssh", Label: "OpenSSH client", Remediation: "Install OpenSSH client and ensure 'ssh' is on PATH.", Environments: environments("linux-native", "linux-wsl")},
+	"ssh-keygen":                    {ID: "ssh-keygen", Label: "ssh-keygen", Remediation: "Install OpenSSH client tools that provide 'ssh-keygen'.", Environments: environments("linux-native", "linux-wsl")},
+	"ssh-copy-id":                   {ID: "ssh-copy-id", Label: "ssh-copy-id", Remediation: "Install OpenSSH client tools that provide 'ssh-copy-id'.", Environments: environments("linux-native", "linux-wsl")},
 }
 
 func init() {

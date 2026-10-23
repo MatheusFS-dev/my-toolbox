@@ -37,7 +37,7 @@ install_to_file() {
     touch "$file"
 
     if grep -qE "^[[:space:]]*venv\(\)[[:space:]]*\{" "$file"; then
-        echo "Already installed in $file"
+        tb_info "Already installed in $file"
         return 0
     fi
 
@@ -48,7 +48,7 @@ install_to_file() {
         echo "# ---- End Auto-activate nearest Python .venv ----"
     } >> "$file"
 
-    echo "Installed in $file"
+    tb_info "Installed in $file"
 }
 
 install_venv() {

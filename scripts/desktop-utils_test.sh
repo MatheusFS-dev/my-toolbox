@@ -22,7 +22,7 @@ export LOCALE_TEST_PACKAGES=1 LOCALE_TEST_GENERATED=1 LOCALE_TEST_REGION="'en_US
 printf 'n\n' | bash "$locale_script" > "$tmp/out"
 grep -q 'Confirm reinstall' "$tmp/out"
 printf 'y\n' | bash "$locale_script" > "$tmp/out"
-grep -q 'Done.' "$tmp/out"
+grep -q 'SUCCESS] English US locale configured successfully.' "$tmp/out"
 export POLKIT_TOGGLE_TEST_MODE=1 POLKIT_TOGGLE_RULE_DIR="$tmp/rules" POLKIT_TOGGLE_TEST_USER=testuser
 bash "$polkit_script" status > "$tmp/out"
 grep -q 'ENABLED' "$tmp/out"

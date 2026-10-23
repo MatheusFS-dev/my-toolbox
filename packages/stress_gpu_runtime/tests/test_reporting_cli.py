@@ -7,10 +7,18 @@ from unittest.mock import Mock, patch
 
 from stress_gpu_runtime.reporting import summarize_sample, render_dashboard, format_report, save_results, Dashboard, prompt_save
 from stress_gpu_runtime.__main__ import main
+from stress_gpu_runtime.output import TerminalOutput
 
 
 class ReportingTests(unittest.TestCase):
     """Verify measured results and optional exports."""
+
+    def test_menu_prefixes_only_question(self):
+        """Keep stress-gpu menu choices in one prompt block."""
+        destination = io.StringIO()
+        output = TerminalOutput(destination, clock=lambda: "09:32:23", color=False)
+        output.menu("Choose a GPU", ["1. First", "2. Second"])
+        self.assertEqual(destination.getvalue(), "\n[09:32:23 stress-gpu PROMPT] Choose a GPU\n  1. First\n  2. Second\n")
 
     def configuration(self):
         """Return a deterministic GPU description.
@@ -143,6 +151,15 @@ class ReportingTests(unittest.TestCase):
             self.assertEqual((Path(folder) / "good/report.txt").read_text(), "report")
         prompt_save("report", io.StringIO(), Mock(side_effect=KeyboardInterrupt), io.StringIO())
 
+    def test_terminal_output_displays_explicit_yes_no_defaults(self):
+        """Replace legacy yes/no markers before rendering prompts."""
+        destination = io.StringIO()
+        output = TerminalOutput(destination, clock=lambda: "09:32:23", color=False)
+
+        self.assertEqual(output.ask("Save report? [y/N]: ", lambda _: ""), "")
+
+        self.assertIn("Save report? [y/N] (default: n):", destination.getvalue())
+
     def test_mocked_cli_collects_samples_and_final_report(self):
         """Exercise a full CLI session without GPU dependencies.
 
@@ -179,7 +196,32 @@ class ReportingTests(unittest.TestCase):
             self.assertEqual(main(), 0)
         self.assertIn("Final report", output.getvalue())
         self.assertIn("Second", output.getvalue())
+        self.assertIn(" stress-gpu PROMPT] Available NVIDIA CUDA GPUs:", output.getvalue())
+        self.assertIn("  0: First", output.getvalue())
+        self.assertNotIn(" stress-gpu INFO] 0: First", output.getvalue())
         nvml.nvmlShutdown.assert_called_once()
+
+    def test_terminal_output_contract_and_redirected_color(self):
+        """Prefix messages, open with a blank line and omit redirected ANSI.
+
+        Args:
+            None.
+        Returns:
+            None.
+        Raises:
+            AssertionError: If stress-gpu output violates the contract.
+        """
+        destination = io.StringIO()
+        output = TerminalOutput(destination, clock=lambda: "09:32:23", color=False)
+        output.info("Checking GPUs...")
+        output.warn("Retry")
+        output.success("Stress test completed.")
+        self.assertEqual(
+            destination.getvalue(),
+            "\n[09:32:23 stress-gpu INFO] Checking GPUs...\n"
+            "[09:32:23 stress-gpu WARN] Retry\n"
+            "[09:32:23 stress-gpu SUCCESS] Stress test completed.\n",
+        )
 
 class ExportInterruptionTests(unittest.TestCase):
     """Exercise interruption after a successful atomic replacement."""

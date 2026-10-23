@@ -6,11 +6,11 @@ source "$MODULE_DIR/shared.sh"
 install_fzf_tab() {
     # 1. Install fzf if not present
     if ! command -v fzf &> /dev/null; then
-        echo "Installing fzf..."
+        tb_info "Installing fzf..."
         apt-get update
         apt-get install -y fzf
     else
-        echo "fzf is already installed."
+        tb_info "fzf is already installed."
     fi
 
     # 2. Clone fzf-tab plugin
@@ -18,22 +18,22 @@ install_fzf_tab() {
     local plugin_dir="$oh_my_zsh_dir/custom/plugins/fzf-tab"
 
     if [[ ! -d "$oh_my_zsh_dir" ]]; then
-        echo "Oh My Zsh not detected. Please install Oh My Zsh first."
+        tb_info "Oh My Zsh not detected. Please install Oh My Zsh first."
         return 1
     fi
 
     run_as_user mkdir -p "$oh_my_zsh_dir/custom/plugins"
     if [[ ! -d "$plugin_dir" ]]; then
-        echo "Cloning fzf-tab repository..."
+        tb_info "Cloning fzf-tab repository..."
         run_as_user git clone https://github.com/Aloxaf/fzf-tab "$plugin_dir"
     else
-        echo "fzf-tab plugin repository already exists, skipping clone."
+        tb_info "fzf-tab plugin repository already exists, skipping clone."
     fi
 
     # 3. Configure ~/.zshrc
     local zshrc="$HOME/.zshrc"
     if [[ -f "$zshrc" ]]; then
-        echo "Configuring fzf-tab in $zshrc..."
+        tb_info "Configuring fzf-tab in $zshrc..."
         run_as_user python3 -c '
 import sys
 import re
@@ -92,18 +92,18 @@ while "\n\n\n" in content:
 with open(zshrc_path, "w") as f:
     f.write(content)
 ' "$zshrc"
-        echo "fzf-tab configured in $zshrc successfully."
+        tb_info "fzf-tab configured in $zshrc successfully."
     else
-        echo "Warning: $zshrc not found, skipping plugin configuration."
+        tb_warn "$zshrc not found, skipping plugin configuration."
     fi
 
     # 4. Configure Amazon Q autocomplete to ignore Tab key to resolve conflicts
-    echo "Checking if Amazon Q is installed..."
+    tb_info "Checking if Amazon Q is installed..."
     if command -v q &> /dev/null; then
-        echo "Amazon Q is installed. Configuring autocomplete to ignore the Tab key..."
+        tb_info "Amazon Q is installed. Configuring autocomplete to ignore the Tab key..."
         q settings autocomplete.keybindings.tab ignore || true
     else
-        echo "Amazon Q is not installed, skipping configuration."
+        tb_info "Amazon Q is not installed, skipping configuration."
     fi
 }
 

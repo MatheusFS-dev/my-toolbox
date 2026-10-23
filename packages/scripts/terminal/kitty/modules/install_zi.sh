@@ -4,7 +4,7 @@ MODULE_DIR="$(dirname "${BASH_SOURCE[0]}")"
 source "$MODULE_DIR/shared.sh"
 
 install_zi() {
-    echo "Installing Zi for Zsh..."
+    tb_info "Installing Zi for Zsh..."
     apt update
     apt install -y zsh git curl ca-certificates
 

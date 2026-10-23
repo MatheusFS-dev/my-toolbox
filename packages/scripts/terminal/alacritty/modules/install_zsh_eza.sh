@@ -8,17 +8,17 @@ EZA_LIST_VIEW="${1:-1}"
 install_zsh_eza() {
     # 1. Install eza if not present
     if ! command -v eza &> /dev/null; then
-        echo "Installing eza..."
+        tb_info "Installing eza..."
         apt-get update
         apt-get install -y eza
     else
-        echo "eza is already installed."
+        tb_info "eza is already installed."
     fi
 
     # 2. Add zsh-eza to ~/.zshrc using zi
     local zshrc="$HOME/.zshrc"
     if [[ -f "$zshrc" ]]; then
-        echo "Configuring zsh-eza in $zshrc..."
+        tb_info "Configuring zsh-eza in $zshrc..."
         run_as_user python3 -c '
 import sys
 path = sys.argv[1]
@@ -60,7 +60,7 @@ with open(path, "w") as f:
     f.write(content)
 ' "$zshrc" "$EZA_LIST_VIEW"
     else
-        echo "Warning: $zshrc not found, skipping plugin configuration."
+        tb_warn "$zshrc not found, skipping plugin configuration."
     fi
 }
 

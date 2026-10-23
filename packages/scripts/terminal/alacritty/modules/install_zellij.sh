@@ -7,7 +7,7 @@ install_zellij() {
     if [[ -f "$HOME/.cargo/env" ]]; then
         source "$HOME/.cargo/env"
     fi
-    echo "Installing Zellij via cargo..."
+    tb_info "Installing Zellij via cargo..."
     run_as_user env PATH="$HOME/.cargo/bin:$PATH" cargo install --locked zellij
 }
 

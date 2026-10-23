@@ -9,3 +9,14 @@ Global task gates and reusable skills are installed at user scope. Codex and Ant
 - Do not commit datasets, model weights, credentials, environment files, generated logs, or large artifacts unless explicitly requested.
 
 Add only durable repository-specific information below, such as non-obvious architecture constraints, canonical commands, protected paths, and required validation.
+
+## Terminal output contract
+
+Every new or modified tool must use the executable output helper for its runtime rather than raw `print`, `echo`, or `Write-Host` calls for human-facing messages. The helpers and contract tests are the source of truth.
+
+- Format standalone messages as `[HH:MM:SS tool-name LEVEL] Message` with the approved semantic colors and one empty line before the tool starts. For interactive menus, prefix and color the question once, then indent options without repeating the prefix.
+- Announce long-running or side-effecting work before it starts and emit exactly one `SUCCESS` summary after the complete tool succeeds.
+- Give every optional prompt a visible, functional default. Mark required free-text prompts explicitly and re-prompt on empty input; numbered menus convey required input through their listed choices and an actionable retry warning.
+- Preserve machine-readable output and external-program bytes exactly.
+- Add or update the local gallery under `tmp/tb-tool-output-preview/` and the contract tests.
+- Pass the global output audit before registering a tool in `commands.json`.

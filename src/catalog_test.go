@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "a75164711662b10dc666d85a9225809b491d42b6eff9a43af25295a5521f360b"
+	const want = "62c2932badd31f0167486de4f7c476b172ce05818337f4a8cc3d0614b3e98c54"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -279,6 +279,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"set-english-us-locale":           "Set persistent Ubuntu system and user locale to en_US.UTF-8, install English packs, and set GNOME region after showing differences and confirming. Backs up conflicting user overrides.",
 		"toggle-polkit-prompts":           "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
 		"mount-drive":                     "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
+		"ssh-tools":                       "Manage passwordless SSH profiles and direct Ethernet SSH links from an interactive dashboard.",
 		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates enabling changes and only manages the toolbox-owned sudoers file.",
 		"create-env-alias":                "Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
@@ -336,7 +337,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
-		"set-default-cwd", "install-monitor", "install-stress-gpu", "isolate-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive",
+		"set-default-cwd", "install-monitor", "install-stress-gpu", "isolate-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive", "ssh-tools",
 		"create-env-alias", "bootstrap-python-from-venv", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
 	}
 	if len(catalog.Commands) != len(want) {
@@ -349,9 +350,6 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 	}
 	for _, command := range catalog.Commands {
 		wantVisibility := "list"
-		if command.Name == "git-sync" {
-			wantVisibility = "direct"
-		}
 		if command.Visibility != wantVisibility {
 			t.Fatalf("command %q visibility = %q, want %q", command.Name, command.Visibility, wantVisibility)
 		}

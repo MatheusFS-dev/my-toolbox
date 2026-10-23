@@ -35,19 +35,19 @@ EOF
 
     if [[ -f "$zshrc" ]]; then
         if ! grep -qF "extract() {" "$zshrc"; then
-            echo "Adding extract function to $zshrc..."
+            tb_info "Adding extract function to $zshrc..."
             echo "$extract_code" >> "$zshrc"
         else
-            echo "extract function already present in $zshrc, skipping."
+            tb_info "extract function already present in $zshrc, skipping."
         fi
     fi
 
     if [[ -f "$bashrc" ]]; then
         if ! grep -qF "extract() {" "$bashrc"; then
-            echo "Adding extract function to $bashrc..."
+            tb_info "Adding extract function to $bashrc..."
             echo "$extract_code" >> "$bashrc"
         else
-            echo "extract function already present in $bashrc, skipping."
+            tb_info "extract function already present in $bashrc, skipping."
         fi
     fi
 }

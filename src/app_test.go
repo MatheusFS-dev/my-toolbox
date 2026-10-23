@@ -208,6 +208,11 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 	}
 	for _, test := range tests {
 		test.want = strings.Replace(test.want, "create-project-template\n", "create-project-template\ngit-sync\n", 1)
+		if test.environment == "linux-native" {
+			test.want = strings.Replace(test.want, "setup-venv\n", "setup-venv\nssh-tools\n", 1)
+		} else if test.environment == "linux-wsl" {
+			test.want = strings.Replace(test.want, "setup-wsl\n", "setup-wsl\nssh-tools\n", 1)
+		}
 		t.Run(test.environment, func(t *testing.T) {
 			output := &bytes.Buffer{}
 			app := App{Catalog: catalog, Environment: test.environment, Output: output}
@@ -390,6 +395,26 @@ func TestFailureStopsBatchAndPrintsSummary(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(output.String()), "rollback") {
 		t.Fatalf("summary makes an unsupported rollback claim: %q", output.String())
+	}
+}
+
+func TestGitSyncOwnsItsLifecycleOutput(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	output := &bytes.Buffer{}
+	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{}, arguments: map[string][]string{}}
+	app := App{
+		Catalog:     testCatalog("git-sync"),
+		Environment: "linux-native",
+		UI:          &fakeUI{},
+		Executor:    executor,
+		Output:      output,
+	}
+
+	if err := app.Execute([]string{"git-sync"}); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("app appended output after git-sync lifecycle: %q", output.String())
 	}
 }
 

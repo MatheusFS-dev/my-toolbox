@@ -8,7 +8,9 @@ mkdir -p "$test_root/bin" "$test_root/payload" "$test_root/home" "$test_root/dow
 
 cp "$repository_root/commands.json" "$test_root/payload/commands.json"
 cp -R "$repository_root/completions" "$test_root/payload/completions"
-mkdir -p "$test_root/payload/packages/macros/autohotkey"
+mkdir -p "$test_root/payload/packages/macros/autohotkey" "$test_root/payload/packages/ssh_tools"
+cp "$repository_root/packages/ssh_tools/direct_link.py" "$test_root/payload/packages/ssh_tools/"
+cp "$repository_root/packages/toolbox_output.py" "$test_root/payload/packages/"
 cp "$repository_root/packages/macros/autohotkey/press_key_after_x_ms.ahk" "$repository_root/packages/macros/autohotkey/press_key_after_x_ms.json" "$test_root/payload/packages/macros/autohotkey/"
 printf '%s\n' '0.1.5' > "$test_root/payload/version.txt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$test_root/payload/tb"
@@ -205,6 +207,8 @@ if [ -e "$test_root/reader-check.log" ] || ! grep -F 'is already installed' "$te
     printf 'Installer changed the existing current-file shortcut.\n' >&2
     exit 1
 fi
+grep -F 'If tb command is not recognized, do:' "$test_root/reader-success.out" >/dev/null
+grep -F 'If tb command is not recognized, do:' "$test_root/reader-current.out" >/dev/null
 
 for update_case in failed missing mismatch missing-expected version-move current-move activation-signal completion same success; do
     update_home="$test_root/update-$update_case-home"
@@ -251,6 +255,7 @@ for update_case in failed missing mismatch missing-expected version-move current
     case "$update_case" in
         success)
             [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
+            grep -F 'If tb command is not recognized, do:' "$test_root/update-$update_case.out" >/dev/null
             [ -f "$test_root/update-$update_case-reader.log" ] || { printf 'Update bypassed staged reader validation.\n' >&2; exit 1; }
             [ "$(cat "$update_data/current.txt")" = 0.1.5 ] || { printf 'Update did not switch current version.\n' >&2; exit 1; }
             [ -f "$update_data/versions/0.1.5/libexec/tb-markdown-reader" ] || exit 1
@@ -259,6 +264,7 @@ for update_case in failed missing mismatch missing-expected version-move current
             ;;
         same)
             [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
+            grep -F 'If tb command is not recognized, do:' "$test_root/update-$update_case.out" >/dev/null
             diff -r "$update_home.before" "$update_home"
             [ ! -e "$test_root/update-$update_case-reader.log" ] || exit 1
             ;;
@@ -457,7 +463,7 @@ if printf '\n' | script -qefc "env HOME='$decline_home' PACKAGE_LOG='$decline_lo
     printf 'Installer continued after prerequisite installation was declined.\n' >&2
     exit 1
 fi
-if ! grep -F 'Install missing packages? [y/N]' "$test_root/decline.out" >/dev/null ||
+if ! grep -F 'Install missing packages? [y/N] (default: n):' "$test_root/decline.out" >/dev/null ||
     ! grep -F 'Install manually as root: apt-get update && apt-get install -y diffutils' "$test_root/decline.out" >/dev/null; then
     printf 'Declined prerequisite installation did not provide exact remediation.\n' >&2
     cat "$test_root/decline.out" >&2
@@ -511,7 +517,7 @@ if printf 'y\ny\n' | script -qefc "env HOME='$incomplete_packages_home' PATH='$i
     printf 'Installer continued when package installation left a command unavailable.\n' >&2
     exit 1
 fi
-if [ "$(grep -Foc 'Install missing packages? [y/N]' "$test_root/incomplete-packages.out")" -ne 1 ] ||
+if [ "$(grep -Foc 'Install missing packages? [y/N] (default: n):' "$test_root/incomplete-packages.out")" -ne 1 ] ||
     ! grep -F 'Missing required commands after package installation: cmp' "$test_root/incomplete-packages.out" >/dev/null; then
     printf 'Incomplete package installation did not fail after one prompt and a complete recheck.\n' >&2
     cat "$test_root/incomplete-packages.out" >&2
@@ -816,7 +822,9 @@ for text in \
     '[INFO] Stage 6/7: installation' \
     '[INFO] Stage 7/7: activation' \
     '[OK] Stage 7/7: activation' \
-    'Add '; do
+    'Add ' \
+    'If tb command is not recognized, do:' \
+    'export PATH="$HOME/.local/bin:$PATH"'; do
     if ! printf '%s\n' "$output" | grep -F "$text" >/dev/null; then
         printf 'Installer output is missing %s.\n%s\n' "$text" "$output" >&2
         exit 1

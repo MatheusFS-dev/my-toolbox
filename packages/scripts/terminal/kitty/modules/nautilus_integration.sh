@@ -5,11 +5,11 @@ source "$MODULE_DIR/shared.sh"
 
 nautilus_integration() {
     if ! command -v nautilus >/dev/null 2>&1; then
-        echo "Warning: Nautilus is not installed; skipping integration." >&2
+        tb_warn "Nautilus is not installed; skipping integration." >&2
         return 0
     fi
 
-    echo "Configuring Nautilus integration with Kitty."
+    tb_info "Configuring Nautilus integration with Kitty."
 
     local kitty_executable="$HOME/.local/kitty.app/bin/kitty"
     local extension_source="$MODULE_DIR/kitty_nautilus.py"
@@ -20,17 +20,17 @@ nautilus_integration() {
     local session_bus="$runtime_dir/bus"
 
     if [[ ! -x "$kitty_executable" ]]; then
-        echo "Error: Kitty executable not found at $kitty_executable." >&2
+        tb_error "Kitty executable not found at $kitty_executable." >&2
         return 1
     fi
 
     if [[ ! -f "$extension_source" ]]; then
-        echo "Error: Kitty Nautilus extension not found at $extension_source." >&2
+        tb_error "Kitty Nautilus extension not found at $extension_source." >&2
         return 1
     fi
 
     if [[ ! -S "$session_bus" ]]; then
-        echo "Error: User D-Bus session socket not found at $session_bus." >&2
+        tb_error "User D-Bus session socket not found at $session_bus." >&2
         return 1
     fi
 
@@ -47,7 +47,7 @@ nautilus_integration() {
     local nautilus_status=$?
     set -e
     if [[ $nautilus_status -ne 0 && $nautilus_status -ne 255 ]]; then
-        echo "Error: Nautilus reload failed with status $nautilus_status." >&2
+        tb_error "Nautilus reload failed with status $nautilus_status." >&2
         return "$nautilus_status"
     fi
 }

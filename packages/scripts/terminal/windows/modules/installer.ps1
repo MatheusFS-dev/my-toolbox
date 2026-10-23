@@ -18,18 +18,16 @@ function Set-SummaryResult {
 
 function Write-WindowsSetupSummary {
     param($Summary, [AllowEmptyString()][string]$BackupPath)
-    Write-Output ''
-    Write-Output 'Windows terminal setup summary'
-    Write-Output '------------------------------'
+    Write-ToolboxInfo 'Windows terminal setup summary'
     foreach ($name in $Summary.Keys) {
         $result = $Summary[$name]
-        Write-Output ('{0,-24} {1,-8} {2}' -f $name, $result.Status, $result.Message)
+        if ($result.Status -eq 'Success') { Write-ToolboxInfo ('{0}: {1}' -f $name, $result.Message) }
+        else { Write-ToolboxWarn ('{0}: {1} - {2}' -f $name, $result.Status, $result.Message) }
     }
-    if ($BackupPath) { Write-Output "Backup: $BackupPath" }
-    else { Write-Output 'Backup: unavailable (see warnings above)' }
-    Write-Output ''
-    Write-Output 'Restart Windows Terminal to load the new profile and PowerShell configuration.'
-    Write-Output 'If needed, choose Windows Terminal as the OS default terminal application in Windows Terminal > Settings > Startup.'
+    if ($BackupPath) { Write-ToolboxInfo "Backup: $BackupPath" }
+    else { Write-ToolboxWarn 'Backup unavailable; review the warnings above.' }
+    Write-ToolboxInfo 'Restart Windows Terminal to load the new profile and PowerShell configuration.'
+    Write-ToolboxInfo 'If needed, choose Windows Terminal as the OS default terminal application in Windows Terminal > Settings > Startup.'
 }
 
 function Resolve-PowerShell7Dependencies {
@@ -76,13 +74,13 @@ function Invoke-WindowsTerminalSetup {
 
     $options = Parse-WindowsSetupArguments -Arguments $Arguments
     if ($options.ShowHelp) {
-        Write-Output (Get-WindowsSetupUsage)
+        Write-ToolboxInfo (Get-WindowsSetupUsage)
         return 0
     }
 
     $preflight = Test-WindowsSetupPreflight
     if (-not $preflight.Success) {
-        foreach ($problem in $preflight.Problems) { [Console]::Error.WriteLine("Error: $problem") }
+        foreach ($problem in $preflight.Problems) { Write-ToolboxError "$problem Nothing changed; correct the prerequisite and retry." }
         return 1
     }
 
@@ -96,7 +94,7 @@ function Invoke-WindowsTerminalSetup {
         Set-SummaryResult -Summary $summary -Name $name -Status Skipped -Message 'Not selected.'
     }
 
-    Write-Output 'Installing mandatory infrastructure and selected tools with WinGet...'
+    Write-ToolboxInfo 'Installing mandatory infrastructure and selected tools with WinGet...'
     $packageIds = @(Get-WindowsPackagePlan -Selection $selection)
     $packageResults = Install-WindowsPackages -PackageIds $packageIds -WingetInvoker $WingetInvoker
     $packageSummaryNames = [ordered]@{

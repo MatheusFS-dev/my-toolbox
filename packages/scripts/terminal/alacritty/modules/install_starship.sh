@@ -4,7 +4,7 @@ MODULE_DIR="$(dirname "${BASH_SOURCE[0]}")"
 source "$MODULE_DIR/shared.sh"
 
 install_starship() {
-    echo "Installing Starship..."
+    tb_info "Installing Starship..."
     curl -sS https://starship.rs/install.sh | sh -s -- -y
 
     add_starship_to_shell() {
@@ -13,15 +13,15 @@ install_starship() {
 
         if [[ -f "$config_file" ]]; then
             if ! grep -qF "starship init" "$config_file"; then
-                echo "Adding Starship to $config_file"
+                tb_info "Adding Starship to $config_file"
                 echo "" >> "$config_file"
                 echo "# Starship prompt" >> "$config_file"
                 echo "$init_line" >> "$config_file"
             else
-                echo "Starship already present in $config_file, skipping."
+                tb_info "Starship already present in $config_file, skipping."
             fi
         else
-            echo "$config_file not found, skipping."
+            tb_warn "$config_file not found, skipping."
         fi
     }
 

@@ -4,7 +4,7 @@ MODULE_DIR="$(dirname "${BASH_SOURCE[0]}")"
 source "$MODULE_DIR/shared.sh"
 
 install_alacritty() {
-    echo "Installing Alacritty. This requires sudo."
+    tb_info "Installing Alacritty. This requires sudo."
     apt install -y alacritty
 }
 

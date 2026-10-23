@@ -14,10 +14,16 @@ type Option struct {
 
 // Question describes one typed form field returned by an adapter.
 type Question struct {
-	ID      string   `json:"id"`
-	Type    string   `json:"type"`
-	Title   string   `json:"title"`
-	Options []Option `json:"options,omitempty"`
+	ID       string   `json:"id"`
+	Type     string   `json:"type"`
+	Title    string   `json:"title"`
+	Options  []Option `json:"options,omitempty"`
+	Default  any      `json:"default,omitempty"`
+	Required *bool    `json:"required"`
+}
+
+func questionRequired(value bool) *bool {
+	return &value
 }
 
 // ProtocolResponse is the only response envelope accepted from adapters.
@@ -71,6 +77,9 @@ func DecodeProtocolResponse(reader io.Reader) (ProtocolResponse, error) {
 		if response.Question.ID == "" || response.Question.Title == "" {
 			return ProtocolResponse{}, fmt.Errorf("question response requires ID and title")
 		}
+		if response.Question.Required == nil {
+			return ProtocolResponse{}, fmt.Errorf("question response requires explicit required metadata")
+		}
 		switch response.Question.Type {
 		case "text", "confirm", "single", "multiple":
 		default:
@@ -78,6 +87,9 @@ func DecodeProtocolResponse(reader io.Reader) (ProtocolResponse, error) {
 		}
 		if (response.Question.Type == "single" || response.Question.Type == "multiple") && len(response.Question.Options) == 0 {
 			return ProtocolResponse{}, fmt.Errorf("%s question requires options", response.Question.Type)
+		}
+		if err := validateQuestionDefault(*response.Question); err != nil {
+			return ProtocolResponse{}, err
 		}
 		if response.Reason != "" {
 			return ProtocolResponse{}, fmt.Errorf("question response cannot contain a reason")
@@ -97,4 +109,47 @@ func DecodeProtocolResponse(reader io.Reader) (ProtocolResponse, error) {
 		return ProtocolResponse{}, fmt.Errorf("unsupported adapter status %q", response.Status)
 	}
 	return response, nil
+}
+
+func validateQuestionDefault(question Question) error {
+	if *question.Required {
+		if question.Default != nil {
+			return fmt.Errorf("required question %q cannot define a default", question.ID)
+		}
+		return nil
+	}
+	if question.Default == nil {
+		return fmt.Errorf("optional question %q requires a default", question.ID)
+	}
+	options := map[string]bool{}
+	for _, option := range question.Options {
+		options[option.Value] = true
+	}
+	switch question.Type {
+	case "text":
+		if _, valid := question.Default.(string); !valid {
+			return fmt.Errorf("text question %q requires a string default", question.ID)
+		}
+	case "confirm":
+		if _, valid := question.Default.(bool); !valid {
+			return fmt.Errorf("confirm question %q requires a boolean default", question.ID)
+		}
+	case "single":
+		value, valid := question.Default.(string)
+		if !valid || !options[value] {
+			return fmt.Errorf("single question %q default must match an option", question.ID)
+		}
+	case "multiple":
+		values, valid := question.Default.([]any)
+		if !valid {
+			return fmt.Errorf("multiple question %q requires an array default", question.ID)
+		}
+		for _, raw := range values {
+			value, valid := raw.(string)
+			if !valid || !options[value] {
+				return fmt.Errorf("multiple question %q default must contain only options", question.ID)
+			}
+		}
+	}
+	return nil
 }

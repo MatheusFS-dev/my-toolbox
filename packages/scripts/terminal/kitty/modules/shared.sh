@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$MODULE_DIR/../../../lib/toolbox_output.sh"
+tb_output_init "${TB_OUTPUT_TOOL:-setup-kitty}"
 
 # Must run with sudo/root
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: This script must be run with sudo." >&2
-    echo "Please run: sudo $0" >&2
+    tb_error "Root access is required; rerun with sudo $0." >&2
     exit 1
 fi
 
@@ -40,18 +42,15 @@ repair_user_ownership() {
 run_step() {
     local step_name="$1"
     local step_cmd="$2"
-    echo "========================================="
-    echo "Starting: $step_name"
-    echo "========================================="
+    tb_info "Configuring $step_name..."
     # Temporarily disable set -e for the step execution to catch failures
     set +e
     eval "$step_cmd"
     local status=$?
     set -e
     if [[ $status -eq 0 ]]; then
-        echo "Successfully completed: $step_name"
+        tb_info "Completed step: $step_name"
     else
-        echo "Warning: '$step_name' failed with status $status, but continuing..." >&2
+        tb_warn "$step_name failed with status $status; skipping this optional step." >&2
     fi
-    echo ""
 }

@@ -72,6 +72,18 @@ status_line() {
     printf '%b[%s]%b %s\n' "$color" "$kind" "$color_reset" "$message"
 }
 
+show_path_guide() {
+    status_line INFO 'If tb command is not recognized, do:'
+    status_line INFO 'For this terminal:'
+    status_line INFO "export PATH=\"\$HOME/.local/bin:\$PATH\""
+    status_line INFO 'Persist for Bash:'
+    status_line INFO "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.bashrc\""
+    status_line INFO 'Persist for Zsh:'
+    status_line INFO "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.zshrc\""
+    status_line INFO 'Persist for SSH login shells that read ~/.profile:'
+    status_line INFO "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.profile\""
+}
+
 start_stage() {
     current_stage=$1
     current_stage_name=$2
@@ -214,7 +226,7 @@ ensure_required_commands() {
         printf 'Install manually as root: %s\n' "$package_command" >&2
         return 1
     fi
-    printf 'Install missing packages? [y/N] '
+    printf 'Install missing packages? [y/N] (default: n): '
     IFS= read -r package_reply || package_reply=
     case "$package_reply" in
         y|Y|yes|YES|Yes) ;;
@@ -647,6 +659,7 @@ if [ "$update_mode" = 1 ]; then
     current_version=$(sed -n '1p' "$current_file")
     if [ "$current_version" = "$expected_version" ]; then
         status_line OK "Toolbox $current_version is already current."
+        show_path_guide
         exit 0
     fi
 fi
@@ -659,6 +672,7 @@ if [ "$update_mode" != 1 ] && [ -f "$current_file" ]; then
     start_stage 7 activation
     activate_completions
     complete_stage
+    show_path_guide
     exit 0
 fi
 complete_stage
@@ -732,6 +746,8 @@ for required in tb commands.json version.txt \
     packages/scripts/utils/change_grub_order.sh \
     packages/scripts/utils/setup_venv.sh \
     packages/scripts/utils/toggle_nopasswd_sudo.sh \
+    packages/ssh_tools/direct_link.py \
+    packages/toolbox_output.py \
     packages/others/create_env_alias.py \
     packages/others/bootstrap_python_from_venv.py \
     packages/others/create_project_template.py; do
@@ -818,3 +834,4 @@ case ":$PATH:" in
     *) status_line INFO "Add $wrapper_root to PATH to run tb." ;;
 esac
 complete_stage
+show_path_guide
