@@ -57,13 +57,14 @@ $CompletionReplaced = $false
 $SavedCompletionRoot = $null
 $PublishedProfiles = @()
 $InstallSucceeded = $false
+$OutputStarted = $false
 
 function Write-Status {
     <#
     .SYNOPSIS
     Writes one installer status line with optional interactive-terminal color.
     .PARAMETER Kind
-    INFO, OK, or FAIL. The value selects the label and interactive color.
+    INFO, SUCCESS, or ERROR. The value selects the label and interactive color.
     .PARAMETER Message
     Plain ASCII status text. Redirected output always remains uncolored.
     .OUTPUTS
@@ -71,32 +72,43 @@ function Write-Status {
     #>
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet('INFO', 'OK', 'FAIL')]
+        [ValidateSet('INFO', 'SUCCESS', 'ERROR')]
         [string]$Kind,
         [Parameter(Mandatory = $true)]
         [string]$Message
     )
 
-    $Text = "[$Kind] $Message"
+    if (-not $script:OutputStarted) {
+        [Console]::Out.WriteLine('')
+        $script:OutputStarted = $true
+    }
+    $Text = '[{0} install {1}] {2}' -f [DateTime]::Now.ToString('HH:mm:ss'), $Kind, $Message
     if ([Console]::IsOutputRedirected) {
         Write-Output $Text
         return
     }
+    if ($Kind -eq 'INFO') {
+        Write-Host $Text
+        return
+    }
     $Color = switch ($Kind) {
-        'INFO' { 'Cyan' }
-        'OK' { 'Green' }
-        'FAIL' { 'Red' }
+        'SUCCESS' { 'Green' }
+        'ERROR' { 'Red' }
     }
     Write-Host $Text -ForegroundColor $Color
 }
 
 function Show-PathGuide {
-    Write-Status -Kind INFO -Message 'If tb command is not recognized, do:'
-    Write-Status -Kind INFO -Message 'For this PowerShell session:'
-    Write-Status -Kind INFO -Message '$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"'
-    Write-Status -Kind INFO -Message 'Persist for future PowerShell sessions:'
-    Write-Status -Kind INFO -Message 'New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null'
-    Write-Status -Kind INFO -Message 'Add-Content -Path $PROFILE -Value ''$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"'''
+    Write-Output ('')
+    Write-Output ('If tb is not recognized, add it to PATH:')
+    Write-Output ('')
+    Write-Output ('  Current PowerShell session')
+    Write-Output ('  $env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"')
+    Write-Output ('')
+    Write-Output ('  Persist for future PowerShell sessions')
+    Write-Output ('  New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null')
+    Write-Output ('  Add-Content -Path $PROFILE -Value ''$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"''')
+    Write-Output ('')
 }
 
 function Start-Stage {
@@ -129,7 +141,7 @@ function Complete-Stage {
     .OUTPUTS
     None.
     #>
-    Write-Status -Kind OK -Message "Stage $CurrentStage/7: $CurrentStageName"
+    Write-Status -Kind INFO -Message "Completed stage $CurrentStage/7: $CurrentStageName"
 }
 
 function Get-PrerequisiteCommandPath {
@@ -714,8 +726,8 @@ try {
         }
         $CurrentVersion = (Get-Content -LiteralPath $CurrentFile -TotalCount 1).Trim()
         if ($CurrentVersion -eq $ExpectedVersion) {
-            Write-Status -Kind OK -Message "Toolbox $CurrentVersion is already current."
             Show-PathGuide
+            Write-Status -Kind SUCCESS -Message "Toolbox $CurrentVersion is already current."
             $InstallSucceeded = $true
             return
         }
@@ -730,6 +742,7 @@ try {
         Enable-ToolboxPath
         Complete-Stage
         Show-PathGuide
+        Write-Status -Kind SUCCESS -Message "Toolbox $CurrentVersion is ready."
         $InstallSucceeded = $true
         return
     }
@@ -871,13 +884,13 @@ try {
     if (-not $UpdateMode) {
         Enable-ToolboxPath
     }
-    Write-Status -Kind OK -Message "Installed my-toolbox $Version."
     Complete-Stage
     Show-PathGuide
+    Write-Status -Kind SUCCESS -Message "Installed my-toolbox $Version."
     $InstallSucceeded = $true
 } catch {
-    $Failure = "[FAIL] Stage $CurrentStage/7: $CurrentStageName"
-    Write-Status -Kind FAIL -Message "Stage $CurrentStage/7: $CurrentStageName"
+    $Failure = "Stage $CurrentStage/7: $CurrentStageName"
+    Write-Status -Kind ERROR -Message $Failure
     throw "$Failure. $($_.Exception.Message)"
 } finally {
     try {

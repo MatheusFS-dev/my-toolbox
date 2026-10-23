@@ -49,7 +49,7 @@ bash_available=0
 zsh_available=0
 
 if [ -t 1 ]; then
-    color_info='\033[36m'
+    color_info=
     color_ok='\033[32m'
     color_fail='\033[31m'
     color_reset='\033[0m'
@@ -59,29 +59,34 @@ else
     color_fail=
     color_reset=
 fi
+output_started=0
 
 status_line() {
     kind=$1
     message=$2
     color=$color_info
-    if [ "$kind" = "OK" ]; then
+    if [ "$kind" = "SUCCESS" ]; then
         color=$color_ok
-    elif [ "$kind" = "FAIL" ]; then
+    elif [ "$kind" = "ERROR" ]; then
         color=$color_fail
     fi
-    printf '%b[%s]%b %s\n' "$color" "$kind" "$color_reset" "$message"
+    if [ "$output_started" -eq 0 ]; then
+        printf '\n'
+        output_started=1
+    fi
+    reset=
+    [ -z "$color" ] || reset=$color_reset
+    printf '%b[%s install %s] %s%b\n' "$color" "$(date '+%H:%M:%S')" "$kind" "$message" "$reset"
 }
 
+# The command examples intentionally keep shell variables literal for copying.
+# shellcheck disable=SC2016
 show_path_guide() {
-    status_line INFO 'If tb command is not recognized, do:'
-    status_line INFO 'For this terminal:'
-    status_line INFO "export PATH=\"\$HOME/.local/bin:\$PATH\""
-    status_line INFO 'Persist for Bash:'
-    status_line INFO "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.bashrc\""
-    status_line INFO 'Persist for Zsh:'
-    status_line INFO "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.zshrc\""
-    status_line INFO 'Persist for SSH login shells that read ~/.profile:'
-    status_line INFO "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.profile\""
+    printf '\nIf tb is not recognized, add it to PATH:\n\n'
+    printf '  Current terminal\n  %s\n\n' 'export PATH="$HOME/.local/bin:$PATH"'
+    printf '  Persist for Bash\n  %s\n\n' 'printf '\''%s\n'\'' '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.bashrc"'
+    printf '  Persist for Zsh\n  %s\n\n' 'printf '\''%s\n'\'' '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.zshrc"'
+    printf '  Persist for SSH login shells that read ~/.profile\n  %s\n\n' 'printf '\''%s\n'\'' '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.profile"'
 }
 
 start_stage() {
@@ -91,7 +96,7 @@ start_stage() {
 }
 
 complete_stage() {
-    status_line OK "Stage $current_stage/7: $current_stage_name"
+    status_line INFO "Completed stage $current_stage/7: $current_stage_name"
 }
 
 acquire_transaction_lock() {
@@ -628,7 +633,7 @@ on_exit() {
         rm -rf "$temporary_root"
     fi
     if [ "$exit_status" -ne 0 ] && [ "$current_stage" -ne 0 ]; then
-        status_line FAIL "Stage $current_stage/7: $current_stage_name" >&2
+        status_line ERROR "Stage $current_stage/7: $current_stage_name" >&2
     fi
     if [ -n "$transaction_lock" ]; then
         rm -d "$transaction_lock" 2>/dev/null || :
@@ -658,8 +663,8 @@ if [ "$update_mode" = 1 ]; then
     fi
     current_version=$(sed -n '1p' "$current_file")
     if [ "$current_version" = "$expected_version" ]; then
-        status_line OK "Toolbox $current_version is already current."
         show_path_guide
+        status_line SUCCESS "Toolbox $current_version is already current."
         exit 0
     fi
 fi
@@ -673,6 +678,7 @@ if [ "$update_mode" != 1 ] && [ -f "$current_file" ]; then
     activate_completions
     complete_stage
     show_path_guide
+    status_line SUCCESS "Toolbox $current_version is ready."
     exit 0
 fi
 complete_stage
@@ -828,10 +834,6 @@ printf '%s\n' "$version" > "$temporary_current"
 activated=1
 mv "$temporary_current" "$current_file"
 temporary_current=
-status_line OK "Installed my-toolbox $version."
-case ":$PATH:" in
-    *":$wrapper_root:"*) ;;
-    *) status_line INFO "Add $wrapper_root to PATH to run tb." ;;
-esac
 complete_stage
 show_path_guide
+status_line SUCCESS "Installed my-toolbox $version."

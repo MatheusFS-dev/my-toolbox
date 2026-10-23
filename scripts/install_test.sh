@@ -167,7 +167,7 @@ for reader_case in missing failed symlink directory-symlink; do
             printf 'Installer accepted %s reader for %s installation.\n' "$reader_case" "$installation_state" >&2
             exit 1
         fi
-        if ! grep -F '[FAIL] Stage 5/7: extraction/validation' "$test_root/reader.out" >/dev/null ||
+        if ! grep -F 'install ERROR] Stage 5/7: extraction/validation' "$test_root/reader.out" >/dev/null ||
             ! grep -F 'reader' "$test_root/reader.out" >/dev/null; then
             printf 'Reader failure did not identify staged reader validation.\n' >&2
             cat "$test_root/reader.out" >&2
@@ -207,8 +207,8 @@ if [ -e "$test_root/reader-check.log" ] || ! grep -F 'is already installed' "$te
     printf 'Installer changed the existing current-file shortcut.\n' >&2
     exit 1
 fi
-grep -F 'If tb command is not recognized, do:' "$test_root/reader-success.out" >/dev/null
-grep -F 'If tb command is not recognized, do:' "$test_root/reader-current.out" >/dev/null
+grep -F 'If tb is not recognized, add it to PATH:' "$test_root/reader-success.out" >/dev/null
+grep -F 'If tb is not recognized, add it to PATH:' "$test_root/reader-current.out" >/dev/null
 
 for update_case in failed missing mismatch missing-expected version-move current-move activation-signal completion same success; do
     update_home="$test_root/update-$update_case-home"
@@ -255,7 +255,7 @@ for update_case in failed missing mismatch missing-expected version-move current
     case "$update_case" in
         success)
             [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
-            grep -F 'If tb command is not recognized, do:' "$test_root/update-$update_case.out" >/dev/null
+            grep -F 'If tb is not recognized, add it to PATH:' "$test_root/update-$update_case.out" >/dev/null
             [ -f "$test_root/update-$update_case-reader.log" ] || { printf 'Update bypassed staged reader validation.\n' >&2; exit 1; }
             [ "$(cat "$update_data/current.txt")" = 0.1.5 ] || { printf 'Update did not switch current version.\n' >&2; exit 1; }
             [ -f "$update_data/versions/0.1.5/libexec/tb-markdown-reader" ] || exit 1
@@ -264,12 +264,12 @@ for update_case in failed missing mismatch missing-expected version-move current
             ;;
         same)
             [ "$update_status" -eq 0 ] || { cat "$test_root/update-$update_case.out" >&2; exit 1; }
-            grep -F 'If tb command is not recognized, do:' "$test_root/update-$update_case.out" >/dev/null
+            grep -F 'If tb is not recognized, add it to PATH:' "$test_root/update-$update_case.out" >/dev/null
             diff -r "$update_home.before" "$update_home"
             [ ! -e "$test_root/update-$update_case-reader.log" ] || exit 1
             ;;
         *)
-            if [ "$update_status" -eq 0 ] || ! grep -F "[FAIL] Stage $update_failure_stage/7:" "$test_root/update-$update_case.out" >/dev/null; then
+            if [ "$update_status" -eq 0 ] || ! grep -F "install ERROR] Stage $update_failure_stage/7:" "$test_root/update-$update_case.out" >/dev/null; then
                 printf 'Update %s did not fail safely at stage %s.\n' "$update_case" "$update_failure_stage" >&2
                 cat "$test_root/update-$update_case.out" >&2
                 exit 1
@@ -630,7 +630,7 @@ if HOME='' PATH="$environment_bin" /bin/sh "$repository_root/install.sh" >"$test
     exit 1
 fi
 if ! grep -F 'HOME is not set to an absolute path.' "$test_root/missing-home.out" >/dev/null ||
-    ! grep -F '[FAIL] Stage 1/7: prerequisites' "$test_root/missing-home.out" >/dev/null; then
+    ! grep -F 'install ERROR] Stage 1/7: prerequisites' "$test_root/missing-home.out" >/dev/null; then
     printf 'Empty HOME failure was not an actionable Stage 1 report.\n' >&2
     cat "$test_root/missing-home.out" >&2
     exit 1
@@ -816,22 +816,34 @@ fi
 # The PATH example is checked as a literal command for users to copy.
 # shellcheck disable=SC2016
 for text in \
-    '[INFO] Stage 1/7: prerequisites' \
-    '[INFO] Stage 2/7: release lookup' \
-    '[INFO] Stage 3/7: download' \
-    '[INFO] Stage 4/7: checksum' \
-    '[INFO] Stage 5/7: extraction/validation' \
-    '[INFO] Stage 6/7: installation' \
-    '[INFO] Stage 7/7: activation' \
-    '[OK] Stage 7/7: activation' \
-    'Add ' \
-    'If tb command is not recognized, do:' \
+    'install INFO] Stage 1/7: prerequisites' \
+    'install INFO] Stage 2/7: release lookup' \
+    'install INFO] Stage 3/7: download' \
+    'install INFO] Stage 4/7: checksum' \
+    'install INFO] Stage 5/7: extraction/validation' \
+    'install INFO] Stage 6/7: installation' \
+    'install INFO] Stage 7/7: activation' \
+    'install INFO] Completed stage 7/7: activation' \
+    'If tb is not recognized, add it to PATH:' \
     'export PATH="$HOME/.local/bin:$PATH"'; do
     if ! printf '%s\n' "$output" | grep -F "$text" >/dev/null; then
         printf 'Installer output is missing %s.\n%s\n' "$text" "$output" >&2
         exit 1
     fi
 done
+if [ "$(printf '%s\n' "$output" | grep -c 'install SUCCESS]')" -ne 1 ]; then
+    printf 'Installer must emit exactly one SUCCESS summary.\n' >&2
+    exit 1
+fi
+if ! printf '%s\n' "$output" | grep -E '^\[[0-9]{2}:[0-9]{2}:[0-9]{2} install INFO\] Stage 1/7: prerequisites$' >/dev/null; then
+    printf 'Installer progress is missing its timestamped output label.\n' >&2
+    exit 1
+fi
+# shellcheck disable=SC2016
+if ! printf '%s\n' "$output" | grep -F '  export PATH="$HOME/.local/bin:$PATH"' >/dev/null; then
+    printf 'Installer PATH command is not a separate copyable line.\n' >&2
+    exit 1
+fi
 if printf '%s' "$output" | LC_ALL=C grep "$(printf '\033')" >/dev/null; then
     printf 'Redirected installer output contains ANSI escapes.\n' >&2
     exit 1
@@ -915,7 +927,7 @@ if HOME="$test_root/failure-home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$te
     printf 'Installer accepted an invalid checksum.\n' >&2
     exit 1
 fi
-if ! grep -F '[FAIL] Stage 4/7: checksum' "$test_root/failure.out" >/dev/null; then
+if ! grep -F 'install ERROR] Stage 4/7: checksum' "$test_root/failure.out" >/dev/null; then
     printf 'Checksum failure did not identify its active stage.\n' >&2
     exit 1
 fi
@@ -937,7 +949,7 @@ if HOME="$test_root/publication-failure-home" TMPDIR="$test_root/tmp" FAIL_VERSI
     printf 'Installer accepted a partial version publication failure.\n' >&2
     exit 1
 fi
-if ! grep -F '[FAIL] Stage 6/7: installation' "$test_root/publication-failure.out" >/dev/null; then
+if ! grep -F 'install ERROR] Stage 6/7: installation' "$test_root/publication-failure.out" >/dev/null; then
     printf 'Publication failure did not identify its active stage.\n' >&2
     exit 1
 fi
@@ -952,7 +964,7 @@ if HOME="$test_root/activation-failure-home" ZDOTDIR="$test_root/activation-fail
     printf 'Installer accepted an activation publication failure.\n' >&2
     exit 1
 fi
-if ! grep -F '[FAIL] Stage 7/7: activation' "$test_root/activation-failure.out" >/dev/null; then
+if ! grep -F 'install ERROR] Stage 7/7: activation' "$test_root/activation-failure.out" >/dev/null; then
     printf 'Activation failure did not identify its active stage.\n' >&2
     exit 1
 fi
@@ -1008,7 +1020,7 @@ if HOME="$test_root/missing-articles-home" TMPDIR="$test_root/tmp" FIXTURE_DOWNL
     printf 'Installer accepted a payload without the article library.\n' >&2
     exit 1
 fi
-if ! grep -F '[FAIL] Stage 5/7: extraction/validation' "$test_root/missing-articles.out" >/dev/null ||
+if ! grep -F 'install ERROR] Stage 5/7: extraction/validation' "$test_root/missing-articles.out" >/dev/null ||
     ! grep -F 'packages/search/articles' "$test_root/missing-articles.out" >/dev/null; then
     printf 'Missing article library did not fail validation explicitly.\n' >&2
     cat "$test_root/missing-articles.out" >&2

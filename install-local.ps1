@@ -6,12 +6,16 @@ $RepositoryRoot = $PSScriptRoot
 Initialize-ToolboxOutput -ToolName 'install-local'
 
 function Show-PathGuide {
-    Write-ToolboxInfo 'If tb command is not recognized, do:'
-    Write-ToolboxInfo 'For this PowerShell session:'
-    Write-ToolboxInfo '$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"'
-    Write-ToolboxInfo 'Persist for future PowerShell sessions:'
-    Write-ToolboxInfo 'New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null'
-    Write-ToolboxInfo 'Add-Content -Path $PROFILE -Value ''$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"'''
+    Write-Output ('')
+    Write-Output ('If tb is not recognized, add it to PATH:')
+    Write-Output ('')
+    Write-Output ('  Current PowerShell session')
+    Write-Output ('  $env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"')
+    Write-Output ('')
+    Write-Output ('  Persist for future PowerShell sessions')
+    Write-Output ('  New-Item -ItemType Directory -Force (Split-Path $PROFILE) | Out-Null')
+    Write-Output ('  Add-Content -Path $PROFILE -Value ''$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"''')
+    Write-Output ('')
 }
 
 $Stage = $null

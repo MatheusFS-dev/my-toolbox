@@ -41,9 +41,11 @@ test -f "$data_root/versions/$version/packages/toolbox_output.py"
 test -x "$home_root/.local/bin/tb"
 test "$(HOME="$home_root" XDG_DATA_HOME="$test_root/data" "$home_root/.local/bin/tb" version)" = "$version"
 test "$(grep -c ' SUCCESS]' "$test_root/output")" -eq 1
+# shellcheck disable=SC2016
+grep -F '  export PATH="$HOME/.local/bin:$PATH"' "$test_root/output" >/dev/null
 # The guide must print literal shell variables for the user to copy.
 # shellcheck disable=SC2016
-for guidance in 'If tb command is not recognized, do:' 'export PATH="$HOME/.local/bin:$PATH"' '>> "$HOME/.bashrc"' '>> "$HOME/.zshrc"' '>> "$HOME/.profile"'; do
+for guidance in 'If tb is not recognized, add it to PATH:' 'export PATH="$HOME/.local/bin:$PATH"' '>> "$HOME/.bashrc"' '>> "$HOME/.zshrc"' '>> "$HOME/.profile"'; do
     grep -F "$guidance" "$test_root/output" >/dev/null
 done
 
@@ -54,5 +56,5 @@ fresh_version=$(cat "$test_root/fresh-data/my-toolbox/current.txt")
 case "$fresh_version" in 0.0.0-local.*) ;; *) printf 'Unexpected fresh version: %s\n' "$fresh_version" >&2; exit 1 ;; esac
 test "$(HOME="$fresh_home" XDG_DATA_HOME="$test_root/fresh-data" "$fresh_home/.local/bin/tb" version)" = "$fresh_version"
 test "$(grep -c ' SUCCESS]' "$test_root/fresh-output")" -eq 1
-grep -F 'If tb command is not recognized, do:' "$test_root/fresh-output" >/dev/null
+grep -F 'If tb is not recognized, add it to PATH:' "$test_root/fresh-output" >/dev/null
 printf 'local installer Linux test passed\n'

@@ -11,16 +11,14 @@ fail() {
     exit 1
 }
 
+# The command examples intentionally keep shell variables literal for copying.
+# shellcheck disable=SC2016
 show_path_guide() {
-    tb_info 'If tb command is not recognized, do:'
-    tb_info 'For this terminal:'
-    tb_info "export PATH=\"\$HOME/.local/bin:\$PATH\""
-    tb_info 'Persist for Bash:'
-    tb_info "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.bashrc\""
-    tb_info 'Persist for Zsh:'
-    tb_info "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.zshrc\""
-    tb_info 'Persist for SSH login shells that read ~/.profile:'
-    tb_info "printf '%s\\n' 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> \"\$HOME/.profile\""
+    printf '\nIf tb is not recognized, add it to PATH:\n\n'
+    printf '  Current terminal\n  %s\n\n' 'export PATH="$HOME/.local/bin:$PATH"'
+    printf '  Persist for Bash\n  %s\n\n' 'printf '\''%s\n'\'' '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.bashrc"'
+    printf '  Persist for Zsh\n  %s\n\n' 'printf '\''%s\n'\'' '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.zshrc"'
+    printf '  Persist for SSH login shells that read ~/.profile\n  %s\n\n' 'printf '\''%s\n'\'' '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> "$HOME/.profile"'
 }
 
 case "$(uname -s):$(uname -m)" in

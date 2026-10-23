@@ -106,7 +106,8 @@ try {
         param([Parameter(ValueFromPipeline = $true)]$InputObject)
 
         process {
-            if ($UpdateCase -eq 'status' -and $InputObject -ceq '[OK] Installed my-toolbox 0.1.5.') {
+            if ($UpdateCase -eq 'status' -and $InputObject -is [string] -and
+                $InputObject.Contains('install SUCCESS] Installed my-toolbox 0.1.5.')) {
                 throw 'Injected status output failure.'
             }
             Microsoft.PowerShell.Utility\Write-Output -InputObject $InputObject
@@ -220,7 +221,7 @@ try {
             } catch {
                 $Failure = $_.Exception.Message
             }
-            if (-not $Failure.Contains('[FAIL] Stage 5/7: extraction/validation')) {
+            if (-not $Failure.Contains('install ERROR] Stage 5/7: extraction/validation')) {
                 throw "$ReaderCase reader did not fail staging for $InstallationState installation. Error: $Failure"
             }
             if ($ReaderCase -eq 'missing' -and -not $Failure.Contains('libexec\tb-markdown-reader.exe')) {
@@ -315,7 +316,7 @@ try {
             if ($null -ne $CurrentLock) { $CurrentLock.Dispose() }
         }
         if ($UpdateCase -eq 'foreign-version') {
-            if (-not $Failure.Contains('[FAIL] Stage 6/7:') -or
+            if (-not $Failure.Contains('install ERROR] Stage 6/7:') -or
                 -not (Test-Path -LiteralPath (Join-Path $Data 'versions\0.1.5\tb.exe')) -or
                 (Get-Content -LiteralPath (Join-Path $Data 'current.txt') -Raw).Trim() -cne '0.1.5') {
                 throw "Rollback deleted another transaction's active binary: $Failure"
@@ -335,7 +336,7 @@ try {
             }
         } else {
             $Stage = switch ($UpdateCase) { 'mismatch' { 2 }; 'missing-expected' { 1 }; { $_ -in @('completion', 'status', 'current-locked') } { 7 }; default { 5 } }
-            if (-not $Failure.Contains("[FAIL] Stage $Stage/7:") -or (Get-InstallerSnapshot $CaseRoot) -cne $Before) {
+            if (-not $Failure.Contains("install ERROR] Stage $Stage/7:") -or (Get-InstallerSnapshot $CaseRoot) -cne $Before) {
                 throw "Update $UpdateCase did not preserve the installation at stage $Stage. Error: $Failure"
             }
         }
@@ -426,7 +427,7 @@ try {
         $Failure = $_.Exception.Message
     }
     foreach ($Text in @(
-        '[FAIL] Stage 1/7: prerequisites',
+        'install ERROR] Stage 1/7: prerequisites',
         'Missing PowerShell capabilities: Invoke-RestMethod, Invoke-WebRequest, Get-FileHash.',
         'Install Windows PowerShell 5.1 or PowerShell 7 to provide the missing capabilities.',
         'my-toolbox requires 64-bit Windows on x64.',
@@ -487,7 +488,7 @@ try {
     $PathWriter = { param([string]$Value) $global:ToolboxInstallerTestUserPath = $Value }
     $ChecksBeforeSuccess = $global:ToolboxInstallerReaderChecks.Count
     $Output = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
-    if (-not $Output.Contains('If tb command is not recognized, do:') -or
+    if (-not $Output.Contains('If tb is not recognized, add it to PATH:') -or
         -not $Output.Contains('$env:Path = "$env:LOCALAPPDATA\my-toolbox\bin;$env:Path"') -or
         -not $Output.Contains('Add-Content -Path $PROFILE')) {
         throw "Installer output is missing the manual PATH guide. Output: $Output"
@@ -509,14 +510,14 @@ try {
             Replace('=', [char]0x2550)
     }
     foreach ($Text in $ExpectedBannerLines + @(
-        '[INFO] Stage 1/7: prerequisites',
-        '[INFO] Stage 2/7: release lookup',
-        '[INFO] Stage 3/7: download',
-        '[INFO] Stage 4/7: checksum',
-        '[INFO] Stage 5/7: extraction/validation',
-        '[INFO] Stage 6/7: installation',
-        '[INFO] Stage 7/7: activation',
-        '[OK] Stage 7/7: activation'
+        'install INFO] Stage 1/7: prerequisites',
+        'install INFO] Stage 2/7: release lookup',
+        'install INFO] Stage 3/7: download',
+        'install INFO] Stage 4/7: checksum',
+        'install INFO] Stage 5/7: extraction/validation',
+        'install INFO] Stage 6/7: installation',
+        'install INFO] Stage 7/7: activation',
+        'install INFO] Completed stage 7/7: activation'
     )) {
         if (-not $Output.Contains($Text)) {
             throw "Installer output is missing '$Text'. Output: $Output"
@@ -598,7 +599,7 @@ try {
     [IO.File]::WriteAllBytes($WindowsPowerShellProfile, $UnrelatedProfileBytes)
     Remove-Item -LiteralPath $PowerShellProfile -Force
     $RepairOutput = (Invoke-TestInstaller -UserPathWriter $PathWriter *>&1 | Out-String)
-    if (-not $RepairOutput.Contains('If tb command is not recognized, do:')) {
+    if (-not $RepairOutput.Contains('If tb is not recognized, add it to PATH:')) {
         throw "Repair output is missing the manual PATH guide. Output: $RepairOutput"
     }
     if (-not $RepairOutput.Contains('is already installed')) {
@@ -661,7 +662,7 @@ try {
     } catch {
         $Failure = ($_ | Out-String)
     }
-    if (-not $Failure.Contains('[FAIL] Stage 7/7: activation')) {
+    if (-not $Failure.Contains('install ERROR] Stage 7/7: activation')) {
         throw "PATH persistence failure did not identify Stage 7. Error: $Failure"
     }
     if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5')) {
@@ -705,7 +706,7 @@ try {
     } catch {
         $Failure = ($_ | Out-String)
     }
-    if (-not $Failure.Contains('[FAIL] Stage 4/7: checksum')) {
+    if (-not $Failure.Contains('install ERROR] Stage 4/7: checksum')) {
         throw "Checksum failure did not identify its active stage. Error: $Failure"
     }
     if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'my-toolbox\versions\0.1.5')) {
@@ -738,7 +739,7 @@ try {
     } catch {
         $Failure = ($_ | Out-String)
     }
-    if (-not $Failure.Contains('[FAIL] Stage 5/7: extraction/validation') -or -not $Failure.Contains('packages\search\articles')) {
+    if (-not $Failure.Contains('install ERROR] Stage 5/7: extraction/validation') -or -not $Failure.Contains('packages\search\articles')) {
         throw "Missing article library did not fail validation explicitly. Error: $Failure"
     }
 } finally {
