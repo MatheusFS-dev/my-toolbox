@@ -65,7 +65,7 @@ bash "$script" apply <<< 'y' > "$tmp/applied"
 test -f "$GPU_ISOLATION_XORG_CONFIG"
 test -f "$GPU_ISOLATION_STATE"
 bash "$script" undo --dry-run > "$tmp/undo"
-grep -Fq "Would remove $GPU_ISOLATION_XORG_CONFIG" "$tmp/undo"
+grep -Fq "Dry run complete; would remove $GPU_ISOLATION_XORG_CONFIG" "$tmp/undo"
 test -f "$GPU_ISOLATION_XORG_CONFIG"
 
 printf 'y\n' | bash "$script" undo > "$tmp/undo-real"
@@ -93,7 +93,7 @@ if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
     printf 'Apply accepted a symbolic-link parent directory.\n' >&2
     exit 1
 fi
-grep -Fq 'managed parent is a symbolic link' "$tmp/error"
+grep -Fq 'Managed parent is a symbolic link' "$tmp/error"
 export GPU_ISOLATION_XORG_CONFIG=$original_config
 
 cat > "$GPU_ISOLATION_XORG_ROOT/xorg.conf.d/20-existing-gpu.conf" <<'EOF'
@@ -105,7 +105,7 @@ if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
     printf 'Apply accepted a conflicting Xorg GPU configuration.\n' >&2
     exit 1
 fi
-grep -Fq 'existing Xorg GPU configuration may conflict' "$tmp/error"
+grep -Fq 'Existing Xorg GPU configuration may conflict' "$tmp/error"
 rm "$GPU_ISOLATION_XORG_ROOT/xorg.conf.d/20-existing-gpu.conf"
 
 real_install=$(command -v install)
@@ -188,6 +188,6 @@ if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
     printf 'Single-GPU configuration was accepted.\n' >&2
     exit 1
 fi
-grep -Fq 'at least two NVIDIA GPUs' "$tmp/error"
+grep -Fq 'At least two NVIDIA GPUs' "$tmp/error"
 
 echo 'gpu isolation tests passed'

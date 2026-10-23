@@ -813,6 +813,8 @@ if [ "$actual_banner" != "$expected_banner" ]; then
     printf 'Installer output has the wrong banner.\nExpected:\n%s\nActual:\n%s\n' "$expected_banner" "$actual_banner" >&2
     exit 1
 fi
+# The PATH example is checked as a literal command for users to copy.
+# shellcheck disable=SC2016
 for text in \
     '[INFO] Stage 1/7: prerequisites' \
     '[INFO] Stage 2/7: release lookup' \

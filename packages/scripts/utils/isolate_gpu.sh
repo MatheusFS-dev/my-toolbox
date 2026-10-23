@@ -2,6 +2,7 @@
 
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/toolbox_output.sh"
 tb_output_init isolate-gpu
 

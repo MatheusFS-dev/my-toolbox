@@ -214,6 +214,7 @@ assert_desktop_terminal_prompts_retry() {
             # The dynamically sourced prompt function reads this variable.
             # shellcheck disable=SC2034
             ASSUME_YES=false
+            # shellcheck disable=SC1091
             source "$repository_root/packages/scripts/lib/toolbox_output.sh"
             tb_output_init "setup-$terminal_name"
             # shellcheck source=/dev/null
