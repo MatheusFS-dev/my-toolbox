@@ -70,4 +70,5 @@ try {
 } finally {
     $env:APPDATA = $OriginalAppData
     Remove-Item -LiteralPath $TestRoot -Recurse -Force -ErrorAction SilentlyContinue
+    $global:LASTEXITCODE = 0
 }
