@@ -65,6 +65,7 @@ jobs:
           sh scripts/install_test.sh
           sh scripts/cronjob_test.sh
           bash scripts/terminal-setup_test.sh
+          bash scripts/toggle-nopasswd-sudo_test.sh
           bash scripts/desktop-utils_test.sh
           bash scripts/gpu-isolation_test.sh
           python3 scripts/mount_drive_test.py

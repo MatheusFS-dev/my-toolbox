@@ -3,7 +3,8 @@
 # The script detects the user's current state, reports it, and offers the
 # opposite action, so the same script enables and disables the permission.
 # The rule is managed in /etc/sudoers.d/zz-tb-uid-<uid>-nopasswd and always
-# validated with `visudo -cf` before installation.
+# validated with `visudo -cf` before installation. If later sudoers rules
+# override it, a toolbox-owned @include is added at the end of /etc/sudoers.
 #
 # Usage: sudo bash toggle_nopasswd_sudo.sh [user] [-y] [-h]
 #   [user]      target user to change (default: sudo invoker, $SUDO_USER)
@@ -12,6 +13,7 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/../lib/toolbox_output.sh"
 tb_output_init toggle-nopasswd-sudo
 
@@ -91,6 +93,8 @@ TARGET_UID="$(id -u "$TARGET_USER")"
 SUDOERS_FILE="/etc/sudoers.d/zz-tb-uid-${TARGET_UID}-nopasswd"
 PREVIOUS_SUDOERS_FILE="/etc/sudoers.d/99-tb-uid-${TARGET_UID}-nopasswd"
 LEGACY_SUDOERS_FILE="/etc/sudoers.d/99-${TARGET_USER}-nopasswd"
+SUDOERS_MAIN="/etc/sudoers"
+MANAGED_INCLUDE="@include ${SUDOERS_FILE} # tb-nopasswd-uid-${TARGET_UID}"
 
 # ---------------------------------------------------------------------------
 # State detection: does the user currently have passwordless sudo?
@@ -120,8 +124,34 @@ enable_nopasswd() {
     log_info "Rule installed at: ${SUDOERS_FILE}"
 }
 
+# A vendor sudoers file may place password-requiring rules after @includedir.
+# In that case include our validated rule once more at the end of the file.
+update_main_include() {
+    local operation="$1" tmp
+    tmp="$(mktemp /etc/sudoers.tb.XXXXXXXX)" || return 1
+    cp "$SUDOERS_MAIN" "$tmp" || { rm -f "$tmp"; return 1; }
+    if [[ "$operation" == add ]]; then
+        if ! grep -Fxq "$MANAGED_INCLUDE" "$tmp"; then
+            printf '\n%s\n' "$MANAGED_INCLUDE" >> "$tmp"
+        fi
+    else
+        sed -i "\|^${MANAGED_INCLUDE}$|d" "$tmp" || { rm -f "$tmp"; return 1; }
+    fi
+    chmod 0440 "$tmp" || { rm -f "$tmp"; return 1; }
+    if ! visudo -cf "$tmp" >/dev/null; then
+        rm -f "$tmp"
+        log_error "The updated sudoers file failed validation; /etc/sudoers was not changed."
+        return 1
+    fi
+    mv -f "$tmp" "$SUDOERS_MAIN"
+}
+
 # Disable: remove only our managed file.
 disable_nopasswd() {
+    if grep -Fxq "$MANAGED_INCLUDE" "$SUDOERS_MAIN"; then
+        update_main_include remove || return 1
+        log_info "Removed the toolbox include from ${SUDOERS_MAIN}."
+    fi
     rm -f "$PREVIOUS_SUDOERS_FILE" "$LEGACY_SUDOERS_FILE" || return 1
     if [[ -f "$SUDOERS_FILE" ]]; then
         rm -f "$SUDOERS_FILE" || return 1
@@ -185,9 +215,24 @@ if [[ "$ACTION" == "enable" ]]; then
     if user_has_nopasswd; then
         log_ok "Done: '${TARGET_USER}' now uses passwordless sudo."
     else
-        log_error "The rule was installed, but sudo still requires a password."
-        log_error "Check for conflicts in /etc/sudoers and /etc/sudoers.d."
-        exit 1
+        tb_info "The managed rule did not take effect; adding a final toolbox include..."
+        had_main_include=0
+        if grep -Fxq "$MANAGED_INCLUDE" "$SUDOERS_MAIN"; then
+            had_main_include=1
+        fi
+        if ! update_main_include add; then
+            log_error "Could not add the final toolbox include to /etc/sudoers."
+            exit 1
+        fi
+        if ! user_has_nopasswd; then
+            if [[ "$had_main_include" -eq 0 ]]; then
+                update_main_include remove || log_error "Could not roll back the final toolbox include."
+            fi
+            log_error "Sudo still requires a password after adding the final include."
+            log_error "Check for conflicts in /etc/sudoers and /etc/sudoers.d."
+            exit 1
+        fi
+        log_ok "Done: '${TARGET_USER}' now uses passwordless sudo."
     fi
 else
     tb_info "Removing the managed sudoers rule for ${TARGET_USER}..."
