@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "62c2932badd31f0167486de4f7c476b172ce05818337f4a8cc3d0614b3e98c54"
+	const want = "52c393e517ec6f637961e772b7c2e89ec7ee89092405b55a71ed0899db615e52"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -280,7 +280,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"toggle-polkit-prompts":           "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
 		"mount-drive":                     "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
 		"ssh-tools":                       "Manage passwordless SSH profiles and direct Ethernet SSH links from an interactive dashboard.",
-		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates enabling changes and only manages the toolbox-owned sudoers file.",
+		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates changes and manages a toolbox sudoers rule and, when needed, its final include in /etc/sudoers.",
 		"create-env-alias":                "Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
 		"create-project-template":         "Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.",

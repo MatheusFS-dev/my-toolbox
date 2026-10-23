@@ -157,7 +157,7 @@ func TestRepositoryScriptRequirementsIncludeEveryPreStartUtility(t *testing.T) {
 			"bash", "awk", "chmod", "cmp", "cp", "date", "grep", "mktemp", "mv", "od", "rm", "tail", "tr",
 		},
 		"toggle-nopasswd-sudo": {
-			"bash", "sudo", "visudo", "cat", "chmod", "grep", "id", "install", "mktemp", "rm",
+			"bash", "sudo", "visudo", "cat", "chmod", "cp", "grep", "id", "install", "mktemp", "mv", "rm", "sed",
 		},
 		"install-vscode-nautilus": {
 			"bash", "sudo", "debian-ubuntu", "apt-get", "cut", "dirname", "getent", "id", "install",
