@@ -50,27 +50,19 @@ try {
     $Unrelated.Description = 'Unrelated shortcut'
     $Unrelated.Save()
 
-    $SetupFailure = ''
-    try {
-        & $ScriptPath | Out-Null
-    } catch {
-        $SetupFailure = $_.Exception.Message
-    }
-    if (-not $SetupFailure.Contains('not managed by my-toolbox')) {
-        throw "Setup did not reject an unrelated shortcut. Error: $SetupFailure"
+    $global:LASTEXITCODE = 0
+    & $ScriptPath | Out-Null
+    if ($LASTEXITCODE -ne 1) {
+        throw "Setup did not reject an unrelated shortcut. Exit code: $LASTEXITCODE"
     }
     if ($Shell.CreateShortcut($ShortcutPath).Description -cne 'Unrelated shortcut') {
         throw 'Setup changed an unrelated shortcut.'
     }
 
-    $UndoFailure = ''
-    try {
-        & $ScriptPath -Undo | Out-Null
-    } catch {
-        $UndoFailure = $_.Exception.Message
-    }
-    if (-not $UndoFailure.Contains('not managed by my-toolbox')) {
-        throw "Undo did not reject an unrelated shortcut. Error: $UndoFailure"
+    $global:LASTEXITCODE = 0
+    & $ScriptPath -Undo | Out-Null
+    if ($LASTEXITCODE -ne 1) {
+        throw "Undo did not reject an unrelated shortcut. Exit code: $LASTEXITCODE"
     }
     if (-not (Test-Path -LiteralPath $ShortcutPath -PathType Leaf)) {
         throw 'Undo removed an unrelated shortcut.'
