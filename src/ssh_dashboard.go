@@ -9,19 +9,16 @@ import (
 )
 
 type sshDashboard struct {
-	profiles       []SSHProfile
-	environment    string
-	cursor         int
-	width          int
-	height         int
-	action         string
-	alias          string
-	status         string
-	directDisabled bool
+	profiles []SSHProfile
+	cursor   int
+	width    int
+	height   int
+	action   string
+	alias    string
 }
 
-func newSSHDashboard(profiles []SSHProfile, environment string, width, height int) sshDashboard {
-	return sshDashboard{profiles: profiles, environment: environment, width: width, height: height}
+func newSSHDashboard(profiles []SSHProfile, _ string, width, height int) sshDashboard {
+	return sshDashboard{profiles: profiles, width: width, height: height}
 }
 
 func (model sshDashboard) Init() tea.Cmd { return nil }
@@ -49,14 +46,6 @@ func (model sshDashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.action = "add"
 		case 'r':
 			model.action = "refresh"
-		case 'd':
-			if model.environment == "linux-native" && !model.directDisabled {
-				model.action = "direct"
-			}
-		case 's':
-			if model.environment == "linux-native" && !model.directDisabled {
-				model.action = "status"
-			}
 		case 't', 'e', 'x', tea.KeyEnter:
 			if len(model.profiles) > 0 {
 				model.alias = model.profiles[model.cursor].Alias
@@ -98,32 +87,8 @@ func (model sshDashboard) View() tea.View {
 		row := fmt.Sprintf("%s%s  %s@%s:%d  %s", marker, profile.Alias, profile.User, profile.Hostname, profile.Port, profile.Health)
 		profileLines = append(profileLines, row)
 	}
-	if model.environment == "linux-native" {
-		directLines := []string{"Direct Ethernet", "d configure or undo", "s status"}
-		if model.status != "" {
-			directLines = append(directLines, strings.Split(model.status, " | ")...)
-		}
-		if width >= 80 {
-			leftWidth := (width - 3) / 2
-			for index := 0; index < max(len(profileLines), len(directLines)); index++ {
-				left, right := "", ""
-				if index < len(profileLines) {
-					left = profileLines[index]
-				}
-				if index < len(directLines) {
-					right = directLines[index]
-				}
-				lines = append(lines, fmt.Sprintf("%-*s │ %s", leftWidth, sshFit(left, leftWidth), sshFit(right, width-leftWidth-3)))
-			}
-		} else {
-			lines = append(lines, profileLines...)
-			lines = append(lines, "")
-			lines = append(lines, directLines...)
-		}
-	} else {
-		lines = append(lines, profileLines...)
-	}
-	lines = append(lines, "", "↑/↓ select  •  enter connect  •  a add  •  e edit  •  t test  •  x remove", "r refresh  •  q quit")
+	lines = append(lines, profileLines...)
+	lines = append(lines, "", "↑/↓ select  •  enter connect  •  a add  •  e edit  •  t test  •  x remove", "r refresh  •  q back")
 	if model.height > 0 && len(lines) > model.height {
 		lines = lines[:model.height]
 	}

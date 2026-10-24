@@ -223,3 +223,6 @@ __marimo__/
 docs/superpowers/specs/
 docs/superpowers/plans/
 .worktrees/
+
+# Others
+tmp/

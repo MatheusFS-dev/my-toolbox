@@ -10,6 +10,10 @@ Global task gates and reusable skills are installed at user scope. Codex and Ant
 
 Add only durable repository-specific information below, such as non-obvious architecture constraints, canonical commands, protected paths, and required validation.
 
+## Releases
+
+When the user asks to "release a new version", treat it as authorization to prepare the current requested work for release without asking for a separate commit or push confirmation. First update this `AGENTS.md` release instruction if the user requested a durable release-process change. Then run the relevant local release checks, commit the scoped changes, push `main`, wait for the resulting CI run and automatic release workflow, and investigate and fix any failures that arise. Do not create a release manually when the automatic release workflow is available.
+
 ## Terminal output contract
 
 Every new or modified tool must use the executable output helper for its runtime rather than raw `print`, `echo`, or `Write-Host` calls for human-facing messages. The helpers and contract tests are the source of truth.

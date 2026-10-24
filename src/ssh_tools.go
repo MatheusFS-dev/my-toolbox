@@ -17,16 +17,18 @@ import (
 )
 
 type sshToolsSession struct {
-	root        string
-	environment string
-	input       io.Reader
-	reader      *bufio.Reader
-	execRun     func(string, ...string) error
-	output      io.Writer
-	errorOutput io.Writer
-	messages    *toolOutput
-	home        string
-	successes   int
+	root         string
+	environment  string
+	input        io.Reader
+	reader       *bufio.Reader
+	execRun      func(string, ...string) error
+	execRunInput func(string, string, ...string) error
+	runProgram   func(tea.Model) (tea.Model, error)
+	output       io.Writer
+	errorOutput  io.Writer
+	messages     *toolOutput
+	home         string
+	successes    int
 }
 
 func (session *sshToolsSession) readLine() (string, error) {
@@ -64,17 +66,62 @@ func RunSSHTools(root, environment, platform string, input io.Reader, output, er
 		return err
 	}
 	session := sshToolsSession{root: root, environment: environment, input: input, output: output, errorOutput: errorOutput, home: home, messages: newToolOutput(output, "ssh-tools", time.Now, detectToolColor(output))}
+	return session.runSSHTools()
+}
+
+func (session *sshToolsSession) runSSHTools() error {
 	for {
-		profiles, err := loadSSHProfiles(home)
+		availability := ""
+		if session.environment == "linux-native" {
+			availability = session.directAvailable()
+		}
+		model := newSSHLauncher(session.environment, availability, 80, 24)
+		final, err := session.runUI(model)
 		if err != nil {
 			return err
 		}
-		model := newSSHDashboard(profiles, environment, 80, 24)
-		if environment == "linux-native" {
-			model.directDisabled = session.directAvailable() != ""
-			model.status = session.directStatus()
+		selected, ok := final.(sshLauncher)
+		if !ok {
+			return fmt.Errorf("SSH launcher returned invalid state")
 		}
-		final, err := tea.NewProgram(model, tea.WithInput(input), tea.WithOutput(errorOutput)).Run()
+		if selected.action == "" {
+			if session.successes > 0 {
+				return session.messages.Success(fmt.Sprintf("Completed %d SSH operation(s).", session.successes))
+			}
+			return session.messages.Info("No changes made.")
+		}
+		if selected.action == "profiles" {
+			if err := session.runProfileDashboard(); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := session.performLauncherAction(selected.action); err != nil {
+			if errors.Is(err, ErrCancelled) {
+				_ = session.messages.Info("Cancelled; nothing changed.")
+				continue
+			}
+			return err
+		}
+		session.successes++
+	}
+}
+
+func (session *sshToolsSession) runUI(model tea.Model) (tea.Model, error) {
+	if session.runProgram != nil {
+		return session.runProgram(model)
+	}
+	return tea.NewProgram(model, tea.WithInput(session.input), tea.WithOutput(session.errorOutput)).Run()
+}
+
+func (session *sshToolsSession) runProfileDashboard() error {
+	for {
+		profiles, err := loadSSHProfiles(session.home)
+		if err != nil {
+			return err
+		}
+		model := newSSHDashboard(profiles, session.environment, 80, 24)
+		final, err := session.runUI(model)
 		if err != nil {
 			return err
 		}
@@ -83,10 +130,7 @@ func RunSSHTools(root, environment, platform string, input io.Reader, output, er
 			return fmt.Errorf("SSH dashboard returned invalid state")
 		}
 		if selected.action == "" {
-			if session.successes > 0 {
-				return session.messages.Success(fmt.Sprintf("Completed %d SSH operation(s).", session.successes))
-			}
-			return session.messages.Info("No changes made.")
+			return nil
 		}
 		if selected.action == "refresh" {
 			continue
@@ -178,6 +222,34 @@ func (session *sshToolsSession) run(command string, arguments ...string) error {
 	return nil
 }
 
+func (session *sshToolsSession) runInput(input, command string, arguments ...string) error {
+	if session.execRunInput != nil {
+		return session.execRunInput(input, command, arguments...)
+	}
+	process := exec.Command(command, arguments...)
+	process.Stdin = strings.NewReader(input)
+	process.Stdout = session.messages.External()
+	process.Stderr = session.errorOutput
+	if err := process.Run(); err != nil {
+		return fmt.Errorf("%s failed: %w", command, err)
+	}
+	return nil
+}
+
+func (session *sshToolsSession) performLauncherAction(action string) error {
+	switch action {
+	case "direct-setup":
+		return session.directSetup()
+	case "direct-undo":
+		return session.directUndo()
+	case "monitor-install":
+		return session.updateDirectMonitor("install-status")
+	case "monitor-remove":
+		return session.updateDirectMonitor("uninstall-status")
+	}
+	return fmt.Errorf("unknown SSH launcher action %q", action)
+}
+
 func (session *sshToolsSession) perform(selected sshDashboard, profiles []SSHProfile) error {
 	switch selected.action {
 	case "add", "edit":
@@ -211,10 +283,6 @@ func (session *sshToolsSession) perform(selected sshDashboard, profiles []SSHPro
 			return err
 		}
 		return session.messages.Warn("Remote authorized keys were not revoked.")
-	case "direct":
-		return session.directSetup()
-	case "status":
-		return session.directMonitor()
 	}
 	return fmt.Errorf("unknown SSH action %q", selected.action)
 }
@@ -354,80 +422,12 @@ func (session *sshToolsSession) directAvailable() string {
 	return ""
 }
 
-func (session *sshToolsSession) directStatus() string {
-	if guidance := session.directAvailable(); guidance != "" {
-		return guidance
-	}
-	output, err := exec.Command("python3", session.helperPath(), "snapshot").Output()
-	if err != nil {
-		return "Direct-link status unavailable: " + err.Error()
-	}
-	var snapshot sshDirectSnapshot
-	if err := json.Unmarshal(output, &snapshot); err != nil {
-		return "Direct-link status invalid"
-	}
-	if snapshot.ProtocolVersion != 1 {
-		return "Direct-link helper protocol is incompatible; update toolbox."
-	}
-	return renderSSHDirectStatus(snapshot)
-}
-
-type sshDirectSnapshot struct {
-	ProtocolVersion int `json:"protocol_version"`
-	Runtime         struct {
-		Active    bool   `json:"active"`
-		DNSMasq   bool   `json:"dnsmasq"`
-		SSHServer bool   `json:"ssh_server"`
-		Firewall  string `json:"firewall"`
-	} `json:"runtime"`
-	Config *struct {
-		Interface string `json:"interface"`
-	} `json:"config"`
-}
-
-func renderSSHDirectStatus(snapshot sshDirectSnapshot) string {
-	if snapshot.Config == nil {
-		return "No direct Ethernet link configured."
-	}
-	link, dns, server := "inactive", "stopped", "stopped"
-	if snapshot.Runtime.Active {
-		link = "active"
-	}
-	if snapshot.Runtime.DNSMasq {
-		dns = "running"
-	}
-	if snapshot.Runtime.SSHServer {
-		server = "running"
-	}
-	return fmt.Sprintf("Direct Ethernet %s on %s | dnsmasq %s | SSH server %s | firewall %s", link, snapshot.Config.Interface, dns, server, snapshot.Runtime.Firewall)
-}
-
 func (session *sshToolsSession) directSetup() error {
 	if session.environment != "linux-native" {
 		return fmt.Errorf("direct Ethernet links require native Linux")
 	}
 	if guidance := session.directAvailable(); guidance != "" {
 		return fmt.Errorf("%s", guidance)
-	}
-	choice, err := session.prompt("Direct-link action (setup/undo)", "setup", true)
-	if err != nil {
-		return err
-	}
-	if choice != "setup" && choice != "undo" {
-		return fmt.Errorf("choose setup or undo")
-	}
-	if choice == "undo" {
-		confirmed, err := session.confirm("Undo toolbox direct-link setup?", false)
-		if err != nil {
-			return err
-		}
-		if !confirmed {
-			return ErrCancelled
-		}
-		if err := session.messages.Info("Restoring direct-link configuration..."); err != nil {
-			return err
-		}
-		return session.run("sudo", "python3", session.helperPath(), "undo")
 	}
 	iface, err := session.prompt("Ethernet interface", "", true)
 	if err != nil {
@@ -455,31 +455,44 @@ func (session *sshToolsSession) directSetup() error {
 	if err := session.messages.Info("Saving rollback state and configuring direct Ethernet..."); err != nil {
 		return err
 	}
-	process := exec.Command("sudo", "python3", session.helperPath(), "setup")
-	process.Stdin = strings.NewReader(string(config))
-	process.Stdout, process.Stderr = session.messages.External(), session.errorOutput
-	if err := process.Run(); err != nil {
+	if err := session.runInput(string(config), "sudo", "python3", session.helperPath(), "setup"); err != nil {
 		return fmt.Errorf("direct-link setup failed: %w", err)
 	}
 	return nil
 }
 
-func (session *sshToolsSession) directMonitor() error {
+func (session *sshToolsSession) directUndo() error {
+	if session.environment != "linux-native" {
+		return fmt.Errorf("direct Ethernet links require native Linux")
+	}
+	if guidance := session.directAvailable(); guidance != "" {
+		return fmt.Errorf("%s", guidance)
+	}
+	confirmed, err := session.confirm("Undo toolbox direct-link setup?", false)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		return ErrCancelled
+	}
+	if err := session.messages.Info("Restoring direct-link configuration..."); err != nil {
+		return err
+	}
+	return session.run("sudo", "python3", session.helperPath(), "undo")
+}
+
+func (session *sshToolsSession) updateDirectMonitor(action string) error {
 	if session.environment != "linux-native" {
 		return fmt.Errorf("status monitor requires native Linux")
 	}
 	if guidance := session.directAvailable(); guidance != "" {
 		return fmt.Errorf("%s", guidance)
 	}
-	choice, err := session.prompt("Status monitor action (install/uninstall)", "install", true)
-	if err != nil {
-		return err
+	label := map[string]string{"install-status": "Install", "uninstall-status": "Remove"}[action]
+	if label == "" {
+		return fmt.Errorf("unknown status monitor action %q", action)
 	}
-	action := map[string]string{"install": "install-status", "uninstall": "uninstall-status"}[choice]
-	if action == "" {
-		return fmt.Errorf("choose install or uninstall")
-	}
-	confirmed, err := session.confirm(""+strings.Title(choice)+" desktop-login status monitor?", false)
+	confirmed, err := session.confirm(label+" desktop-login status monitor?", false)
 	if err != nil {
 		return err
 	}

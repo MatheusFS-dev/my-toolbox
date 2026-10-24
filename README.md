@@ -339,7 +339,7 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Bash; sudo; cat; chmod; id; mktemp; mv; rm; sh; tee.
 - `mount-drive` (native Linux): Inspect physical disks, then choose a non-system ext4 or FAT32 filesystem to label and mount. Optionally save a UUID-based `/etc/fstab` entry or recursively grant all users access. Review the planned changes before confirming. Use `tb mount-drive --list` to inspect without changing anything.
   Requires: Python 3.9+; sudo.
-- `ssh-tools` (Linux or WSL): Manage dedicated passwordless SSH profiles in a full-screen dashboard. Native Linux also offers direct Ethernet setup, rollback, and status monitoring. Updating or removing a local profile does not revoke keys copied to remote hosts.
+- `ssh-tools` (Linux or WSL): Open a full-screen task menu for dedicated passwordless SSH profiles. Native Linux also offers direct Ethernet setup, rollback, and desktop-login status-monitor management. Updating or removing a local profile does not revoke keys copied to remote hosts.
   Requires: OpenSSH client; ssh-keygen; ssh-copy-id.
 - `toggle-nopasswd-sudo` (Linux or WSL): Enable or disable passwordless `sudo` for one Linux or WSL user. Validates changes and manages a toolbox sudoers rule and, when needed, its final include in `/etc/sudoers`.
   Requires: Bash; sudo; visudo; `cat`; `chmod`; `cp`; `grep`; `id`; `install`; `mktemp`; `mv`; `rm`; `sed`.
