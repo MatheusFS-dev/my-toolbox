@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "52c393e517ec6f637961e772b7c2e89ec7ee89092405b55a71ed0899db615e52"
+	const want = "700291c5d82147ac1e2470891cf8dde89bf5c24935429f9abf33bbcaaa7d1d3c"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -262,9 +262,11 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"install-superpowers-codex":       "Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-claude":      "Add the Superpowers plugin to Claude Code for the current user. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
 		"install-superpowers-antigravity": "Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.",
+		"install-superpowers-opencode":    "Add the Superpowers plugin to OpenCode configuration for the current user. Skips an existing installation and preserves other plugins.",
 		"setup-agents-codex":              "Set up global Codex instructions, configuration, optional profiles, and packaged skills. Shows every conflict before asking whether to replace or back it up.",
 		"setup-agents-claude":             "Set up global Claude Code instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.",
 		"setup-agents-antigravity":        "Set up global Antigravity instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.",
+		"setup-agents-opencode":           "Set up global OpenCode instructions, permissions, and packaged skills. Shows every conflict before asking whether to replace or back it up.",
 		"setup-agents-project":            "Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.",
 		"setup-alacritty":                 "Build an Alacritty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Alacritty configuration is replaced without a backup.",
 		"setup-kitty":                     "Build a Kitty-based terminal setup on Debian or Ubuntu. Choose shell tools, fonts, desktop integrations, and default-terminal options; the existing Kitty configuration is backed up before replacement.",
@@ -334,8 +336,8 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 	}
 	want := []string{
 		"install-codex", "install-claude", "install-antigravity", "install-uv", "install-gh",
-		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity",
-		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project",
+		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity", "install-superpowers-opencode",
+		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
 		"set-default-cwd", "install-monitor", "install-stress-gpu", "isolate-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive", "ssh-tools",
 		"create-env-alias", "bootstrap-python-from-venv", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
@@ -354,9 +356,9 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 			t.Fatalf("command %q visibility = %q, want %q", command.Name, command.Visibility, wantVisibility)
 		}
 	}
-	installerNames := []string{"install_codex.py", "install_claude.py", "install_antigravity.py", "install_project.py"}
+	installerNames := []string{"install_codex.py", "install_claude.py", "install_antigravity.py", "install_opencode.py", "install_project.py"}
 	for index, installerName := range installerNames {
-		command := catalog.Commands[index+8]
+		command := catalog.Commands[index+9]
 		if command.Protocol != "interactive-python" {
 			t.Fatalf("command %q protocol = %q", command.Name, command.Protocol)
 		}
@@ -383,6 +385,7 @@ func TestRepositoryListInteractiveCommandsHavePromptAuditCoverage(t *testing.T) 
 		"setup-agents-codex":         "installer Python retry tests",
 		"setup-agents-claude":        "verified existing retry prompts",
 		"setup-agents-antigravity":   "verified existing retry prompts",
+		"setup-agents-opencode":      "installer Python retry tests",
 		"setup-agents-project":       "installer Python retry tests",
 		"setup-alacritty":            "terminal Bash prompt tests",
 		"setup-kitty":                "terminal Bash prompt tests",

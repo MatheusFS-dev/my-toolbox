@@ -82,6 +82,9 @@ func (executor ProcessExecutor) supportsCapability(id string) bool {
 	case "python3":
 		path, err := exec.LookPath("python3")
 		return err == nil && supportsPythonVersion(path, nil, "sys.version_info[:2] >= (3, 0)")
+	case "opencode":
+		_, err := resolveUserCommand("opencode", executor.Platform)
+		return err == nil
 	case "codex-plugin-management":
 		return executor.supportsPluginManagement("codex")
 	case "claude-plugin-management":

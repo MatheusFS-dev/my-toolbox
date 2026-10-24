@@ -90,11 +90,11 @@ Bootstrap installation does not replace an existing toolbox. When a newer releas
 
 After a successful update, including when the toolbox is already current, `tb update` checks an installed Monitor runtime and updates it automatically when its package version is older than the version bundled with the active toolbox. It then lists previously used global agent setups and asks once whether to rerun all of them. The default answer is No. If confirmed, the active toolbox version reruns them in catalog order with each setup's own prompts and requirement checks. Refresh stops at the first failure and reports commands not run; a successful toolbox upgrade remains installed.
 
-Toolbox remembers successful runs of the global `setup-agents-codex`, `setup-agents-claude`, and `setup-agents-antigravity` commands. Earlier runs are not detected retroactively. Markers live in the stable `my-toolbox/used-tools` data directory and are removed by `tb uninstall`. Software installers, plugins, project setup, and terminal commands are excluded.
+Toolbox remembers successful runs of the global `setup-agents-codex`, `setup-agents-claude`, `setup-agents-antigravity`, and `setup-agents-opencode` commands. Earlier runs are not detected retroactively. Markers live in the stable `my-toolbox/used-tools` data directory and are removed by `tb uninstall`. Software installers, plugins, project setup, and terminal commands are excluded.
 
 ## Portable Agent Configuration Package
 
-Each GitHub Release includes [agent-configs-portable.zip](https://github.com/MatheusFS-dev/my-toolbox/releases/latest/download/agent-configs-portable.zip). It contains ready-to-copy `.codex`, `.claude`, and `.gemini` user-configuration folders for Codex, Claude Code, and Antigravity CLI, including their shared instructions, settings, status lines, and skills. It does not install my-toolbox or any software, and it does not require administrator permissions or `sudo` on the receiving computer. Claude Code and Antigravity CLI use the included Python status-line scripts, so Python 3 must already be available for those status lines to run. The remaining instructions, settings, and skills can still be copied without Python.
+Each GitHub Release includes [agent-configs-portable.zip](https://github.com/MatheusFS-dev/my-toolbox/releases/latest/download/agent-configs-portable.zip). It contains ready-to-copy `.codex`, `.claude`, `.gemini`, and `.config/opencode` user-configuration folders for Codex, Claude Code, Antigravity CLI, and OpenCode, including their shared instructions, settings, status lines, and skills. It does not install my-toolbox or any software, and it does not require administrator permissions or `sudo` on the receiving computer. Claude Code and Antigravity CLI use the included Python status-line scripts, so Python 3 must already be available for those status lines to run. The remaining instructions, settings, and skills can still be copied without Python.
 
 Extract the ZIP and copy the contents of its `agent-configs-portable/home/` folder into your user home directory: `%USERPROFILE%` on Windows or `$HOME` on Linux. The commands below make a timestamped backup of any existing managed agent directories before copying the replacements. Close the agents first.
 
@@ -269,6 +269,8 @@ The command catalog is defined in `commands.json`. The descriptions below summar
   Requires: Claude Code with plugin management.
 - `install-superpowers-antigravity`: Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
   Requires: Antigravity with plugin management.
+- `install-superpowers-opencode`: Add the Superpowers plugin to OpenCode configuration for the current user. Skips an existing installation and preserves other plugins.
+  Requires: OpenCode.
 
 ### Agent Workspace
 
@@ -277,6 +279,8 @@ The command catalog is defined in `commands.json`. The descriptions below summar
 - `setup-agents-claude`: Set up global Claude Code instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
   Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 - `setup-agents-antigravity`: Set up global Antigravity instructions, settings, and packaged skills. Shows every conflict before asking whether to replace or back it up.
+  Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
+- `setup-agents-opencode`: Set up global OpenCode instructions, permissions, and packaged skills. Shows every conflict before asking whether to replace or back it up.
   Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 - `setup-agents-project`: Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.
   Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).

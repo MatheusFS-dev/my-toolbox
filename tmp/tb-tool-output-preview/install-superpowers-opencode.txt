@@ -1,0 +1,5 @@
+
+[21:44:30 install-superpowers-opencode INFO] Installing...
+[21:44:30 install-superpowers-opencode INFO] Added Superpowers to OpenCode configuration. Restart OpenCode to load it.
+[21:44:30 install-superpowers-opencode SUCCESS] Completed successfully.
+executed: install-superpowers-opencode

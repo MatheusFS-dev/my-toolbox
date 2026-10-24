@@ -61,12 +61,12 @@ func writeActiveTestCatalog(t *testing.T, dataRoot, version string, catalog Cata
 
 func TestOnlyGlobalAgentSetupsAreRemembered(t *testing.T) {
 	executor := &fakeExecutor{responses: map[string][]ProtocolResponse{"install-codex": {{Status: "skipped", Reason: "already installed"}}}}
-	ui := &fakeUI{selected: []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project", "install-codex", "install-monitor", "install-superpowers-codex"}}
-	app, dataRoot, _ := refreshTestApp(t, ui, executor, "setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-project", "install-codex", "install-monitor", "install-superpowers-codex")
+	ui := &fakeUI{selected: []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project", "install-codex", "install-monitor", "install-superpowers-codex"}}
+	app, dataRoot, _ := refreshTestApp(t, ui, executor, "setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project", "install-codex", "install-monitor", "install-superpowers-codex")
 	if err := app.Execute([]string{"list"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity"} {
+	for _, name := range []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode"} {
 		if _, err := os.Stat(filepath.Join(dataRoot, "used-tools", name)); err != nil {
 			t.Fatalf("marker %s: %v", name, err)
 		}
@@ -102,8 +102,8 @@ func TestFailedAndCancelledCommandsAreNotRemembered(t *testing.T) {
 func TestUpdateOffersRememberedCommandsInCatalogOrder(t *testing.T) {
 	ui := &fakeUI{answers: map[string]any{"refresh-remembered-tools": true}}
 	executor := &fakeExecutor{}
-	app, dataRoot, output := refreshTestApp(t, ui, executor, "setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity")
-	for _, name := range []string{"setup-agents-antigravity", "setup-agents-claude", "setup-agents-codex"} {
+	app, dataRoot, output := refreshTestApp(t, ui, executor, "setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode")
+	for _, name := range []string{"setup-agents-antigravity", "setup-agents-claude", "setup-agents-codex", "setup-agents-opencode"} {
 		path := filepath.Join(dataRoot, "used-tools", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
@@ -117,10 +117,10 @@ func TestUpdateOffersRememberedCommandsInCatalogOrder(t *testing.T) {
 	if err := app.Execute([]string{"update"}); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(runs, []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity"}) {
+	if !reflect.DeepEqual(runs, []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode"}) {
 		t.Fatalf("runs = %v", runs)
 	}
-	if !strings.Contains(output.String(), "setup-agents-codex, setup-agents-claude, setup-agents-antigravity") {
+	if !strings.Contains(output.String(), "setup-agents-codex, setup-agents-claude, setup-agents-antigravity, setup-agents-opencode") {
 		t.Fatalf("output = %q", output.String())
 	}
 }
@@ -390,8 +390,8 @@ func TestUpgradeRefreshUsesNewPayload(t *testing.T) {
 
 func TestRefreshFailureReportsRemainingCommands(t *testing.T) {
 	ui := &fakeUI{answers: map[string]any{"refresh-remembered-tools": true}}
-	app, dataRoot, output := refreshTestApp(t, ui, &fakeExecutor{}, "setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity")
-	for _, name := range []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity"} {
+	app, dataRoot, output := refreshTestApp(t, ui, &fakeExecutor{}, "setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode")
+	for _, name := range []string{"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode"} {
 		path := filepath.Join(dataRoot, "used-tools", name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)

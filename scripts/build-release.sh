@@ -119,6 +119,7 @@ if [ ! -d "$template_root/skills" ] || [ ! -f "$template_root/instructions/globa
     [ ! -f "$template_root/configs/codex/config.toml.template" ] || \
     [ ! -f "$template_root/configs/claude/settings.json" ] || \
     [ ! -f "$template_root/configs/antigravity/settings.json" ] || \
+    [ ! -f "$template_root/configs/opencode/opencode.json" ] || \
     [ ! -f "$template_root/configs/statusline/statusline.py" ]; then
     printf 'Agent workspace template is missing a required portable-package source.\n' >&2
     exit 1
@@ -126,7 +127,8 @@ fi
 
 mkdir -p "$portable_home/.codex/skills" \
     "$portable_home/.claude/skills" \
-    "$portable_home/.gemini/antigravity-cli/skills"
+    "$portable_home/.gemini/antigravity-cli/skills" \
+    "$portable_home/.config/opencode/skills"
 python3 - "$template_root" "$portable_home/.codex/config.toml" <<'PY'
 from pathlib import Path
 import sys
@@ -168,15 +170,21 @@ cp "$template_root/configs/statusline/statusline.py" \
     "$portable_home/.gemini/antigravity-cli/statusline.py"
 cp -R "$template_root/skills/." "$portable_home/.gemini/antigravity-cli/skills"
 
+cp "$template_root/instructions/global.md" "$portable_home/.config/opencode/AGENTS.md"
+cp "$template_root/configs/opencode/opencode.json" \
+    "$portable_home/.config/opencode/opencode.json"
+cp -R "$template_root/skills/." "$portable_home/.config/opencode/skills"
+
 cat > "$portable_root/README.md" <<'EOF'
 # Portable Agent Configuration Package
 
-This package configures Codex, Claude Code, and Antigravity CLI without
+This package configures Codex, Claude Code, Antigravity CLI, and OpenCode without
 installing my-toolbox, packages, or system software.
 
 Close those agents before copying files. The `home/` folder mirrors your user
 home directory. Copy its contents into `%USERPROFILE%` on Windows or `$HOME`
-on Linux. Back up existing `.codex`, `.claude`, and `.gemini` folders first,
+on Linux. Back up existing `.codex`, `.claude`, `.gemini`, and `.config/opencode`
+folders first,
 then replace them with the folders in `home/`.
 
 The package contains:
@@ -184,6 +192,7 @@ The package contains:
 - `.codex/config.toml`, the optional `research.config.toml` profile, and skills
 - `.claude/CLAUDE.md`, settings, status line, and skills
 - `.gemini/GEMINI.md`, Antigravity CLI settings, status line, and skills
+- `.config/opencode/AGENTS.md`, permissions, and skills
 
 Python 3 is required only for the Claude Code and Antigravity CLI status lines.
 The remaining instructions, settings, and skills can still be copied when it

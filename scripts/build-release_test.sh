@@ -263,7 +263,11 @@ for required_entry in \
     agent-configs-portable/home/.gemini/GEMINI.md \
     agent-configs-portable/home/.gemini/antigravity-cli/ \
     agent-configs-portable/home/.gemini/antigravity-cli/settings.json \
-    agent-configs-portable/home/.gemini/antigravity-cli/statusline.py; do
+    agent-configs-portable/home/.gemini/antigravity-cli/statusline.py \
+    agent-configs-portable/home/.config/ \
+    agent-configs-portable/home/.config/opencode/ \
+    agent-configs-portable/home/.config/opencode/AGENTS.md \
+    agent-configs-portable/home/.config/opencode/opencode.json; do
     if ! printf '%s\n' "$portable_entries" | grep -Fx "$required_entry" >/dev/null; then
         printf 'Portable agent configuration archive is missing %s.\n' "$required_entry" >&2
         exit 1
@@ -274,7 +278,8 @@ for skill_path in "$repository_root"/packages/agent-workspace-template/source/sk
     for agent_skills in \
         agent-configs-portable/home/.codex/skills \
         agent-configs-portable/home/.claude/skills \
-        agent-configs-portable/home/.gemini/antigravity-cli/skills; do
+        agent-configs-portable/home/.gemini/antigravity-cli/skills \
+        agent-configs-portable/home/.config/opencode/skills; do
         required_entry="$agent_skills/$skill_name/SKILL.md"
         if ! printf '%s\n' "$portable_entries" | grep -Fx "$required_entry" >/dev/null; then
             printf 'Portable agent configuration archive is missing %s.\n' "$required_entry" >&2
@@ -293,6 +298,10 @@ unzip -p "$portable_archive" agent-configs-portable/home/.claude/CLAUDE.md |
     cmp "$repository_root/packages/agent-workspace-template/source/instructions/global.md" -
 unzip -p "$portable_archive" agent-configs-portable/home/.gemini/GEMINI.md |
     cmp "$repository_root/packages/agent-workspace-template/source/instructions/global.md" -
+unzip -p "$portable_archive" agent-configs-portable/home/.config/opencode/AGENTS.md |
+    cmp "$repository_root/packages/agent-workspace-template/source/instructions/global.md" -
+unzip -p "$portable_archive" agent-configs-portable/home/.config/opencode/opencode.json |
+    python3 -c 'import json, sys; assert json.load(sys.stdin)["permission"] == "allow"'
 if ! unzip -p "$portable_archive" agent-configs-portable/README.md |
     grep -F 'Python 3 is required only for the Claude Code and Antigravity CLI status lines.' >/dev/null; then
     printf 'Portable agent configuration archive does not document its status-line Python requirement.\n' >&2

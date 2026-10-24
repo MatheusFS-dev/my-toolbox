@@ -13,6 +13,7 @@ var rememberedTools = map[string]bool{
 	"setup-agents-codex":       true,
 	"setup-agents-claude":      true,
 	"setup-agents-antigravity": true,
+	"setup-agents-opencode":    true,
 }
 
 func toolMarkerPath(platform, name string) (string, error) {

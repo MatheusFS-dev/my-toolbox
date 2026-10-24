@@ -75,6 +75,24 @@ func (builtins *ToolboxBuiltins) SkipReason(name string) (string, error) {
 		}
 		return "", nil
 	}
+	if name == "install-superpowers-opencode" {
+		configPath, err := openCodeConfigPath()
+		if err != nil {
+			return "", err
+		}
+		config, err := openCodeConfig(configPath)
+		if err != nil {
+			return "", err
+		}
+		exists, err := hasOpenCodeSuperpowers(config)
+		if err != nil {
+			return "", err
+		}
+		if exists {
+			return "Superpowers is already configured for OpenCode", nil
+		}
+		return "", nil
+	}
 	agents := map[string]string{
 		"install-superpowers-codex":       "codex",
 		"install-superpowers-claude":      "claude",
@@ -141,6 +159,8 @@ func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
 			return runAgentPlugin("claude", []string{"plugin", "install", "superpowers@claude-plugins-official", "--scope", "user"}, builtins.platform, builtins.output)
 		case "install-superpowers-antigravity":
 			return runAgentPlugin("agy", []string{"plugin", "install", "https://github.com/obra/superpowers"}, builtins.platform, builtins.output)
+		case "install-superpowers-opencode":
+			return builtins.installOpenCodeSuperpowers()
 		case "update":
 			return builtins.update()
 		case "uninstall":
