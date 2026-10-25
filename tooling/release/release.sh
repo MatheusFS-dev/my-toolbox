@@ -93,6 +93,7 @@ inspect_run() {
     IFS='	' read -r state_status state_conclusion failed_jobs <<EOF
 $run_state
 EOF
+    [ "$state_status" = completed ] || return 3
     case "$state_conclusion" in
         failure|cancelled|timed_out|action_required|startup_failure|skipped)
             tb_error "$2 run $run_id finished with $state_conclusion${failed_jobs:+ (failed jobs: $failed_jobs)}."
@@ -116,13 +117,19 @@ wait_for_workflow() {
         [ "$query_status" -eq 0 ] || fail "Could not query $workflow runs."
         if [ -n "$run" ] && [ "$run" != null ]; then
             run_id=${run%%	*}
-            if inspect_run "$run_id" "$workflow"; then
-                tb_info "$workflow run $run_id succeeded."
-                return 0
-            fi
-            inspect_status=$?
-            [ "$inspect_status" -eq 1 ] && finish 1 failure
-            fail "Could not inspect $workflow run $run_id."
+            case "$run_id" in
+                ''|null|*[!0-9]*) ;;
+                *)
+                    inspect_run "$run_id" "$workflow"
+                    inspect_status=$?
+                    if [ "$inspect_status" -eq 0 ]; then
+                        tb_info "$workflow run $run_id succeeded."
+                        return 0
+                    fi
+                    [ "$inspect_status" -eq 1 ] && finish 1 failure
+                    [ "$inspect_status" -eq 3 ] || fail "Could not inspect $workflow run $run_id."
+                    ;;
+            esac
         fi
         now=$(date +%s)
         elapsed=$((now - started_at))

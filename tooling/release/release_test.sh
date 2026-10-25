@@ -47,6 +47,7 @@ case "$1 ${2:-}" in
         case "$*" in
             *'workflow CI'*)
                 [ "$scenario" != failed-ci ] || { printf '1\tcompleted\tfailure\n'; exit 0; }
+                [ "$scenario" != null-run ] || { printf 'null\tnull\tnull\n'; exit 0; }
                 [ "$scenario" != timeout ] || exit 0
                 printf '1\tcompleted\tsuccess\n'
                 ;;
@@ -63,6 +64,8 @@ case "$1 ${2:-}" in
     'run view')
         if [ "$scenario" = failed-ci ] && [ "$3" = 1 ]; then
             printf 'completed\tfailure\tunit\n'
+        elif [ "$scenario" = in-progress ] && [ "$3" = 1 ]; then
+            printf 'in_progress\t\t\n'
         else
             printf 'completed\tsuccess\t\n'
         fi
@@ -113,6 +116,8 @@ expect_status 1 unauthenticated --watch 0123456789012345678901234567890123456789
 expect_status 1 failed-ci --message 'bad CI'
 expect_status 2 missing-dispatch --message 'missing chained workflow'
 expect_status 2 timeout --message 'timed out'
+expect_status 2 null-run --message 'wait for started CI'
+expect_status 2 in-progress --message 'wait for active CI'
 expect_status 0 already-released --watch 0123456789012345678901234567890123456789
 grep -F 'already has a release' "$test_root/stdout" >/dev/null
 
