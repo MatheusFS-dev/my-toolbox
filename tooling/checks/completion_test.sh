@@ -2,6 +2,7 @@
 set -eu
 
 repository_root=$(unset CDPATH; cd -- "$(dirname "$0")/../.." && pwd)
+payload_root="$repository_root/assets/payload"
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 mkdir -p "$test_root/bin" "$test_root/zsh"
@@ -22,7 +23,7 @@ bash_first=$(PATH="$test_root/bin:$PATH" bash -c '
     COMP_CWORD=1
     _tb_completion
     printf "%s\n" "${COMPREPLY[@]}"
-' bash "$repository_root")
+' bash "$payload_root")
 if [ "$bash_first" != "install-codex
 install-gh" ]; then
     printf 'Bash first-argument completion = %s\n' "$bash_first" >&2
@@ -36,7 +37,7 @@ bash_later=$(PATH="$test_root/bin:$PATH" bash -c '
     COMPREPLY=(toolbox-suggestion)
     _tb_completion
     printf "%s" "${COMPREPLY[*]}"
-' bash "$repository_root")
+' bash "$payload_root")
 if [ -n "$bash_later" ]; then
     printf 'Bash later-argument completion returned %s.\n' "$bash_later" >&2
     exit 1
@@ -58,7 +59,7 @@ zsh_first=$(PATH="$test_root/bin:$PATH" ZDOTDIR="$test_root/zsh" zsh -f -c '
     words=(tb in)
     CURRENT=2
     _tb_completion
-' zsh "$repository_root")
+' zsh "$payload_root")
 if [ "$zsh_first" != "install-codex
 install-gh" ]; then
     printf 'Zsh first-argument completion = %s\n' "$zsh_first" >&2
@@ -73,7 +74,7 @@ zsh_later=$(PATH="$test_root/bin:$PATH" ZDOTDIR="$test_root/zsh" zsh -f -c '
     words=(tb install-codex --)
     CURRENT=3
     _tb_completion
-' zsh "$repository_root")
+' zsh "$payload_root")
 if [ -n "$zsh_later" ]; then
     printf 'Zsh later-argument completion returned %s.\n' "$zsh_later" >&2
     exit 1
@@ -85,7 +86,7 @@ bash_search=$(PATH="$test_root/bin:$PATH" bash -c '
     COMP_CWORD=1
     _tb_completion
     printf "%s" "${COMPREPLY[*]}"
-' bash "$repository_root")
+' bash "$payload_root")
 if [ "$bash_search" != "search" ]; then
     printf 'Bash search completion = %s\n' "$bash_search" >&2
     exit 1
