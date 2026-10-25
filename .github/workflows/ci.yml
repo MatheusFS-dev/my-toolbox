@@ -43,33 +43,36 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - if: runner.os == 'Linux'
-        run: python -m pip install -r packages/monitor_runtime/requirements.txt
+        run: python -m pip install -r assets/payload/packages/monitor_runtime/requirements.txt
       - run: go test ./...
-      - run: python -m unittest discover -s packages/agent-workspace-template/source/tests -v
-      - if: runner.os == 'Linux'
-        run: python -m unittest discover -s packages/others/tests -v
+      - run: python tooling/checks/output_contract_audit.py
+      - run: python -m unittest discover -s assets/payload/packages/agent-workspace-template/source/tests -v
       - if: runner.os == 'Linux'
         env:
-          PYTHONPATH: packages/monitor_runtime
-        run: python -m unittest discover -s packages/monitor_runtime/tests -v
+          PYTHONPATH: assets/payload
+        run: python -m unittest discover -s assets/payload/packages/others/tests -v
+      - if: runner.os == 'Linux'
+        env:
+          PYTHONPATH: assets/payload/packages/monitor_runtime
+        run: python -m unittest discover -s assets/payload/packages/monitor_runtime/tests -v
       - name: Test NVIDIA stress runtime without CUDA dependencies
         env:
-          PYTHONPATH: packages/stress_gpu_runtime
-        run: python -m unittest discover -s packages/stress_gpu_runtime/tests -v
-      - run: python -m compileall -q packages/stress_gpu_runtime
-      - run: python -m compileall -q packages/others
-      - run: python -m compileall -q packages/monitor_runtime/monitor_runtime packages/monitor_runtime/tests
+          PYTHONPATH: assets/payload/packages/stress_gpu_runtime
+        run: python -m unittest discover -s assets/payload/packages/stress_gpu_runtime/tests -v
+      - run: python -m compileall -q assets/payload/packages/stress_gpu_runtime
+      - run: python -m compileall -q assets/payload/packages/others
+      - run: python -m compileall -q assets/payload/packages/monitor_runtime/monitor_runtime assets/payload/packages/monitor_runtime/tests
       - if: runner.os == 'Linux' && runner.arch == 'X64' && matrix.python-version == '3.14'
-        run: go test -race ./src
-      - run: go build -o "${{ runner.temp }}/tb" ./src
+        run: go test -race ./...
+      - run: go build -o "${{ runner.temp }}/tb" ./cmd/tb
       - if: runner.os == 'Linux'
-        run: find packages/scripts -type f -name '*.sh' -exec bash -n {} +
+        run: find assets/payload/packages/scripts -type f -name '*.sh' -exec bash -n {} +
       - if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $PowerShellFiles = @(
-            Get-ChildItem packages/scripts -Recurse -Filter *.ps1
-            Get-Item install.ps1, completions/tb.ps1, scripts/install_test.ps1, scripts/completion_test.ps1, scripts/terminal-hotkey_test.ps1, scripts/wsl-shift-enter_test.ps1, scripts/build-markdown-reader.ps1, scripts/build-markdown-reader-checks.ps1, scripts/build-markdown-reader_test.ps1, scripts/windows-prompt_test.ps1
+            Get-ChildItem assets/payload/packages/scripts -Recurse -Filter *.ps1
+            Get-Item install.ps1, assets/payload/completions/tb.ps1, tooling/local-install/install_test.ps1, tooling/checks/completion_test.ps1, tooling/checks/terminal-hotkey_test.ps1, tooling/checks/wsl-shift-enter_test.ps1, tooling/reader/build-markdown-reader.ps1, tooling/reader/build-markdown-reader-checks.ps1, tooling/reader/build-markdown-reader_test.ps1, tooling/checks/windows-prompt_test.ps1
           )
           $PowerShellFiles | ForEach-Object {
             $Errors = $null
@@ -78,28 +81,28 @@ jobs:
               throw "PowerShell syntax error in $($_.FullName): $Errors"
             }
           }
-          & ./scripts/completion_test.ps1
-          & ./scripts/install_test.ps1
-          & ./scripts/terminal-hotkey_test.ps1
-          & ./scripts/wsl-shift-enter_test.ps1
-          & ./scripts/build-markdown-reader_test.ps1
-          & ./scripts/windows-prompt_test.ps1
+          & ./tooling/checks/completion_test.ps1
+          & ./tooling/local-install/install_test.ps1
+          & ./tooling/checks/terminal-hotkey_test.ps1
+          & ./tooling/checks/wsl-shift-enter_test.ps1
+          & ./tooling/reader/build-markdown-reader_test.ps1
+          & ./tooling/checks/windows-prompt_test.ps1
       - if: runner.os == 'Windows'
         shell: powershell
         run: |
-          foreach ($Path in @('install.ps1', 'completions/tb.ps1', 'scripts/install_test.ps1', 'scripts/completion_test.ps1', 'scripts/terminal-hotkey_test.ps1', 'scripts/wsl-shift-enter_test.ps1', 'scripts/build-markdown-reader.ps1', 'scripts/build-markdown-reader-checks.ps1', 'scripts/build-markdown-reader_test.ps1', 'scripts/windows-prompt_test.ps1')) {
+          foreach ($Path in @('install.ps1', 'assets/payload/completions/tb.ps1', 'tooling/local-install/install_test.ps1', 'tooling/checks/completion_test.ps1', 'tooling/checks/terminal-hotkey_test.ps1', 'tooling/checks/wsl-shift-enter_test.ps1', 'tooling/reader/build-markdown-reader.ps1', 'tooling/reader/build-markdown-reader-checks.ps1', 'tooling/reader/build-markdown-reader_test.ps1', 'tooling/checks/windows-prompt_test.ps1')) {
             $Errors = $null
             [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $Path), [ref]$null, [ref]$Errors)
             if ($Errors.Count -gt 0) {
               throw "Windows PowerShell syntax error in ${Path}: $Errors"
             }
           }
-          & ./scripts/completion_test.ps1
-          & ./scripts/install_test.ps1
-          & ./scripts/terminal-hotkey_test.ps1
-          & ./scripts/wsl-shift-enter_test.ps1
-          & ./scripts/build-markdown-reader_test.ps1
-          & ./scripts/windows-prompt_test.ps1
+          & ./tooling/checks/completion_test.ps1
+          & ./tooling/local-install/install_test.ps1
+          & ./tooling/checks/terminal-hotkey_test.ps1
+          & ./tooling/checks/wsl-shift-enter_test.ps1
+          & ./tooling/reader/build-markdown-reader_test.ps1
+          & ./tooling/checks/windows-prompt_test.ps1
 
   python2-syntax:
     runs-on: ubuntu-latest
@@ -108,8 +111,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: pip install -r packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt
-      - run: python packages/agent-workspace-template/source/tests/python2_toolbox_adapter_test.py
+      - run: pip install -r assets/payload/packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt
+      - run: python assets/payload/packages/agent-workspace-template/source/tests/python2_toolbox_adapter_test.py
 
   shell:
     runs-on: ubuntu-latest
@@ -126,18 +129,18 @@ jobs:
             fi
           done
           sudo apt-get update && sudo apt-get install -y zsh
-      - run: sh scripts/next-release-version_test.sh
-      - run: sh scripts/build-release_test.sh
-      - run: sh scripts/build-markdown-reader_test.sh
-      - run: sh scripts/install_test.sh
-      - run: sh scripts/completion_test.sh
-      - run: sh scripts/cronjob_test.sh
-      - run: shellcheck packages/macros/cronjob/codex_hi.sh scripts/cronjob_test.sh
-      - run: bash scripts/terminal-setup_test.sh
-      - run: bash scripts/toggle-nopasswd-sudo_test.sh
-      - run: bash scripts/desktop-utils_test.sh
-      - run: bash scripts/gpu-isolation_test.sh
-      - run: python3 scripts/mount_drive_test.py
-      - run: bash -n completions/tb.bash
-      - run: zsh -n completions/_tb
-      - run: shellcheck install.sh completions/tb.bash packages/scripts/utils/isolate_gpu.sh packages/scripts/utils/toggle_nopasswd_sudo.sh scripts/build-release.sh scripts/build-release_test.sh scripts/build-markdown-reader.sh scripts/build-markdown-reader_test.sh scripts/completion_test.sh scripts/gpu-isolation_test.sh scripts/install_test.sh scripts/terminal-setup_test.sh scripts/toggle-nopasswd-sudo_test.sh scripts/testdata/go scripts/testdata/reader scripts/testdata/reader-build/cargo scripts/testdata/reader-build/readelf
+      - run: sh tooling/release/next-release-version_test.sh
+      - run: sh tooling/release/build-release_test.sh
+      - run: sh tooling/reader/build-markdown-reader_test.sh
+      - run: sh tooling/local-install/install_test.sh
+      - run: sh tooling/checks/completion_test.sh
+      - run: sh tooling/checks/cronjob_test.sh
+      - run: shellcheck assets/payload/packages/macros/cronjob/codex_hi.sh tooling/checks/cronjob_test.sh
+      - run: bash tooling/checks/terminal-setup_test.sh
+      - run: bash tooling/checks/toggle-nopasswd-sudo_test.sh
+      - run: bash tooling/checks/desktop-utils_test.sh
+      - run: bash tooling/checks/gpu-isolation_test.sh
+      - run: python3 tooling/checks/mount_drive_test.py
+      - run: bash -n assets/payload/completions/tb.bash
+      - run: zsh -n assets/payload/completions/_tb
+      - run: shellcheck install.sh assets/payload/completions/tb.bash assets/payload/packages/scripts/utils/isolate_gpu.sh assets/payload/packages/scripts/utils/toggle_nopasswd_sudo.sh tooling/release/build-release.sh tooling/release/build-release_test.sh tooling/reader/build-markdown-reader.sh tooling/reader/build-markdown-reader_test.sh tooling/checks/completion_test.sh tooling/checks/gpu-isolation_test.sh tooling/local-install/install_test.sh tooling/checks/terminal-setup_test.sh tooling/checks/toggle-nopasswd-sudo_test.sh tooling/testdata/go tooling/testdata/reader tooling/testdata/reader-build/cargo tooling/testdata/reader-build/readelf

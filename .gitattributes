@@ -1,3 +1,5 @@
-src/testdata/help-*.txt text eol=lf
+internal/ui/testdata/help-*.txt text eol=lf
 *.sh text eol=lf
-scripts/testdata/go text eol=lf
+tooling/testdata/go text eol=lf
+assets/payload/** -text
+assets/reader/** -text

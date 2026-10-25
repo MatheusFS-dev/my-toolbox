@@ -15,8 +15,8 @@ downloads/
 eggs/
 .eggs/
 lib/
-!packages/scripts/lib/
-!packages/scripts/lib/toolbox_output.sh
+!assets/payload/packages/scripts/lib/
+!assets/payload/packages/scripts/lib/toolbox_output.sh
 lib64/
 parts/
 sdist/

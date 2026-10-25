@@ -23,4 +23,4 @@ Every new or modified tool must use the executable output helper for its runtime
 - Give every optional prompt a visible, functional default. Mark required free-text prompts explicitly and re-prompt on empty input; numbered menus convey required input through their listed choices and an actionable retry warning.
 - Preserve machine-readable output and external-program bytes exactly.
 - Add or update the local gallery under `tmp/tb-tool-output-preview/` and the contract tests.
-- Pass the global output audit before registering a tool in `commands.json`.
+- Pass the global output audit before registering a tool in `assets/payload/commands.json`.

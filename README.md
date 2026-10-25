@@ -47,7 +47,7 @@
 | Guide library | Searchable bundled Markdown articles through `tb search` |
 | Macro library | Searchable AutoHotkey (Windows), ydotool (Linux), and daily Codex cronjob (native systemd Linux) macros through `tb macros` |
 | Platform awareness | Native Linux, WSL, and Windows filtering before commands are shown or run |
-| Catalog source | Tool names, categories, descriptions, and platform rules in `commands.json` |
+| Catalog source | Tool names, categories, descriptions, and platform rules in `assets/payload/commands.json` |
 | Maintenance | Built-in macro browser, search, update, version, help, and uninstall commands |
 
 The toolbox gathers all required answers before it runs selected tools, executes them in catalog order, and stops at the first failure. Unsupported tools return an explicit platform error, while direct-only commands remain available through `tb help`.
@@ -240,11 +240,11 @@ Run `codex-hi`, `claude-hi`, or `agy-hi` to view that client's schedule, recent 
 
 Re-running an installer changes only that client's daily schedule and preserves its history. `tb uninstall` leaves these jobs installed. To remove one job, run its command with `--uninstall` (for example, `claude-hi --uninstall`); this removes only that client's schedule, wrapper, configuration, and logs, while leaving the shared cron service, unrelated crontab entries, and the other two jobs intact. A downloaded installer can be run as `sh codex_hi.sh 07:00`, `sh claude_hi.sh 07:00`, or `sh agy_hi.sh 07:00`; omit the time to be prompted.
 
-Macro packages live below `packages/macros`. The `autohotkey` driver discovers regular `.ahk` files recursively; `ydotool` and `cronjob` discover `.sh` files. Both shell drivers require `--check` followed by the macro arguments, validating without side effects. Cronjob installers run in the foreground. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Argument types are `text`, `non_negative_integer`, and `time_24h`. Adding a script to a registered subpackage is automatic; another subpackage requires a driver implementation.
+Macro packages live below `assets/payload/packages/macros`. The `autohotkey` driver discovers regular `.ahk` files recursively; `ydotool` and `cronjob` discover `.sh` files. Both shell drivers require `--check` followed by the macro arguments, validating without side effects. Cronjob installers run in the foreground. A script can have an optional same-basename `.json` sidecar containing its title, description, and ordered argument definitions; scripts without sidecars derive their title from the filename and receive no toolbox-supplied arguments. Argument types are `text`, `non_negative_integer`, and `time_24h`. Adding a script to a registered subpackage is automatic; another subpackage requires a driver implementation.
 
 ## Tool Catalog
 
-The command catalog is defined in `commands.json`. The descriptions below summarize each tool and its relevant safeguards.
+The command catalog is defined in `assets/payload/commands.json`. The descriptions below summarize each tool and its relevant safeguards.
 
 ### Agents
 
@@ -407,18 +407,18 @@ Development and release builds require Go 1.25.8, as declared in `go.mod`, and P
 
 ```sh
 go test ./...
-cargo test --locked --manifest-path packages/search/fork-markdown-reader/Cargo.toml
-python3 -m pip install -r packages/monitor_runtime/requirements.txt
-PYTHONPATH=packages/monitor_runtime python3 -m unittest discover -s packages/monitor_runtime/tests -v
-python3 -m unittest discover -s packages/agent-workspace-template/source/tests -v
-python3 -m unittest discover -s packages/others/tests -v
-PYTHONPATH=packages/stress_gpu_runtime python3 -m unittest discover -s packages/stress_gpu_runtime/tests -v
-sh scripts/install_test.sh
-bash scripts/install_local_test.sh
-sh scripts/build-release_test.sh
-sh scripts/build-markdown-reader_test.sh
-bash scripts/terminal-setup_test.sh
-bash scripts/gpu-isolation_test.sh
+cargo test --locked --manifest-path assets/reader/fork-markdown-reader/Cargo.toml
+python3 -m pip install -r assets/payload/packages/monitor_runtime/requirements.txt
+PYTHONPATH=assets/payload/packages/monitor_runtime python3 -m unittest discover -s assets/payload/packages/monitor_runtime/tests -v
+python3 -m unittest discover -s assets/payload/packages/agent-workspace-template/source/tests -v
+PYTHONPATH=assets/payload python3 -m unittest discover -s assets/payload/packages/others/tests -v
+PYTHONPATH=assets/payload/packages/stress_gpu_runtime python3 -m unittest discover -s assets/payload/packages/stress_gpu_runtime/tests -v
+sh tooling/local-install/install_test.sh
+bash tooling/local-install/install_local_test.sh
+sh tooling/release/build-release_test.sh
+sh tooling/reader/build-markdown-reader_test.sh
+bash tooling/checks/terminal-setup_test.sh
+bash tooling/checks/gpu-isolation_test.sh
 ```
 
 ### Install this checkout locally
@@ -442,7 +442,7 @@ CI additionally validates release/version scripts, shell completion, PowerShell 
 Create release archives by passing a canonical three-part version, an output directory, and a directory containing all three verified native readers:
 
 ```sh
-scripts/build-release.sh 0.1.123 dist readers
+tooling/release/build-release.sh 0.1.123 dist readers
 ```
 
 The reader directory must contain these files, with executable permissions on Linux readers:
@@ -454,7 +454,7 @@ readers/
   windows-amd64/libexec/tb-markdown-reader.exe
 ```
 
-The release workflow assembles that directory from the native build artifacts. For local native builds, use [build-markdown-reader.sh](scripts/build-markdown-reader.sh) with the matching MUSL target and an output directory, or [build-markdown-reader.ps1](scripts/build-markdown-reader.ps1) with an output directory on Windows x64; the workflow records the required compiler and binary-inspection setup.
+The release workflow assembles that directory from the native build artifacts. For local native builds, use [build-markdown-reader.sh](tooling/reader/build-markdown-reader.sh) with the matching MUSL target and an output directory, or [build-markdown-reader.ps1](tooling/reader/build-markdown-reader.ps1) with an output directory on Windows x64; the workflow records the required compiler and binary-inspection setup.
 
 The build produces Linux x64, Linux ARM64, and Windows x64 archives, corresponding SHA-256 files, and `version.txt`. Each archive includes its compiled reader under `libexec`; the reader's Rust sources and Cargo build artifacts are excluded. Release, Pages, and submodule automation is defined under `.github/workflows`; repository secrets and settings are configured separately.
 
@@ -495,4 +495,4 @@ Thanks to the people who have contributed to my-toolbox:
 - NVIDIA stress runtime installation follows [official PyTorch CUDA wheel instructions](https://pytorch.org/get-started/previous-versions/).
 - NVIDIA stress telemetry uses the [NVIDIA Management Library](https://docs.nvidia.com/deploy/nvml-api/latest/).
 
-- The bundled reader is derived from [leboiko/markdown-reader](https://github.com/leboiko/markdown-reader) 1.35.1 at [commit `186698c`](https://github.com/leboiko/markdown-reader/tree/186698caba1f6c4f9932296da03c5599b35408d0). Credit goes to its original author and contributors. The local fork remains available under its [MIT License](packages/search/fork-markdown-reader/LICENSE).
+- The bundled reader is derived from [leboiko/markdown-reader](https://github.com/leboiko/markdown-reader) 1.35.1 at [commit `186698c`](https://github.com/leboiko/markdown-reader/tree/186698caba1f6c4f9932296da03c5599b35408d0). Credit goes to its original author and contributors. The local fork remains available under its [MIT License](assets/reader/fork-markdown-reader/LICENSE).

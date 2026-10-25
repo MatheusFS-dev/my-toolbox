@@ -1,0 +1,286 @@
+package ui
+
+import (
+	"fmt"
+	"io"
+	"strings"
+	"unicode/utf8"
+
+	"charm.land/lipgloss/v2"
+	"github.com/MatheusFS-dev/my-toolbox/internal/catalog"
+	"github.com/charmbracelet/x/term"
+)
+
+type Command = catalog.Command
+type Catalog = catalog.Catalog
+
+const MaxPresentationWidth = 72
+
+const (
+	ANSIWhite     = "37"
+	ANSIBlue      = "34"
+	ANSIGreen     = "32"
+	ANSIGray      = "90"
+	ANSIBoldWhite = "1;37"
+	ANSIBrightRed = "91"
+)
+
+type CommandGroup struct {
+	Category string
+	Commands []Command
+}
+
+// FilteredCommands returns catalog commands visible in one presentation.
+//
+// Args:
+//   - catalog: Validated catalog in public command order.
+//   - environment: Current environment name used for support filtering.
+//   - includeDirect: When true, include both list and direct commands for help;
+//     when false, include only list-visible commands for interactive selection.
+//
+// Returns:
+//   - []Command: Supported commands in unchanged catalog order.
+//
+// Raises:
+//   - None.
+func FilteredCommands(catalog Catalog, environment string, includeDirect bool) []Command {
+	commands := make([]Command, 0, len(catalog.Commands))
+	for _, command := range catalog.Commands {
+		if !command.SupportsEnvironment(environment) {
+			continue
+		}
+		if !includeDirect && command.Visibility != "list" {
+			continue
+		}
+		command.PresentationEnvironment = environment
+		commands = append(commands, command)
+	}
+	return commands
+}
+
+// GroupCommands groups already-filtered commands by first category appearance.
+//
+// Args:
+//   - commands: Supported commands in catalog order. Callers must filter
+//     visibility and environment support before grouping.
+//
+// Returns:
+//   - []CommandGroup: Non-empty groups preserving category and command order.
+//
+// Raises:
+//   - None.
+func GroupCommands(commands []Command) []CommandGroup {
+	groups := []CommandGroup{}
+	indexes := map[string]int{}
+	for _, command := range commands {
+		index, exists := indexes[command.Category]
+		if !exists {
+			index = len(groups)
+			indexes[command.Category] = index
+			groups = append(groups, CommandGroup{Category: command.Category})
+		}
+		groups[index].Commands = append(groups[index].Commands, command)
+	}
+	return groups
+}
+
+// RenderHelp renders categorized help at the requested terminal width.
+//
+// Args:
+//   - commands: Environment-filtered catalog commands, including direct-only
+//     commands when they are supported.
+//   - version: Current toolbox version displayed beside the title.
+//   - terminalWidth: Live TTY width, or 80 for redirected output. Content is
+//     capped at 72 columns and narrower positive widths are honored.
+//   - styled: When true, add foreground and bold ANSI styling. When false,
+//     produce the identical hierarchy and wrapping without escape sequences.
+//
+// Returns:
+//   - string: Complete help text with a trailing newline.
+//
+// Raises:
+//   - None.
+//
+// Example:
+//
+//	help := RenderHelp(commands, "1.2.3", 80, false)
+func RenderHelp(commands []Command, version string, terminalWidth int, styled bool) string {
+	width := min(terminalWidth, MaxPresentationWidth)
+	if width < 1 {
+		width = 1
+	}
+	var output strings.Builder
+	writeHeading := func(text string) {
+		output.WriteString(PresentationStyle(text, ANSIBoldWhite, styled))
+		output.WriteByte('\n')
+	}
+	writeWrapped := func(text string, indentation int, color string) {
+		for _, line := range WrapText(text, max(1, width-indentation)) {
+			output.WriteString(strings.Repeat(" ", min(indentation, width)))
+			output.WriteString(PresentationStyle(line, color, styled))
+			output.WriteByte('\n')
+		}
+	}
+
+	writeHeading("TOOLBOX " + version)
+	writeWrapped("Portable terminal tools for supported Linux, WSL, and Windows environments.", 2, ANSIWhite)
+	output.WriteByte('\n')
+	writeHeading("USAGE")
+	usage := []struct {
+		command     string
+		description string
+	}{
+		{"tb list", "Select supported tools interactively and run them in catalog order."},
+		{"tb macros", "Browse, run, or download bundled macros."},
+		{"tb search", "Browse and search the bundled Markdown guides."},
+		{"tb <tool> [arguments...]", "Run one supported catalog tool directly, forwarding its arguments."},
+		{"tb update", "Reinstall the toolbox when a newer release is available."},
+		{"tb uninstall", "Confirm and remove the toolbox wrapper and installed versions."},
+		{"tb version", "Print the installed toolbox version."},
+		{"tb help", "Show this usage and the tools supported in the current environment."},
+	}
+	for _, entry := range usage {
+		writeWrapped(entry.command, 2, ANSIWhite)
+		writeWrapped(entry.description, 4, ANSIGray)
+	}
+	output.WriteByte('\n')
+	writeHeading("AVAILABLE TOOLS")
+	for groupIndex, group := range GroupCommands(commands) {
+		if groupIndex > 0 {
+			output.WriteByte('\n')
+		}
+		writeWrapped(group.Category, 2, ANSIBoldWhite)
+		for _, command := range group.Commands {
+			writeWrapped(command.Name, 4, ANSIWhite)
+			writeWrapped(command.Description, 6, ANSIGray)
+			if requirements := command.RequirementText(); requirements != "" {
+				writeWrapped(requirements, 6, ANSIBrightRed)
+			}
+		}
+	}
+	return output.String()
+}
+
+// HelpTerminalProperties detects whether help output is a TTY and its width.
+//
+// Args:
+//   - output: Destination writer for help text.
+//
+// Returns:
+//   - bool: True only when output exposes a terminal file descriptor.
+//   - int: Live terminal width for a TTY, or the required 80-column basis for
+//     redirected output.
+//   - error: Terminal size lookup failure for detected TTY output.
+//
+// Raises:
+//   - None. Terminal failures are returned as errors.
+func HelpTerminalProperties(output io.Writer) (bool, int, error) {
+	file, hasDescriptor := output.(interface{ Fd() uintptr })
+	if !hasDescriptor || !term.IsTerminal(file.Fd()) {
+		return false, 80, nil
+	}
+	width, _, err := term.GetSize(file.Fd())
+	if err != nil {
+		return false, 0, fmt.Errorf("read terminal size: %w", err)
+	}
+	return true, width, nil
+}
+
+// WrapText wraps plain text without exceeding a visible column width.
+//
+// Args:
+//   - text: Plain text to wrap. Consecutive whitespace is normalized because
+//     catalog descriptions contain prose rather than preformatted content.
+//   - width: Maximum visible columns per returned line; must be positive.
+//
+// Returns:
+//   - []string: Wrapped lines. Words longer than width are split by rune.
+//
+// Raises:
+//   - panic: If width is not positive.
+func WrapText(text string, width int) []string {
+	if width < 1 {
+		panic("wrap width must be positive")
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	lines := []string{}
+	current := ""
+	for _, word := range words {
+		for lipgloss.Width(word) > width {
+			prefix, remainder := SplitAtWidth(word, width)
+			if current != "" {
+				lines = append(lines, current)
+				current = ""
+			}
+			lines = append(lines, prefix)
+			word = remainder
+		}
+		if current == "" {
+			current = word
+			continue
+		}
+		if lipgloss.Width(current)+1+lipgloss.Width(word) <= width {
+			current += " " + word
+			continue
+		}
+		lines = append(lines, current)
+		current = word
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+// SplitAtWidth divides one plain word at a visible column boundary.
+//
+// Args:
+//   - text: Non-empty word whose visible width exceeds width.
+//   - width: Positive maximum width of the returned prefix.
+//
+// Returns:
+//   - string: Largest non-empty prefix fitting within width.
+//   - string: Remaining suffix.
+//
+// Raises:
+//   - None. Callers must satisfy the documented non-empty and width assumptions.
+func SplitAtWidth(text string, width int) (string, string) {
+	end := 0
+	for index := range text {
+		if index == 0 {
+			continue
+		}
+		if lipgloss.Width(text[:index]) > width {
+			break
+		}
+		end = index
+	}
+	if end == 0 {
+		_, size := utf8.DecodeRuneInString(text)
+		end = size
+	}
+	return text[:end], text[end:]
+}
+
+// PresentationStyle applies one ANSI SGR style when styling is enabled.
+//
+// Args:
+//   - text: Text to style.
+//   - code: ANSI SGR code without control-sequence delimiters.
+//   - enabled: When true, wrap text with the style and reset sequences; when
+//     false, return text byte-for-byte without styling.
+//
+// Returns:
+//   - string: Styled or unchanged text.
+//
+// Raises:
+//   - None.
+func PresentationStyle(text string, code string, enabled bool) string {
+	if !enabled {
+		return text
+	}
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
+}

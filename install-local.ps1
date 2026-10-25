@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $RepositoryRoot = $PSScriptRoot
-. (Join-Path $RepositoryRoot 'packages/scripts/terminal/windows/modules/output.ps1')
+. (Join-Path $RepositoryRoot 'assets/payload/packages/scripts/terminal/windows/modules/output.ps1')
 Initialize-ToolboxOutput -ToolName 'install-local'
 
 function Show-PathGuide {
@@ -55,31 +55,31 @@ try {
         Copy-Item -LiteralPath $InstalledReader -Destination (Join-Path $Libexec 'tb-markdown-reader.exe')
     } else {
         Write-ToolboxInfo 'Building the bundled Markdown reader...'
-        & (Join-Path $RepositoryRoot 'scripts/build-markdown-reader.ps1') $Stage
+        & (Join-Path $RepositoryRoot 'tooling/reader/build-markdown-reader.ps1') $Stage
         if ($LASTEXITCODE -ne 0) { throw 'Markdown reader build failed; the active version was not changed.' }
     }
     & (Join-Path $Libexec 'tb-markdown-reader.exe') --tb-self-check | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Markdown reader self-check failed; the active version was not changed.' }
-    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'packages/search/fork-markdown-reader/LICENSE') -Destination (Join-Path $Libexec 'tb-markdown-reader-LICENSE')
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/reader/fork-markdown-reader/LICENSE') -Destination (Join-Path $Libexec 'tb-markdown-reader-LICENSE')
 
     Write-ToolboxInfo 'Building and staging the local toolbox...'
-    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'commands.json') -Destination $Stage
-    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'completions') -Destination $Stage -Recurse
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/commands.json') -Destination $Stage
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/completions') -Destination $Stage -Recurse
     $Packages = Join-Path $Stage 'packages'
     [void](New-Item -ItemType Directory -Path $Packages)
-    Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot 'packages') | Where-Object { $_.Name -ne 'search' } | ForEach-Object {
+    Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/packages') | Where-Object { $_.Name -ne 'search' } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $Packages -Recurse
     }
     $Search = Join-Path $Packages 'search'
     [void](New-Item -ItemType Directory -Path $Search)
-    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'packages/search/articles') -Destination $Search -Recurse
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/packages/search/articles') -Destination $Search -Recurse
     Get-ChildItem -LiteralPath $Packages -Force -Recurse | Where-Object { $_.Name -eq '.git' -or $_.Name -eq '__pycache__' } | ForEach-Object {
         Remove-Item -LiteralPath $_.FullName -Recurse -Force
     }
     [IO.File]::WriteAllText((Join-Path $Stage 'version.txt'), "$Version`n", [Text.UTF8Encoding]::new($false))
     Push-Location $RepositoryRoot
     try {
-        & go build -trimpath -ldflags "-s -w -X main.version=$Version" -o (Join-Path $Stage 'tb.exe') ./src
+        & go build -trimpath -ldflags "-s -w -X main.version=$Version" -o (Join-Path $Stage 'tb.exe') ./cmd/tb
     } finally {
         Pop-Location
     }

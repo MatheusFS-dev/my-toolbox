@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r packages/monitor_runtime/requirements.txt
+      - run: python -m pip install -r assets/payload/packages/monitor_runtime/requirements.txt
       - name: Install Zsh
         run: |
           for source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
@@ -59,18 +59,19 @@ jobs:
       - name: Verify release commit
         run: |
           go test ./...
-          PYTHONPATH=packages/stress_gpu_runtime python -m unittest discover -s packages/stress_gpu_runtime/tests -v
-          python -m unittest discover -s packages/agent-workspace-template/source/tests -v
-          python -m unittest discover -s packages/others/tests -v
-          sh scripts/install_test.sh
-          sh scripts/cronjob_test.sh
-          bash scripts/terminal-setup_test.sh
-          bash scripts/toggle-nopasswd-sudo_test.sh
-          bash scripts/desktop-utils_test.sh
-          bash scripts/gpu-isolation_test.sh
-          python3 scripts/mount_drive_test.py
-          sh scripts/build-release_test.sh
-          sh scripts/build-markdown-reader_test.sh
+          python tooling/checks/output_contract_audit.py
+          PYTHONPATH=assets/payload/packages/stress_gpu_runtime python -m unittest discover -s assets/payload/packages/stress_gpu_runtime/tests -v
+          python -m unittest discover -s assets/payload/packages/agent-workspace-template/source/tests -v
+          PYTHONPATH=assets/payload python -m unittest discover -s assets/payload/packages/others/tests -v
+          sh tooling/local-install/install_test.sh
+          sh tooling/checks/cronjob_test.sh
+          bash tooling/checks/terminal-setup_test.sh
+          bash tooling/checks/toggle-nopasswd-sudo_test.sh
+          bash tooling/checks/desktop-utils_test.sh
+          bash tooling/checks/gpu-isolation_test.sh
+          python3 tooling/checks/mount_drive_test.py
+          sh tooling/release/build-release_test.sh
+          sh tooling/reader/build-markdown-reader_test.sh
       - name: Reject an already released commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -89,9 +90,9 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
-          TOOLBOX_RELEASE_MINIMUM_VERSION: 1.9.0
+          TOOLBOX_RELEASE_MINIMUM_VERSION: 2.0.0
         run: |
-          VERSION=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | sh scripts/next-release-version.sh)
+          VERSION=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name' | sh tooling/release/next-release-version.sh)
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
@@ -108,8 +109,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          chmod +x scripts/build-release.sh
-          scripts/build-release.sh "$VERSION" dist readers
+          chmod +x tooling/release/build-release.sh
+          tooling/release/build-release.sh "$VERSION" dist readers
       - name: Publish exact commit
         env:
           GH_TOKEN: ${{ github.token }}

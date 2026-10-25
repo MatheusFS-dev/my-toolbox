@@ -65,13 +65,13 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: |
-          sh scripts/build-markdown-reader.sh '${{ matrix.rust-target }}' 'readers/${{ matrix.platform }}'
+          sh tooling/reader/build-markdown-reader.sh '${{ matrix.rust-target }}' 'readers/${{ matrix.platform }}'
           'readers/${{ matrix.platform }}/libexec/tb-markdown-reader' --tb-self-check
       - name: Build and verify native Windows reader
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & ./scripts/build-markdown-reader.ps1 'readers/${{ matrix.platform }}'
+          & ./tooling/reader/build-markdown-reader.ps1 'readers/${{ matrix.platform }}'
           & './readers/${{ matrix.platform }}/libexec/tb-markdown-reader.exe' --tb-self-check
           if ($LASTEXITCODE -ne 0) { throw 'Packaged reader self-check failed.' }
       # upload-artifact does not preserve executable modes. The tar preserves

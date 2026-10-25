@@ -3,7 +3,7 @@ set -eu
 
 repo_root=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
-. "$repo_root/packages/scripts/lib/toolbox_output.sh"
+. "$repo_root/assets/payload/packages/scripts/lib/toolbox_output.sh"
 tb_output_init install-local
 
 fail() {
@@ -63,17 +63,17 @@ if [ -n "$reader" ]; then
 else
     command -v cargo >/dev/null 2>&1 || fail 'Cargo is required to build the bundled Markdown reader.'
     tb_info 'Building the bundled Markdown reader...'
-    "$repo_root/scripts/build-markdown-reader.sh" "$rust_target" "$stage" || fail 'Markdown reader build failed; the active version was not changed.'
+    "$repo_root/tooling/reader/build-markdown-reader.sh" "$rust_target" "$stage" || fail 'Markdown reader build failed; the active version was not changed.'
 fi
 "$stage/libexec/tb-markdown-reader" --tb-self-check >/dev/null || fail 'Markdown reader self-check failed; the active version was not changed.'
-cp "$repo_root/packages/search/fork-markdown-reader/LICENSE" "$stage/libexec/tb-markdown-reader-LICENSE"
+cp "$repo_root/assets/reader/fork-markdown-reader/LICENSE" "$stage/libexec/tb-markdown-reader-LICENSE"
 
 tb_info 'Building and staging the local toolbox...'
-cp "$repo_root/commands.json" "$stage/commands.json"
-cp -R "$repo_root/completions" "$stage/completions"
-tar -C "$repo_root" --exclude='packages/search/fork-markdown-reader' --exclude='*/.git' --exclude='*/__pycache__' -cf - packages | tar -C "$stage" -xf -
+cp "$repo_root/assets/payload/commands.json" "$stage/commands.json"
+cp -R "$repo_root/assets/payload/completions" "$stage/completions"
+tar -C "$repo_root/assets/payload" --exclude='*/.git' --exclude='*/__pycache__' -cf - packages | tar -C "$stage" -xf -
 printf '%s\n' "$version" > "$stage/version.txt"
-(cd "$repo_root" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/tb" ./src) || fail 'Go build failed; the active version was not changed.'
+(cd "$repo_root" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/tb" ./cmd/tb) || fail 'Go build failed; the active version was not changed.'
 "$stage/tb" help >/dev/null || fail 'Local toolbox smoke test failed; the active version was not changed.'
 
 tb_info 'Activating the local toolbox version...'
