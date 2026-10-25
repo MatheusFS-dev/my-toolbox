@@ -6,8 +6,24 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+func TestOpenCodeSuperpowersBuiltinRequiresOpenCodeWhenRun(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PATH", root)
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	platform := "linux-amd64"
+	if runtime.GOOS == "windows" {
+		platform = "windows-amd64"
+	}
+	builtins := NewToolboxBuiltins("", platform, "2.0.0", io.Discard)
+	if err := builtins.installOpenCodeSuperpowers(); err == nil || !strings.Contains(err.Error(), "OpenCode is required") {
+		t.Fatalf("missing OpenCode error = %v", err)
+	}
+}
 
 func TestAddOpenCodeSuperpowersPreservesConfigAndSkipsDuplicate(t *testing.T) {
 	root := t.TempDir()

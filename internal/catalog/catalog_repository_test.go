@@ -200,9 +200,27 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "700291c5d82147ac1e2470891cf8dde89bf5c24935429f9abf33bbcaaa7d1d3c"
+	const want = "77b21f521ad4025be4592e10a7d6d57b4bd64dcd2db7e458d8ef6798b4d93411"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
+	}
+}
+
+func TestRepositoryCatalogLoadsInPreOpenCodeToolbox(t *testing.T) {
+	catalog, err := LoadCatalogFile("../../assets/payload/commands.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, exists := catalog.Find("install-superpowers-opencode")
+	if !exists {
+		t.Fatal("OpenCode installer is missing")
+	}
+	for environment, capabilities := range command.Requirements {
+		for _, capability := range capabilities {
+			if capability == "opencode" {
+				t.Fatalf("%s declares capability %q, which older tb updates cannot load", environment, capability)
+			}
+		}
 	}
 }
 

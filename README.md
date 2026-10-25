@@ -269,8 +269,7 @@ The command catalog is defined in `assets/payload/commands.json`. The descriptio
   Requires: Claude Code with plugin management.
 - `install-superpowers-antigravity`: Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
   Requires: Antigravity with plugin management.
-- `install-superpowers-opencode`: Add the Superpowers plugin to OpenCode configuration for the current user. Skips an existing installation and preserves other plugins.
-  Requires: OpenCode.
+- `install-superpowers-opencode`: Add the Superpowers plugin to OpenCode configuration for the current user. OpenCode must be installed when running this tool. Skips an existing installation and preserves other plugins.
 
 ### Agent Workspace
 
