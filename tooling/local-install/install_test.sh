@@ -69,6 +69,9 @@ SH
 cat > "$test_root/bin/curl" <<'SH'
 #!/bin/sh
 set -eu
+if [ -n "${CURL_LOG:-}" ]; then
+    printf '%s\n' "$*" >> "$CURL_LOG"
+fi
 output=
 url=
 while [ "$#" -gt 0 ]; do
@@ -124,6 +127,46 @@ fi
 exec /bin/mv ${move_option:+"$move_option"} "$@"
 SH
 chmod 755 "$test_root/bin/uname" "$test_root/bin/curl" "$test_root/bin/mv"
+
+progress_home="$test_root/progress-home"
+progress_log="$test_root/progress-curl.log"
+mkdir -p "$progress_home"
+if ! script -qefc "env HOME='$progress_home' ZDOTDIR='$progress_home' TMPDIR='$test_root/tmp' FIXTURE_DOWNLOADS='$test_root/downloads' CURL_LOG='$progress_log' PATH='$test_root/bin:/usr/bin:/bin' sh '$repository_root/install.sh'" /dev/null >"$test_root/progress.out" 2>&1; then
+    printf 'Interactive installer download fixture failed.\n' >&2
+    cat "$test_root/progress.out" >&2
+    exit 1
+fi
+progress_archive=$(grep -F '/toolbox-linux-amd64.tar.gz ' "$progress_log" | grep -Fv '.sha256' || :)
+case "$progress_archive" in
+    *--progress-bar*) ;;
+    *)
+        printf 'Interactive installer archive download did not enable curl progress.\n' >&2
+        cat "$progress_log" >&2
+        exit 1
+        ;;
+esac
+
+quiet_home="$test_root/quiet-home"
+quiet_log="$test_root/quiet-curl.log"
+mkdir -p "$quiet_home"
+HOME="$quiet_home" ZDOTDIR="$quiet_home" TMPDIR="$test_root/tmp" FIXTURE_DOWNLOADS="$test_root/downloads" \
+    CURL_LOG="$quiet_log" PATH="$test_root/bin:/usr/bin:/bin" sh "$repository_root/install.sh" >"$test_root/quiet.out" 2>&1
+quiet_archive=$(grep -F '/toolbox-linux-amd64.tar.gz ' "$quiet_log" | grep -Fv '.sha256' || :)
+case "$quiet_archive" in
+    *-fsSL*) ;;
+    *)
+        printf 'Redirected installer archive download did not remain silent.\n' >&2
+        cat "$quiet_log" >&2
+        exit 1
+        ;;
+esac
+case "$quiet_archive" in
+    *--progress-bar*)
+        printf 'Redirected installer archive download enabled curl progress.\n' >&2
+        cat "$quiet_log" >&2
+        exit 1
+        ;;
+esac
 
 for reader_case in missing failed symlink directory-symlink; do
     reader_payload="$test_root/reader-$reader_case-payload"

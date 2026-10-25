@@ -714,7 +714,11 @@ complete_stage
 start_stage 3 download
 temporary_root=$(mktemp -d)
 base_url="https://github.com/$repository/releases/download/$tag"
-curl -fsSL "$base_url/$archive" -o "$temporary_root/$archive"
+if [ -t 2 ]; then
+    curl -fL --progress-bar "$base_url/$archive" -o "$temporary_root/$archive"
+else
+    curl -fsSL "$base_url/$archive" -o "$temporary_root/$archive"
+fi
 curl -fsSL "$base_url/$archive.sha256" -o "$temporary_root/$archive.sha256"
 complete_stage
 
