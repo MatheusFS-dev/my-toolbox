@@ -8,15 +8,6 @@ Persistent
 
 global ScreenshotPathPasteApp := 0
 
-if HasSelfTestArgument() {
-    RunSelfTest()
-    ExitApp 0
-}
-
-ScreenshotPathPasteApp := ScreenshotPathPaste()
-ScreenshotPathPasteApp.Start()
-return
-
 #HotIf IsScreenshotPathReady()
 $^+v::PasteScreenshotPath()
 #HotIf
@@ -530,3 +521,12 @@ Assert(condition, message) {
     if !condition
         throw Error("Self-test failed: " message)
 }
+
+if HasSelfTestArgument() {
+    RunSelfTest()
+    ExitApp 0
+}
+
+ScreenshotPathPasteApp := ScreenshotPathPaste()
+ScreenshotPathPasteApp.Start()
+return
