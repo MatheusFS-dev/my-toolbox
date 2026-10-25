@@ -7,7 +7,7 @@ trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 mkdir -p "$test_root/bin" "$test_root/payload" "$test_root/home" "$test_root/downloads" "$test_root/tmp"
 
 cp "$repository_root/assets/payload/commands.json" "$test_root/payload/commands.json"
-cp -R "$repository_root/completions" "$test_root/payload/completions"
+cp -R "$repository_root/assets/payload/completions" "$test_root/payload/completions"
 mkdir -p "$test_root/payload/packages/macros/autohotkey" "$test_root/payload/packages/ssh_tools"
 cp "$repository_root/assets/payload/packages/ssh_tools/direct_link.py" "$test_root/payload/packages/ssh_tools/"
 cp "$repository_root/assets/payload/packages/toolbox_output.py" "$test_root/payload/packages/"
