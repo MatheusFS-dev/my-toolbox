@@ -1,1 +1,0 @@
-- [x] Make tab autocomplete commands of tb on all plataforms
