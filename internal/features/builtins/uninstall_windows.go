@@ -473,6 +473,9 @@ func cleanupWindowsPaths(dataRoot, wrapper string) error {
 	if err := toolboxRoot.RemoveAll("used-tools"); err != nil {
 		return fmt.Errorf("remove Windows remembered tools: %w", err)
 	}
+	if err := cleanupWindowsScreenshotPathPasteMacro(toolboxRoot); err != nil {
+		return err
+	}
 	if err := toolboxRoot.Remove("current.txt"); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove Windows toolbox current version: %w", err)
 	}
@@ -481,6 +484,23 @@ func cleanupWindowsPaths(dataRoot, wrapper string) error {
 	}
 	if err := toolboxRoot.Remove("bin"); err != nil && !os.IsNotExist(err) && !errors.Is(err, windows.ERROR_DIR_NOT_EMPTY) {
 		return fmt.Errorf("remove empty Windows toolbox bin directory: %w", err)
+	}
+	return nil
+}
+
+// cleanupWindowsScreenshotPathPasteMacro removes only the persistent files
+// owned by the Paste Screenshot Path macro and its exact Startup shortcut.
+func cleanupWindowsScreenshotPathPasteMacro(toolboxRoot *os.Root) error {
+	if err := toolboxRoot.RemoveAll("macros/screenshot-path-paste"); err != nil {
+		return fmt.Errorf("remove Windows screenshot path paste macro state: %w", err)
+	}
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		return nil
+	}
+	shortcut := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "my-toolbox Paste Screenshot Path.lnk")
+	if err := os.Remove(shortcut); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove Windows screenshot path paste Startup shortcut: %w", err)
 	}
 	return nil
 }

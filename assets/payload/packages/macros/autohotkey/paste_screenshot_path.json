@@ -1,0 +1,5 @@
+{
+  "title": "Paste Screenshot Path",
+  "description": "Paste the matched Windows screenshot file path with Ctrl+Shift+V.",
+  "arguments": []
+}

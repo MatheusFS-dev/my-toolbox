@@ -12,6 +12,8 @@ mkdir -p "$test_root/payload/packages/macros/autohotkey" "$test_root/payload/pac
 cp "$repository_root/assets/payload/packages/ssh_tools/direct_link.py" "$test_root/payload/packages/ssh_tools/"
 cp "$repository_root/assets/payload/packages/toolbox_output.py" "$test_root/payload/packages/"
 cp "$repository_root/assets/payload/packages/macros/autohotkey/press_key_after_x_ms.ahk" "$repository_root/assets/payload/packages/macros/autohotkey/press_key_after_x_ms.json" "$test_root/payload/packages/macros/autohotkey/"
+cp "$repository_root/assets/payload/packages/macros/autohotkey/paste_screenshot_path.ahk" "$repository_root/assets/payload/packages/macros/autohotkey/paste_screenshot_path.json" "$test_root/payload/packages/macros/autohotkey/"
+[ -f "$test_root/payload/packages/macros/autohotkey/paste_screenshot_path.ahk" ] || { printf '%s\n' 'Fixture is missing Paste Screenshot Path.' >&2; exit 1; }
 printf '%s\n' '0.1.5' > "$test_root/payload/version.txt"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$test_root/payload/tb"
 chmod 755 "$test_root/payload/tb"

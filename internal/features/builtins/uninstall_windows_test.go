@@ -282,6 +282,50 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	}
 }
 
+func TestWindowsCleanupRemovesOnlyScreenshotPathPasteState(t *testing.T) {
+	localAppData := t.TempDir()
+	appData := t.TempDir()
+	dataRoot := filepath.Join(localAppData, "my-toolbox")
+	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
+	macroState := filepath.Join(dataRoot, "macros", "screenshot-path-paste")
+	otherMacroState := filepath.Join(dataRoot, "macros", "other-macro")
+	shortcut := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "my-toolbox Paste Screenshot Path.lnk")
+	unrelatedShortcut := filepath.Join(filepath.Dir(shortcut), "unrelated.lnk")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", appData)
+	for _, directory := range []string{filepath.Dir(wrapper), macroState, otherMacroState, filepath.Dir(shortcut)} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, content := range map[string]string{
+		wrapper: windowsToolboxWrapper,
+		filepath.Join(macroState, "launcher.ahk"):    "managed launcher",
+		filepath.Join(macroState, "diagnostics.log"): "managed diagnostics",
+		filepath.Join(otherMacroState, "keep.txt"):   "other macro",
+		shortcut:          "managed shortcut",
+		unrelatedShortcut: "unrelated shortcut",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := cleanupWindowsPaths(dataRoot, wrapper); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{macroState, shortcut} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("managed screenshot-path-paste path still exists: %s", path)
+		}
+	}
+	for _, path := range []string{otherMacroState, unrelatedShortcut} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("cleanup removed unrelated path %s: %v", path, err)
+		}
+	}
+}
+
 func TestWindowsCleanupReinstallsAfterManagedRemoval(t *testing.T) {
 	localAppData := t.TempDir()
 	dataRoot := filepath.Join(localAppData, "my-toolbox")

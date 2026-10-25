@@ -800,6 +800,8 @@ try {
         'commands.json',
         'packages\macros\autohotkey\press_key_after_x_ms.ahk',
         'packages\macros\autohotkey\press_key_after_x_ms.json',
+        'packages\macros\autohotkey\paste_screenshot_path.ahk',
+        'packages\macros\autohotkey\paste_screenshot_path.json',
         'version.txt',
         'completions\_tb',
         'completions\tb.bash',

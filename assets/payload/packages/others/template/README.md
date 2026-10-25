@@ -253,7 +253,7 @@ We thank the following people who contributed to this project:
   <tr>
     <td align="center">
       <a href="https://github.com/MatheusFS-dev" title="Matheus Ferreira">
-        <img src="https://avatars.githubusercontent.com/u/99222557" width="100px;" alt="Foto do Matheus Ferreira no GitHub"/><br>
+        <img src="https://avatars.githubusercontent.com/u/99222557" width="100px;" alt="Matheus Ferreira's photo on GitHub"/><br>
         <sub>
           <b>Matheus Ferreira</b>
         </sub>
@@ -261,7 +261,7 @@ We thank the following people who contributed to this project:
     </td>
     <td align="center">
       <a href="https://github.com/MatheusFS-dev" title="Matheus Ferreira">
-        <img src="https://avatars.githubusercontent.com/u/99222557" width="100px;" alt="Foto do Matheus Ferreira no GitHub"/><br>
+        <img src="https://avatars.githubusercontent.com/u/99222557" width="100px;" alt="Matheus Ferreira's photo on GitHub"/><br>
         <sub>
           <b>Matheus Ferreira</b>
         </sub>
@@ -269,7 +269,7 @@ We thank the following people who contributed to this project:
     </td>
     <td align="center">
       <a href="https://github.com/MatheusFS-dev" title="Matheus Ferreira">
-        <img src="https://avatars.githubusercontent.com/u/99222557" width="100px;" alt="Foto do Matheus Ferreira no GitHub"/><br>
+        <img src="https://avatars.githubusercontent.com/u/99222557" width="100px;" alt="Matheus Ferreira's photo on GitHub"/><br>
         <sub>
           <b>Matheus Ferreira</b>
         </sub>

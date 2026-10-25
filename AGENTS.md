@@ -7,12 +7,13 @@ Global task gates and reusable skills are installed at user scope. Codex and Ant
 - Keep changes scoped to the requested behavior and preserve established architecture and naming.
 - Do not modify installed skills unless the user explicitly requests a skill change.
 - Do not commit datasets, model weights, credentials, environment files, generated logs, or large artifacts unless explicitly requested.
+- Write project-authored code comments, documentation, prompts, diagnostics, and other user-facing text in English. Preserve third-party content in its original language.
 
 Add only durable repository-specific information below, such as non-obvious architecture constraints, canonical commands, protected paths, and required validation.
 
 ## Releases
 
-When the user asks to "release a new version", treat it as authorization to prepare the current requested work for release without asking for a separate commit or push confirmation. First update this `AGENTS.md` release instruction if the user requested a durable release-process change. Then run the relevant local release checks, commit the scoped changes, push `main`, wait for the resulting CI run and automatic release workflow, and investigate and fix any failures that arise. Do not create a release manually when the automatic release workflow is available.
+When the user asks to "release a new version", treat it as authorization to prepare the current requested work for release without asking for a separate commit or push confirmation. First update this `AGENTS.md` release instruction if the user requested a durable release-process change. Then run the relevant local release checks and use `tooling/release/release.sh --message '<scoped release message>'` to stage tracked changes, commit, push `main`, and watch the `CI` → `Dispatch release` → `Release` chain. Explicitly stage every intended new file first because the controller uses `git add -u`. The controller requires authenticated `gh`, local `main` equal to `origin/main`, and exits nonzero when the release does not complete. Use `tooling/release/release.sh --watch <sha>` only to observe an already-pushed automatic update without creating a commit. Investigate and fix any failures that arise. Do not create a release manually when the automatic release workflow is available.
 
 ## Terminal output contract
 

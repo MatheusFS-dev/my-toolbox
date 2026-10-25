@@ -192,6 +192,29 @@ func TestLoadYdotoolMacro(t *testing.T) {
 	t.Fatal("bundled ydotool timer missing")
 }
 
+func TestLoadScreenshotPathPasteMacro(t *testing.T) {
+	macros, err := LoadMacros(filepath.Join("..", "..", "..", "assets", "payload", "packages", "macros"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, macro := range macros {
+		if macro.RelativePath != "autohotkey/paste_screenshot_path.ahk" {
+			continue
+		}
+		if macro.Title != "Paste Screenshot Path" {
+			t.Fatalf("title = %q", macro.Title)
+		}
+		if macro.Description != "Paste the matched Windows screenshot file path with Ctrl+Shift+V." {
+			t.Fatalf("description = %q", macro.Description)
+		}
+		if len(macro.Arguments) != 0 {
+			t.Fatalf("arguments = %#v", macro.Arguments)
+		}
+		return
+	}
+	t.Fatal("bundled screenshot path paste macro missing")
+}
+
 func TestYdotoolTimerScript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Linux shell macro")

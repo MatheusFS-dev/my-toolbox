@@ -26,6 +26,11 @@ try {
     New-Item -ItemType Directory -Path $MacroRoot -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/packages\macros\autohotkey\press_key_after_x_ms.ahk') -Destination $MacroRoot
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/packages\macros\autohotkey\press_key_after_x_ms.json') -Destination $MacroRoot
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/packages\macros\autohotkey\paste_screenshot_path.ahk') -Destination $MacroRoot
+    Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/packages\macros\autohotkey\paste_screenshot_path.json') -Destination $MacroRoot
+    if (-not (Test-Path -LiteralPath (Join-Path $MacroRoot 'paste_screenshot_path.ahk') -PathType Leaf)) {
+        throw 'Fixture is missing Paste Screenshot Path.'
+    }
     Copy-Item -LiteralPath (Join-Path $RepositoryRoot 'assets/payload/completions') -Destination (Join-Path $Payload 'completions') -Recurse
     Set-Content -LiteralPath (Join-Path $Payload 'version.txt') -Value '0.1.5' -Encoding ascii
     Set-Content -LiteralPath (Join-Path $Payload 'tb.exe') -Value 'fixture' -Encoding ascii

@@ -737,6 +737,8 @@ for required in tb commands.json version.txt \
     libexec/tb-markdown-reader \
     packages/macros/autohotkey/press_key_after_x_ms.ahk \
     packages/macros/autohotkey/press_key_after_x_ms.json \
+    packages/macros/autohotkey/paste_screenshot_path.ahk \
+    packages/macros/autohotkey/paste_screenshot_path.json \
     completions/_tb \
     completions/tb.bash \
     completions/tb.ps1 \
