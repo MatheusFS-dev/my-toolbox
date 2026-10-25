@@ -409,12 +409,13 @@ go test ./...
 cargo test --locked --manifest-path assets/reader/fork-markdown-reader/Cargo.toml
 python3 -m pip install -r assets/payload/packages/monitor_runtime/requirements.txt
 PYTHONPATH=assets/payload/packages/monitor_runtime python3 -m unittest discover -s assets/payload/packages/monitor_runtime/tests -v
-python3 -m unittest discover -s assets/payload/packages/agent-workspace-template/source/tests -v
+python3 -m unittest discover -s assets/payload/packages/agent-workspace-template/tests -v
 PYTHONPATH=assets/payload python3 -m unittest discover -s assets/payload/packages/others/tests -v
 PYTHONPATH=assets/payload/packages/stress_gpu_runtime python3 -m unittest discover -s assets/payload/packages/stress_gpu_runtime/tests -v
 sh tooling/local-install/install_test.sh
 bash tooling/local-install/install_local_test.sh
 sh tooling/release/build-release_test.sh
+sh tooling/release/release_test.sh
 sh tooling/reader/build-markdown-reader_test.sh
 bash tooling/checks/terminal-setup_test.sh
 bash tooling/checks/gpu-isolation_test.sh
@@ -454,6 +455,14 @@ readers/
 ```
 
 The release workflow assembles that directory from the native build artifacts. For local native builds, use [build-markdown-reader.sh](tooling/reader/build-markdown-reader.sh) with the matching MUSL target and an output directory, or [build-markdown-reader.ps1](tooling/reader/build-markdown-reader.ps1) with an output directory on Windows x64; the workflow records the required compiler and binary-inspection setup.
+
+To commit prepared tracked changes and wait for the CI-gated automatic release, run:
+
+```sh
+tooling/release/release.sh --message 'chore: describe the release'
+```
+
+The controller requires authenticated GitHub CLI access, local `main` exactly matching `origin/main`, and explicit staging for any new files because it runs `git add -u`. Use `--watch <sha>` to observe a parent update made by automation without committing, and `--json` when a caller needs a final machine-readable report.
 
 The build produces Linux x64, Linux ARM64, and Windows x64 archives, corresponding SHA-256 files, and `version.txt`. Each archive includes its compiled reader under `libexec`; the reader's Rust sources and Cargo build artifacts are excluded. Release, Pages, and submodule automation is defined under `.github/workflows`; repository secrets and settings are configured separately.
 

@@ -61,7 +61,7 @@ jobs:
           go test ./...
           python tooling/checks/output_contract_audit.py
           PYTHONPATH=assets/payload/packages/stress_gpu_runtime python -m unittest discover -s assets/payload/packages/stress_gpu_runtime/tests -v
-          python -m unittest discover -s assets/payload/packages/agent-workspace-template/source/tests -v
+          python -m unittest discover -s assets/payload/packages/agent-workspace-template/tests -v
           PYTHONPATH=assets/payload python -m unittest discover -s assets/payload/packages/others/tests -v
           sh tooling/local-install/install_test.sh
           sh tooling/checks/cronjob_test.sh

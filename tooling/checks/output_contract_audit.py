@@ -57,6 +57,12 @@ def audit_runtime_sources():
         list[str]: Human-readable violations.
     """
     violations = []
+    release_controller = ROOT / "tooling/release/release.sh"
+    release_source = release_controller.read_text(encoding="utf-8")
+    if "tb_output_init release" not in release_source:
+        violations.append("tooling/release/release.sh: missing shared terminal output initialization")
+    if "tb_success" not in release_source:
+        violations.append("tooling/release/release.sh: missing success output through the shared helper")
     stress_paths = (
         ROOT / "assets/payload/packages/stress_gpu_runtime/stress_gpu_runtime/__main__.py",
         ROOT / "assets/payload/packages/stress_gpu_runtime/stress_gpu_runtime/config.py",

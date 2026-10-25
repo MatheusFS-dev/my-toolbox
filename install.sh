@@ -740,15 +740,15 @@ for required in tb commands.json version.txt \
     completions/_tb \
     completions/tb.bash \
     completions/tb.ps1 \
-    packages/agent-workspace-template/source/scripts/linux/python3/install_codex.py \
-    packages/agent-workspace-template/source/scripts/linux/python3/install_claude.py \
-    packages/agent-workspace-template/source/scripts/linux/python3/install_antigravity.py \
-    packages/agent-workspace-template/source/scripts/linux/python3/install_project.py \
-    packages/agent-workspace-template/source/scripts/linux/python2/install_codex.py \
-    packages/agent-workspace-template/source/scripts/linux/python2/install_claude.py \
-    packages/agent-workspace-template/source/scripts/linux/python2/install_antigravity.py \
-    packages/agent-workspace-template/source/scripts/linux/python2/install_project.py \
-    packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt \
+    packages/agent-workspace-template/scripts/linux/python3/install_codex.py \
+    packages/agent-workspace-template/scripts/linux/python3/install_claude.py \
+    packages/agent-workspace-template/scripts/linux/python3/install_antigravity.py \
+    packages/agent-workspace-template/scripts/linux/python3/install_project.py \
+    packages/agent-workspace-template/scripts/linux/python2/install_codex.py \
+    packages/agent-workspace-template/scripts/linux/python2/install_claude.py \
+    packages/agent-workspace-template/scripts/linux/python2/install_antigravity.py \
+    packages/agent-workspace-template/scripts/linux/python2/install_project.py \
+    packages/agent-workspace-template/scripts/linux/python2/requirements.txt \
     packages/scripts/terminal/alacritty/setup_alacritty.sh \
     packages/scripts/terminal/kitty/setup_kitty.sh \
     packages/scripts/terminal/wsl/setup_wsl.sh \

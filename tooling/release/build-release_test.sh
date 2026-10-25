@@ -15,18 +15,18 @@ packages/others/_vendor/tomli/_parser.py
 packages/others/_vendor/tomli/_re.py
 packages/others/_vendor/tomli/_types.py
 packages/others/_vendor/tomli/py.typed
-packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/LICENSE
-packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/__init__.py
-packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/_parser.py
-packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/_re.py
-packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/_types.py
-packages/agent-workspace-template/source/scripts/linux/python3/_vendor/tomli/py.typed
-packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/LICENSE
-packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/__init__.py
-packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/_parser.py
-packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/_re.py
-packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/_types.py
-packages/agent-workspace-template/source/scripts/windows/_vendor/tomli/py.typed'
+packages/agent-workspace-template/scripts/linux/python3/_vendor/tomli/LICENSE
+packages/agent-workspace-template/scripts/linux/python3/_vendor/tomli/__init__.py
+packages/agent-workspace-template/scripts/linux/python3/_vendor/tomli/_parser.py
+packages/agent-workspace-template/scripts/linux/python3/_vendor/tomli/_re.py
+packages/agent-workspace-template/scripts/linux/python3/_vendor/tomli/_types.py
+packages/agent-workspace-template/scripts/linux/python3/_vendor/tomli/py.typed
+packages/agent-workspace-template/scripts/windows/_vendor/tomli/LICENSE
+packages/agent-workspace-template/scripts/windows/_vendor/tomli/__init__.py
+packages/agent-workspace-template/scripts/windows/_vendor/tomli/_parser.py
+packages/agent-workspace-template/scripts/windows/_vendor/tomli/_re.py
+packages/agent-workspace-template/scripts/windows/_vendor/tomli/_types.py
+packages/agent-workspace-template/scripts/windows/_vendor/tomli/py.typed'
 if [ -e "$test_symlink" ] || [ -L "$test_symlink" ]; then
     printf 'Release symlink fixture path already exists: %s\n' "$test_symlink" >&2
     exit 1
@@ -273,7 +273,7 @@ for required_entry in \
         exit 1
     fi
 done
-for skill_path in "$repository_root"/assets/payload/packages/agent-workspace-template/source/skills/*; do
+for skill_path in "$repository_root"/assets/payload/packages/agent-workspace-template/skills/*; do
     skill_name=$(basename "$skill_path")
     for agent_skills in \
         agent-configs-portable/home/.codex/skills \
@@ -295,11 +295,11 @@ fi
 unzip -p "$portable_archive" agent-configs-portable/home/.codex/config.toml |
     python3 -c 'import sys; import tomllib; tomllib.loads(sys.stdin.read())'
 unzip -p "$portable_archive" agent-configs-portable/home/.claude/CLAUDE.md |
-    cmp "$repository_root/assets/payload/packages/agent-workspace-template/source/instructions/global.md" -
+    cmp "$repository_root/assets/payload/packages/agent-workspace-template/instructions/global.md" -
 unzip -p "$portable_archive" agent-configs-portable/home/.gemini/GEMINI.md |
-    cmp "$repository_root/assets/payload/packages/agent-workspace-template/source/instructions/global.md" -
+    cmp "$repository_root/assets/payload/packages/agent-workspace-template/instructions/global.md" -
 unzip -p "$portable_archive" agent-configs-portable/home/.config/opencode/AGENTS.md |
-    cmp "$repository_root/assets/payload/packages/agent-workspace-template/source/instructions/global.md" -
+    cmp "$repository_root/assets/payload/packages/agent-workspace-template/instructions/global.md" -
 unzip -p "$portable_archive" agent-configs-portable/home/.config/opencode/opencode.json |
     python3 -c 'import json, sys; assert json.load(sys.stdin)["permission"] == "allow"'
 if ! unzip -p "$portable_archive" agent-configs-portable/README.md |

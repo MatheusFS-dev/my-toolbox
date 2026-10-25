@@ -46,7 +46,7 @@ jobs:
         run: python -m pip install -r assets/payload/packages/monitor_runtime/requirements.txt
       - run: go test ./...
       - run: python tooling/checks/output_contract_audit.py
-      - run: python -m unittest discover -s assets/payload/packages/agent-workspace-template/source/tests -v
+      - run: python -m unittest discover -s assets/payload/packages/agent-workspace-template/tests -v
       - if: runner.os == 'Linux'
         env:
           PYTHONPATH: assets/payload
@@ -111,8 +111,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: pip install -r assets/payload/packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt
-      - run: python assets/payload/packages/agent-workspace-template/source/tests/python2_toolbox_adapter_test.py
+      - run: pip install -r assets/payload/packages/agent-workspace-template/scripts/linux/python2/requirements.txt
+      - run: python assets/payload/packages/agent-workspace-template/tests/python2_toolbox_adapter_test.py
 
   shell:
     runs-on: ubuntu-latest
@@ -131,6 +131,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y zsh
       - run: sh tooling/release/next-release-version_test.sh
       - run: sh tooling/release/build-release_test.sh
+      - run: sh tooling/release/release_test.sh
       - run: sh tooling/reader/build-markdown-reader_test.sh
       - run: sh tooling/local-install/install_test.sh
       - run: sh tooling/checks/completion_test.sh
@@ -143,4 +144,4 @@ jobs:
       - run: python3 tooling/checks/mount_drive_test.py
       - run: bash -n assets/payload/completions/tb.bash
       - run: zsh -n assets/payload/completions/_tb
-      - run: shellcheck install.sh assets/payload/completions/tb.bash assets/payload/packages/scripts/utils/isolate_gpu.sh assets/payload/packages/scripts/utils/toggle_nopasswd_sudo.sh tooling/release/build-release.sh tooling/release/build-release_test.sh tooling/reader/build-markdown-reader.sh tooling/reader/build-markdown-reader_test.sh tooling/checks/completion_test.sh tooling/checks/gpu-isolation_test.sh tooling/local-install/install_test.sh tooling/checks/terminal-setup_test.sh tooling/checks/toggle-nopasswd-sudo_test.sh tooling/testdata/go tooling/testdata/reader tooling/testdata/reader-build/cargo tooling/testdata/reader-build/readelf
+      - run: shellcheck install.sh assets/payload/completions/tb.bash assets/payload/packages/scripts/utils/isolate_gpu.sh assets/payload/packages/scripts/utils/toggle_nopasswd_sudo.sh tooling/release/build-release.sh tooling/release/build-release_test.sh tooling/release/release.sh tooling/release/release_test.sh tooling/reader/build-markdown-reader.sh tooling/reader/build-markdown-reader_test.sh tooling/checks/completion_test.sh tooling/checks/gpu-isolation_test.sh tooling/local-install/install_test.sh tooling/checks/terminal-setup_test.sh tooling/checks/toggle-nopasswd-sudo_test.sh tooling/testdata/go tooling/testdata/reader tooling/testdata/reader-build/cargo tooling/testdata/reader-build/readelf

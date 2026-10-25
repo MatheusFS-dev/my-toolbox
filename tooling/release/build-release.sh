@@ -110,7 +110,7 @@ mv "$temporary_root/$archive" "$output_directory/$archive"
     sha256sum "$archive" > "$archive.sha256"
 )
 
-template_root="$repository_root/assets/payload/packages/agent-workspace-template/source"
+template_root="$repository_root/assets/payload/packages/agent-workspace-template"
 portable_root="$temporary_root/agent-configs-portable"
 portable_home="$portable_root/home"
 if [ ! -d "$template_root/skills" ] || [ ! -f "$template_root/instructions/global.md" ] || \

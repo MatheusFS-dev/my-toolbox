@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "77b21f521ad4025be4592e10a7d6d57b4bd64dcd2db7e458d8ef6798b4d93411"
+	const want = "1f9fbee8027d7828efcb141b93e6a5708709dce67411f570457fbba7abfa8930"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}

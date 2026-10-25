@@ -49,7 +49,7 @@ for command in catalog["commands"]:
         path = root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture\n", encoding="utf-8")
-requirements = root / "packages/agent-workspace-template/source/scripts/linux/python2/requirements.txt"
+requirements = root / "packages/agent-workspace-template/scripts/linux/python2/requirements.txt"
 requirements.parent.mkdir(parents=True, exist_ok=True)
 requirements.write_text("toml==0.10.2\n", encoding="utf-8")
 article = root / "packages/search/articles/test/fixture.md"
