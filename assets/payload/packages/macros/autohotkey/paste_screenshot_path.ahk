@@ -7,10 +7,7 @@ Persistent
 ; Ctrl+Shift+V while the correlation is current and unambiguous.
 
 global ScreenshotPathPasteApp := 0
-
-#HotIf IsScreenshotPathReady()
-$^+v::PasteScreenshotPath()
-#HotIf
+SetTimer LaunchScreenshotPathPaste, -1
 
 IsScreenshotPathReady() {
     global ScreenshotPathPasteApp
@@ -40,8 +37,11 @@ class ScreenshotPathPaste {
     static Active := "ACTIVE"
     static Invalidated := "INVALIDATED"
     static CorrelationWindowMs := 5000
-    static WatcherCadenceMs := 250
-    static StabilityWaitMs := 200
+    static WatcherCadenceMs := 50
+    static StabilityWaitMs := 50
+    static AssociationSettleMs := 0
+    static ClipboardReadRetryMs := 1000
+    static ClipboardReadRetryCadenceMs := 50
     static MaxCandidates := 128
     static MaxEncodedBytes := 128 * 1024 * 1024
     static MaxPixels := 33554432
@@ -50,12 +50,16 @@ class ScreenshotPathPaste {
         this.state := ScreenshotPathPaste.Inactive
         this.pending := 0
         this.active := 0
+        this.clipboardChange := 0
         this.candidates := Map()
         this.directoryChanged := false
         this.diagnosticsEnabled := false
         this.watcher := 0
         this.gdiplusToken := 0
         this.mutex := 0
+        this.clipboardCallback := this.OnClipboardChange.Bind(this)
+        this.clipboardRetryCallback := this.ProcessClipboardChange.Bind(this)
+        this.tickCallback := this.Tick.Bind(this)
         this.screenshotsDirectory := EnvGet("USERPROFILE") "\Pictures\Screenshots"
         this.stateDirectory := EnvGet("LOCALAPPDATA") "\my-toolbox\macros\screenshot-path-paste"
         this.launcherPath := this.stateDirectory "\launcher.ahk"
@@ -74,13 +78,13 @@ class ScreenshotPathPaste {
             return
         }
         this.RequestStartupConsent()
-        OnClipboardChange(this.OnClipboardChange.Bind(this))
+        OnClipboardChange(this.clipboardCallback)
         this.watcher := DirectoryWatcher(this.screenshotsDirectory)
         if !this.watcher.Start() {
             this.SetState(ScreenshotPathPaste.Invalidated, "The Screenshots folder cannot be watched.")
             return
         }
-        SetTimer this.Tick.Bind(this), ScreenshotPathPaste.WatcherCadenceMs
+        SetTimer this.tickCallback, ScreenshotPathPaste.WatcherCadenceMs
         this.SetState(ScreenshotPathPaste.Inactive, "Waiting for a screenshot.")
         this.OnClipboardChange(0)
     }
@@ -168,13 +172,34 @@ class ScreenshotPathPaste {
     }
 
     OnClipboardChange(*) {
-        sequence := DllCall("GetClipboardSequenceNumber", "uint")
-        signature := ClipboardImageSignature()
+        this.clipboardChange := {sequence: DllCall("GetClipboardSequenceNumber", "uint"), detectedTick: A_TickCount, detectedTime: A_Now}
+        SetTimer this.clipboardRetryCallback, -1
+    }
+
+    ProcessClipboardChange() {
+        if !IsObject(this.clipboardChange)
+            return
+        change := this.clipboardChange
+        if DllCall("GetClipboardSequenceNumber", "uint") != change.sequence
+            return
+        readStatus := ""
+        signature := ClipboardImageSignature(&readStatus)
         if !IsObject(signature) {
+            if A_TickCount - change.detectedTick < ScreenshotPathPaste.ClipboardReadRetryMs {
+                SetTimer this.clipboardRetryCallback, -ScreenshotPathPaste.ClipboardReadRetryCadenceMs
+                return
+            }
+            this.clipboardChange := 0
             this.Invalidate("Clipboard changed to non-image content.")
+            this.Log("clipboard-read-" readStatus)
             return
         }
-        this.pending := {sequence: sequence, signature: signature, detectedTick: A_TickCount, detectedTime: A_Now, matches: Map()}
+        this.BeginPendingAssociation(change.sequence, signature, change.detectedTick, change.detectedTime)
+    }
+
+    BeginPendingAssociation(sequence, signature, detectedTick, detectedTime) {
+        this.clipboardChange := 0
+        this.pending := {sequence: sequence, signature: signature, detectedTick: detectedTick, detectedTime: detectedTime, matches: Map()}
         this.active := 0
         this.candidates := Map()
         this.SetState(ScreenshotPathPaste.Pending, "Waiting for the screenshot file.")
@@ -183,9 +208,10 @@ class ScreenshotPathPaste {
     }
 
     Tick() {
-        if IsObject(this.pending) && A_TickCount - this.pending.detectedTick >= ScreenshotPathPaste.CorrelationWindowMs {
+        if IsObject(this.pending) {
             this.ScanCandidates()
-            this.FinalizePendingAssociation()
+            if A_TickCount - this.pending.detectedTick >= ScreenshotPathPaste.CorrelationWindowMs
+                this.FinalizePendingAssociation()
             return
         }
         if IsObject(this.watcher) && this.watcher.HasChanges() {
@@ -246,8 +272,12 @@ class ScreenshotPathPaste {
         }
         if A_TickCount - observed.observedTick < ScreenshotPathPaste.StabilityWaitMs
             return
+        if this.pending.matches.Has(key)
+            return
         signature := FileImageSignature(candidate.path)
-        if !IsObject(signature) || !ImageSignaturesEqual(signature, this.pending.signature)
+        if !IsObject(signature)
+            return
+        if !ImageSignaturesEqual(signature, this.pending.signature)
             return
         this.RecordCandidateMatch(candidate.path, candidate.size, candidate.modified, signature)
     }
@@ -255,9 +285,12 @@ class ScreenshotPathPaste {
     RecordCandidateMatch(path, size, modified, signature) {
         if !IsObject(this.pending)
             return
-        this.pending.matches[path] := {size: size, modified: modified, signature: signature}
+        if !this.pending.matches.Has(path)
+            this.pending.matches[path] := {size: size, modified: modified, signature: signature, matchedTick: A_TickCount}
         if this.pending.matches.Count > 1
             this.Invalidate("More than one file matches the screenshot.")
+        else if ScreenshotPathPaste.ShouldPromotePendingMatch(this.pending.matches[path].matchedTick, A_TickCount)
+            this.PromotePendingAssociation()
     }
 
     FinalizePendingAssociation() {
@@ -267,21 +300,42 @@ class ScreenshotPathPaste {
             this.Invalidate("Screenshot correlation expired without one matching file.")
             return
         }
+        if !this.IsActive() && !this.PromotePendingAssociation()
+            return
+        this.pending := 0
+    }
+
+    PromotePendingAssociation() {
+        if !IsObject(this.pending) || this.pending.matches.Count != 1
+            return false
         if DllCall("GetClipboardSequenceNumber", "uint") != this.pending.sequence {
             this.Invalidate("Clipboard changed during screenshot correlation.")
-            return
+            return false
         }
         clipboard := ClipboardImageSignature()
         if !IsObject(clipboard) || !ImageSignaturesEqual(clipboard, this.pending.signature) {
             this.Invalidate("Clipboard image changed during screenshot correlation.")
-            return
+            return false
         }
-        for path, match in this.pending.matches
-            break
-        this.active := {path: path, sequence: this.pending.sequence, signature: match.signature, size: match.size, modified: match.modified}
-        this.pending := 0
+        match := this.SinglePendingMatch()
+        if !IsObject(match) {
+            this.Invalidate("Screenshot correlation did not retain a matching file.")
+            return false
+        }
+        this.active := {path: match.path, sequence: this.pending.sequence, signature: match.signature, size: match.size, modified: match.modified}
         this.SetState(ScreenshotPathPaste.Active, "Screenshot path is ready.")
         this.Log("screenshot-associated")
+        return true
+    }
+
+    SinglePendingMatch() {
+        for path, match in this.pending.matches
+            return {path: path, size: match.size, modified: match.modified, signature: match.signature}
+        return 0
+    }
+
+    static ShouldPromotePendingMatch(matchedTick, currentTick) {
+        return currentTick - matchedTick >= ScreenshotPathPaste.AssociationSettleMs
     }
 
     RevalidateActiveAssociation() {
@@ -415,17 +469,27 @@ class DirectoryWatcher {
     }
 }
 
-ClipboardImageSignature() {
-    if !DllCall("OpenClipboard", "ptr", 0, "int")
+ClipboardImageSignature(&status := "") {
+    if !DllCall("OpenClipboard", "ptr", 0, "int") {
+        status := "open-failed"
         return 0
+    }
     try {
         bitmap := DllCall("GetClipboardData", "uint", 2, "ptr")
-        if !bitmap
+        if !bitmap {
+            status := "bitmap-unavailable"
             return 0
+        }
         status := DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "ptr", bitmap, "ptr", 0, "ptr*", &image := 0, "uint")
-        if status != 0
+        if status != 0 {
+            status := "bitmap-load-failed"
             return 0
-        try return GdipImageSignature(image)
+        }
+        try {
+            signature := GdipImageSignature(image)
+            status := IsObject(signature) ? "ready" : "signature-failed"
+            return signature
+        }
         finally DllCall("gdiplus\GdipDisposeImage", "ptr", image)
     } finally DllCall("CloseClipboard")
 }
@@ -460,7 +524,7 @@ GdipImageSignature(image) {
         if !scan0 || Abs(stride) < width * 4
             return 0
         hash := Sha256Rows(scan0, stride, width * 4, height)
-        return IsObject(hash) ? {width: width, height: height, hash: hash} : 0
+        return hash != "" ? {width: width, height: height, hash: hash} : 0
     } finally DllCall("gdiplus\GdipBitmapUnlockBits", "ptr", image, "ptr", data.Ptr)
 }
 
@@ -502,17 +566,27 @@ ImageSignaturesEqual(left, right) {
 RunSelfTest() {
     Assert(ImageSignaturesEqual({width: 10, height: 20, hash: "a"}, {width: 10, height: 20, hash: "a"}), "equal signatures")
     Assert(!ImageSignaturesEqual({width: 10, height: 20, hash: "a"}, {width: 10, height: 21, hash: "a"}), "different dimensions")
+    Assert(ScreenshotPathPaste.ShouldPromotePendingMatch(100, 100), "first stable match promotes immediately")
+    Assert(ScreenshotPathPaste.ShouldPromotePendingMatch(100, 600), "stable match promotes promptly")
+    Assert(ScreenshotPathPaste.ShouldPromotePendingMatch(100, 200), "stable match is not delayed")
+    Assert(ScreenshotPathPaste.WatcherCadenceMs = 50, "fast pending watcher cadence")
+    Assert(ScreenshotPathPaste.StabilityWaitMs = 50, "fast file stability check")
     app := ScreenshotPathPaste()
+    Assert(IsObject(app.tickCallback), "retained tick callback")
     app.SetState(ScreenshotPathPaste.Pending, "test")
     Assert(app.state = ScreenshotPathPaste.Pending, "pending state")
+    app.BeginPendingAssociation(123, {width: 10, height: 20, hash: "a"}, A_TickCount, A_Now)
+    Assert(app.state = ScreenshotPathPaste.Pending && app.pending.sequence = 123, "deferred clipboard association")
     app.Invalidate("test")
     Assert(app.state = ScreenshotPathPaste.Invalidated && !IsObject(app.active), "invalidation state")
     launcher := app.BuildLauncher()
     Assert(InStr(launcher, "#Requires AutoHotkey v2.0") && InStr(launcher, "Run Chr(34) A_AhkPath Chr(34)"), "launcher content")
-    app.pending := {sequence: 1, signature: {width: 10, height: 20, hash: "a"}, detectedTick: A_TickCount, detectedTime: A_Now, matches: Map()}
-    app.RecordCandidateMatch("one.png", 1, A_Now, app.pending.signature)
+    app.pending := {sequence: 1, signature: {width: 10, height: 20, hash: "a"}, detectedTick: A_TickCount, detectedTime: A_Now, matches: Map("one.png", {size: 1, modified: A_Now, signature: {width: 10, height: 20, hash: "a"}})}
     app.RecordCandidateMatch("two.png", 1, A_Now, app.pending.signature)
     Assert(app.state = ScreenshotPathPaste.Invalidated, "ambiguous matches")
+    app.pending := {matches: Map("one.png", {size: 1, modified: A_Now, signature: {width: 10, height: 20, hash: "a"}})}
+    match := app.SinglePendingMatch()
+    Assert(match.path = "one.png", "single pending match")
     Assert(!RegExMatch("../bad", "^[A-Za-z0-9._-]+$"), "malformed version")
     FileAppend "self-test passed`n", "*"
 }
@@ -522,11 +596,16 @@ Assert(condition, message) {
         throw Error("Self-test failed: " message)
 }
 
-if HasSelfTestArgument() {
-    RunSelfTest()
-    ExitApp 0
+LaunchScreenshotPathPaste() {
+    global ScreenshotPathPasteApp
+    if HasSelfTestArgument() {
+        RunSelfTest()
+        ExitApp 0
+    }
+    ScreenshotPathPasteApp := ScreenshotPathPaste()
+    ScreenshotPathPasteApp.Start()
 }
 
-ScreenshotPathPasteApp := ScreenshotPathPaste()
-ScreenshotPathPasteApp.Start()
-return
+#HotIf IsScreenshotPathReady()
+$^+v::PasteScreenshotPath()
+#HotIf
