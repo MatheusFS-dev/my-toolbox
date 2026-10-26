@@ -1,5 +1,6 @@
 import importlib.util
 import builtins
+import io
 import os
 import subprocess
 import sys
@@ -284,6 +285,160 @@ class EnvironmentAliasTest(unittest.TestCase):
         output.assert_called_once_with(
             "Enter yes, y, no, n, or press Enter for yes."
         )
+
+
+class AddAliasTest(unittest.TestCase):
+    """Verify managed Bash and Zsh alias blocks."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Load the add-alias module.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            ImportError: If the module cannot be loaded.
+        """
+        cls.tool = load_tool("add_alias")
+
+    def test_new_alias_is_added_to_a_managed_block(self) -> None:
+        """Append a distinct alias block without changing existing settings."""
+        original = "export EDITOR=vim\n"
+
+        updated = self.tool.prepare_alias_update(
+            original,
+            "gs",
+            "git status --short",
+        )
+
+        self.assertEqual(
+            updated,
+            "export EDITOR=vim\n\n"
+            "# >>> TB ALIASES >>>\n"
+            "alias gs='git status --short'\n"
+            "# <<< TB ALIASES <<<\n",
+        )
+
+    def test_existing_managed_alias_is_replaced_without_duplicate(self) -> None:
+        """Update only the requested alias inside its existing managed block."""
+        original = (
+            "export KEEP=1\n\n"
+            "# >>> TB ALIASES >>>\n"
+            "alias gs='git status'\n"
+            "alias ll='ls -al'\n"
+            "# <<< TB ALIASES <<<\n"
+        )
+
+        updated = self.tool.prepare_alias_update(
+            original,
+            "gs",
+            "git status --short",
+        )
+
+        self.assertEqual(updated.count("# >>> TB ALIASES >>>"), 1)
+        self.assertEqual(updated.count("alias gs="), 1)
+        self.assertIn("alias gs='git status --short'", updated)
+        self.assertIn("alias ll='ls -al'", updated)
+        self.assertTrue(updated.startswith("export KEEP=1\n\n"))
+
+    def test_selected_shell_files_receive_the_same_managed_alias(self) -> None:
+        """Prepare updates only for the explicitly selected shell startup files."""
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / ".bashrc").write_text("export BASH=1\n", encoding="utf-8")
+            (home / ".zshrc").write_text("export ZSH=1\n", encoding="utf-8")
+
+            updates = self.tool.prepare_alias_updates(
+                "deploy",
+                "git push origin main",
+                ["bash", "zsh"],
+                home,
+            )
+
+            self.assertEqual(set(updates), {home / ".bashrc", home / ".zshrc"})
+            for content in updates.values():
+                self.assertIn("# >>> TB ALIASES >>>", content)
+                self.assertIn("alias deploy='git push origin main'", content)
+
+    def test_interactive_run_writes_only_confirmed_shell_file(self) -> None:
+        """Write the alias after collecting its name, command, and shell choices."""
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            destination = io.StringIO()
+            output = self.tool.TerminalOutput(destination, "add-alias")
+            answers = iter(("gs", "git status --short", "yes", ""))
+
+            self.tool.run_interactive(home, output, lambda: next(answers))
+
+            bashrc = (home / ".bashrc").read_text(encoding="utf-8")
+            self.assertIn("alias gs='git status --short'", bashrc)
+            self.assertFalse((home / ".zshrc").exists())
+            rendered = destination.getvalue()
+            self.assertIn("Alias name (required):", rendered)
+            self.assertIn("Alias command (required):", rendered)
+            self.assertIn("Add this alias to ~/.bashrc? [y/N]", rendered)
+            self.assertIn("Add this alias to ~/.zshrc? [y/N]", rendered)
+            self.assertIn("SUCCESS] Added alias gs", rendered)
+
+    def test_alias_command_with_single_quotes_runs_in_bash(self) -> None:
+        """Escape embedded single quotes without changing the executed command."""
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            bashrc = home / ".bashrc"
+            updates = self.tool.prepare_alias_updates(
+                "quote-test",
+                "printf '%s' \"it's safe\"",
+                ["bash"],
+                home,
+            )
+            self.tool.atomic_write_text(bashrc, updates[bashrc])
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "--noprofile",
+                    "--norc",
+                    "-O",
+                    "expand_aliases",
+                    "-c",
+                    'source "$1"; eval quote-test',
+                    "bash",
+                    str(bashrc),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.stdout, "it's safe")
+
+    def test_malformed_managed_block_is_rejected_before_write(self) -> None:
+        """Reject an unclosed managed section instead of adding another block."""
+        with self.assertRaisesRegex(ValueError, "malformed"):
+            self.tool.prepare_alias_update(
+                "# >>> TB ALIASES >>>\nalias gs='git status'\n",
+                "gs",
+                "git status --short",
+            )
+
+    def test_symlinked_shell_configuration_is_rejected(self) -> None:
+        """Refuse to follow a symlink while preparing shell configuration writes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "shared-bashrc"
+            target.write_text("export KEEP=1\n", encoding="utf-8")
+            (root / ".bashrc").symlink_to(target)
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                self.tool.prepare_alias_updates(
+                    "gs",
+                    "git status --short",
+                    ["bash"],
+                    root,
+                )
 
 
 class PythonBootstrapTest(unittest.TestCase):

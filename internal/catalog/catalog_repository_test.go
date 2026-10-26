@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "1f9fbee8027d7828efcb141b93e6a5708709dce67411f570457fbba7abfa8930"
+	const want = "54db0a36c58e8a388656997ebd21efbeaec6990db7aae771fc8fd59ecc548dba"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -302,6 +302,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"ssh-tools":                       "Open a task menu for passwordless SSH profiles and direct Ethernet setup, rollback, and status-monitor management.",
 		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates changes and manages a toolbox sudoers rule and, when needed, its final include in /etc/sudoers.",
 		"create-env-alias":                "Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.",
+		"add-alias":                       "Create a Bash and/or Zsh alias in a managed TB ALIASES section.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
 		"create-project-template":         "Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.",
 		"git-sync":                        "Synchronize tracked files between two remote branches while preserving destination history and never force-pushing.",
@@ -358,7 +359,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
 		"set-default-cwd", "install-monitor", "install-stress-gpu", "isolate-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive", "ssh-tools",
-		"create-env-alias", "bootstrap-python-from-venv", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
+		"create-env-alias", "add-alias", "bootstrap-python-from-venv", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
 	}
 	if len(catalog.Commands) != len(want) {
 		t.Fatalf("got %d commands, want %d", len(catalog.Commands), len(want))
@@ -421,6 +422,7 @@ func TestRepositoryListInteractiveCommandsHavePromptAuditCoverage(t *testing.T) 
 		"mount-drive":                "isolated disk protection and fstab tests",
 		"isolate-gpu":                "mocked GDM, Xorg, NVIDIA inventory, dry-run, and managed checksum tests",
 		"create-env-alias":           "utility Python retry tests",
+		"add-alias":                  "utility Python managed-block tests",
 		"bootstrap-python-from-venv": "utility Python retry tests",
 		"create-project-template":    "utility Python retry tests",
 	}

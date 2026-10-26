@@ -356,6 +356,8 @@ The command catalog is defined in `assets/payload/commands.json`. The descriptio
 
 - `create-env-alias` (Linux or WSL): Create a Bash or Zsh alias that activates a chosen `.venv`. Previews changes, confirms replacements separately, and can back up conflicts.
   Requires: Python 3.9+.
+- `add-alias` (Linux or WSL): Create a Bash and/or Zsh alias in a managed `TB ALIASES` section.
+  Requires: Python 3.9+.
 - `bootstrap-python-from-venv` (Linux or WSL): Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.
   Requires: Python 3.9+.
 - `create-project-template`: Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.

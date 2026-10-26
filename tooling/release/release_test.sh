@@ -4,6 +4,7 @@ set -eu
 # shellcheck disable=SC1007
 repository_root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 controller="$repository_root/tooling/release/release.sh"
+wrapper="$repository_root/release.sh"
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 
@@ -87,6 +88,19 @@ run_controller() {
     return $?
 }
 
+run_wrapper() {
+    scenario=$1
+    shift
+    TB_RELEASE_TEST_LOG="$command_log" \
+        TB_RELEASE_TEST_SCENARIO="$scenario" \
+        PATH="$test_root/bin:$PATH" \
+        RELEASE_TIMEOUT_SECONDS=0 \
+        RELEASE_SLEEP_SECONDS=0 \
+        TB_OUTPUT_COLOR=never \
+        sh "$wrapper" "$@" > "$test_root/stdout" 2> "$test_root/stderr"
+    return $?
+}
+
 expect_status() {
     expected=$1
     shift
@@ -107,6 +121,34 @@ grep -Fx 'git add -u' "$command_log" >/dev/null
 grep -F 'git commit -m release relocation' "$command_log" >/dev/null
 grep -F 'git push origin main' "$command_log" >/dev/null
 grep -F 'SUCCESS] Released 0123456789012345678901234567890123456789.' "$test_root/stdout" >/dev/null
+
+: > "$command_log"
+set +e
+printf '1\nchore: root release wrapper\n' | run_wrapper success
+actual=$?
+set -e
+[ "$actual" -eq 0 ] || {
+    printf 'Root release wrapper returned %s.\n' "$actual" >&2
+    exit 1
+}
+grep -F 'git commit -m chore: root release wrapper' "$command_log" >/dev/null
+grep -F 'PROMPT] Choose release action' "$test_root/stdout" >/dev/null
+grep -F 'PROMPT] Release message (required):' "$test_root/stdout" >/dev/null
+
+: > "$command_log"
+set +e
+printf '2\n0123456789012345678901234567890123456789\n' | run_wrapper success
+actual=$?
+set -e
+[ "$actual" -eq 0 ] || {
+    printf 'Root watch wrapper returned %s.\n' "$actual" >&2
+    exit 1
+}
+if grep -E 'git (add|commit|push)' "$command_log" >/dev/null; then
+    printf 'Interactive watch mode changed repository state.\n' >&2
+    exit 1
+fi
+grep -F 'PROMPT] Commit SHA to watch (required):' "$test_root/stdout" >/dev/null
 
 expect_status 3 no-change --message 'nothing to release'
 expect_status 1 non-main --message 'wrong branch'
