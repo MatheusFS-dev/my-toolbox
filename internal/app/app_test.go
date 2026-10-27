@@ -158,6 +158,20 @@ func testCatalog(names ...string) Catalog {
 	return Catalog{Commands: commands}
 }
 
+func TestLocalLLMProtocolCommandsDoNotAppendExecutionSummary(t *testing.T) {
+	for _, arguments := range [][]string{{"local-llm", "maestro-mcp"}, {"local-llm", "job", "status", "job-id", "--json"}, {"local-llm", "maestro-context", "--root", "/project"}, {"local-llm", "maestro-guard"}, {"local-llm", "job", "logs", "job-id"}} {
+		var output bytes.Buffer
+		executor := &fakeExecutor{arguments: map[string][]string{}}
+		application := App{Catalog: testCatalog("local-llm"), Environment: "linux-native", Executor: executor, Output: &output}
+		if err := application.Execute(arguments); err != nil {
+			t.Fatal(err)
+		}
+		if output.Len() != 0 {
+			t.Fatalf("protocol contaminated by human summary: %q", output.String())
+		}
+	}
+}
+
 func TestListAndHelpExcludeCommandsFromOtherEnvironments(t *testing.T) {
 	catalog := testCatalog("native", "wsl", "windows")
 	catalog.Commands[1].Environments = []string{"linux-wsl"}
@@ -208,11 +222,11 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 	}{
 		{
 			environment: "linux-native",
-			want:        "add-alias\nbootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-superpowers-opencode\ninstall-uv\ninstall-vscode-nautilus\nisolate-gpu\nlist\nmacros\nmount-drive\nsearch\nset-english-us-locale\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-opencode\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\ntoggle-polkit-prompts\nuninstall\nuninstall-monitor\nuninstall-stress-gpu\nupdate\nversion\n",
+			want:        "add-alias\nbootstrap-python-from-venv\nchange-grub-order\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-opencode\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-superpowers-opencode\ninstall-uv\ninstall-vscode-nautilus\nisolate-gpu\nlist\nlocal-llm\nmacros\nmount-drive\nsearch\nset-english-us-locale\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-opencode\nsetup-agents-project\nsetup-alacritty\nsetup-kitty\nsetup-venv\ntoggle-nopasswd-sudo\ntoggle-polkit-prompts\nuninstall\nuninstall-monitor\nuninstall-stress-gpu\nupdate\nversion\n",
 		},
 		{
 			environment: "linux-wsl",
-			want:        "add-alias\nbootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-superpowers-opencode\ninstall-uv\nlist\nmacros\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-opencode\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nuninstall-monitor\nuninstall-stress-gpu\nupdate\nversion\n",
+			want:        "add-alias\nbootstrap-python-from-venv\ncreate-env-alias\ncreate-project-template\nhelp\ninstall-antigravity\ninstall-claude\ninstall-codex\ninstall-gh\ninstall-monitor\ninstall-opencode\ninstall-stress-gpu\ninstall-superpowers-antigravity\ninstall-superpowers-claude\ninstall-superpowers-codex\ninstall-superpowers-opencode\ninstall-uv\nlist\nlocal-llm\nmacros\nsearch\nset-default-cwd\nsetup-agents-antigravity\nsetup-agents-claude\nsetup-agents-codex\nsetup-agents-opencode\nsetup-agents-project\nsetup-venv\nsetup-wsl\ntoggle-nopasswd-sudo\nuninstall\nuninstall-monitor\nuninstall-stress-gpu\nupdate\nversion\n",
 		},
 		{
 			environment: "windows",

@@ -225,6 +225,12 @@ func (app App) Execute(arguments []string) error {
 		if !command.SupportsEnvironment(app.Environment) {
 			return fmt.Errorf("command %q is not supported in %s", command.Name, app.Environment)
 		}
+		if command.Name == "local-llm" && len(arguments) > 1 {
+			subcommand := arguments[1]
+			if subcommand == "maestro-mcp" || subcommand == "maestro-context" || subcommand == "maestro-guard" || subcommand == "job" {
+				return app.Executor.Run(command, map[string]any{}, arguments[1:])
+			}
+		}
 		return app.executeBatch([]Command{command}, arguments[1:], output)
 	}
 }

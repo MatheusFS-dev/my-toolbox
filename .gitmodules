@@ -1,3 +1,6 @@
 [submodule "assets/payload/packages/agent-workspace-template"]
 	path = assets/payload/packages/agent-workspace-template
 	url = https://github.com/MatheusFS-dev/agent-workspace-template.git
+[submodule "assets/payload/packages/opencode_local_llm"]
+	url = https://github.com/MatheusFS-dev/opencode_local_llm.git
+	path = assets/payload/packages/opencode_local_llm

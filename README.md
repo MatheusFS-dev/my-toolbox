@@ -176,7 +176,7 @@ SELECT TOOLS
 
 › Type to filter tools
 
-  Agents
+  Agents Install Tools
 › ◯ install-codex
     Install Codex for the current user on Linux or Windows. Skips
     installation when `codex` is already available.
@@ -248,22 +248,16 @@ Macro packages live below `assets/payload/packages/macros`. The `autohotkey` dri
 
 The command catalog is defined in `assets/payload/commands.json`. The descriptions below summarize each tool and its relevant safeguards.
 
-### Agents
+### Agents Install Tools
 
+- `install-opencode` (Linux or WSL): Install OpenCode for the current Linux or WSL user. Skips installation when `opencode` is already available.
+  Requires: Bash.
 - `install-codex`: Install Codex for the current user on Linux or Windows. Skips installation when `codex` is already available.
   Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
 - `install-claude`: Install Claude Code for the current user on Linux or Windows. Skips installation when `claude` is already available.
   Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
 - `install-antigravity`: Install Antigravity for the current user on Linux or Windows. Skips installation when `agy` is already available.
   Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
-
-### Base Tools
-
-- `install-uv`: Install uv for the current user on Linux or Windows without changing shell `PATH` configuration. Skips installation when `uv` is already available.
-  Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
-- `install-gh`: Download, verify, and install the latest GitHub CLI for the current user. Shows `PATH` guidance when needed.
-
-### Agent Plugins
 
 - `install-superpowers-codex`: Add the Superpowers plugin to Codex. Requires Codex plugin management, skips an existing installation, and leaves other plugins unchanged.
   Requires: Codex with plugin management.
@@ -272,8 +266,9 @@ The command catalog is defined in `assets/payload/commands.json`. The descriptio
 - `install-superpowers-antigravity`: Add the Superpowers plugin to Antigravity from its GitHub repository. Requires plugin management, skips an existing installation, and leaves other plugins unchanged.
   Requires: Antigravity with plugin management.
 - `install-superpowers-opencode`: Add the Superpowers plugin to OpenCode configuration for the current user. OpenCode must be installed when running this tool. Skips an existing installation and preserves other plugins.
+  Requires: OpenCode.
 
-### Agent Workspace
+### Agents Workspace Setup
 
 - `setup-agents-codex`: Set up global Codex instructions, configuration, optional profiles, and packaged skills. Shows every conflict before asking whether to replace or back it up.
   Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
@@ -285,6 +280,17 @@ The command catalog is defined in `assets/payload/commands.json`. The descriptio
   Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
 - `setup-agents-project`: Add instruction files for selected agents to an existing project. Can update `.gitignore` and back up conflicting managed instruction files.
   Requires: Python 3.9+, or Python 2.7 with `toml==0.10.2` (Linux/WSL); Python 3.9+ (Windows).
+
+### Agents Local Setup
+
+- `local-llm` (Linux or WSL): Open the local Ollama and OpenCode dashboard, or run its Maestro worker interface.
+  Requires: OpenCode.
+
+### Base Tools
+
+- `install-uv`: Install uv for the current user on Linux or Windows without changing shell `PATH` configuration. Skips installation when `uv` is already available.
+  Requires: Bash (Linux/WSL); Windows PowerShell 5.1 or PowerShell 7 (Windows).
+- `install-gh`: Download, verify, and install the latest GitHub CLI for the current user. Shows `PATH` guidance when needed.
 
 ### Terminal
 

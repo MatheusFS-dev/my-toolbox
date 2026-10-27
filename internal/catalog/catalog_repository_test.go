@@ -200,13 +200,13 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "54db0a36c58e8a388656997ebd21efbeaec6990db7aae771fc8fd59ecc548dba"
+	const want = "784f9f0fda956d3b99a39f8cd01e2bbcc4afc9601af6db168c0a91b7ea18cc8e"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
 }
 
-func TestRepositoryCatalogLoadsInPreOpenCodeToolbox(t *testing.T) {
+func TestRepositoryCatalogDeclaresOpenCodePluginRequirement(t *testing.T) {
 	catalog, err := LoadCatalogFile("../../assets/payload/commands.json")
 	if err != nil {
 		t.Fatal(err)
@@ -215,11 +215,10 @@ func TestRepositoryCatalogLoadsInPreOpenCodeToolbox(t *testing.T) {
 	if !exists {
 		t.Fatal("OpenCode installer is missing")
 	}
-	for environment, capabilities := range command.Requirements {
-		for _, capability := range capabilities {
-			if capability == "opencode" {
-				t.Fatalf("%s declares capability %q, which older tb updates cannot load", environment, capability)
-			}
+	for _, environment := range []string{"linux-native", "linux-wsl", "windows"} {
+		capabilities := command.Requirements[environment]
+		if len(capabilities) != 1 || capabilities[0] != "opencode" {
+			t.Fatalf("%s requirements = %v, want [opencode]", environment, capabilities)
 		}
 	}
 }
@@ -263,7 +262,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCategories := []string{
-		"Agents", "Base Tools", "Agent Plugins", "Agent Workspace", "Terminal",
+		"Agents Install Tools", "Agents Workspace Setup", "Agents Local Setup", "Base Tools", "Terminal",
 		"System Utilities", "Project Utilities", "Uninstall",
 	}
 	wantDescriptions := map[string]string{
@@ -298,6 +297,8 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"setup-venv":                      "Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.",
 		"set-english-us-locale":           "Set persistent Ubuntu system and user locale to en_US.UTF-8, install English packs, and set GNOME region after showing differences and confirming. Backs up conflicting user overrides.",
 		"toggle-polkit-prompts":           "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
+		"install-opencode":                 "Install OpenCode for the current Linux or WSL user. Skips installation when `opencode` is already available.",
+		"local-llm":                        "Open the local Ollama and OpenCode dashboard, or run its Maestro worker interface.",
 		"mount-drive":                     "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
 		"ssh-tools":                       "Open a task menu for passwordless SSH profiles and direct Ethernet setup, rollback, and status-monitor management.",
 		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates changes and manages a toolbox sudoers rule and, when needed, its final include in /etc/sudoers.",
@@ -354,9 +355,9 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"install-codex", "install-claude", "install-antigravity", "install-uv", "install-gh",
+		"install-opencode", "install-codex", "install-claude", "install-antigravity",
 		"install-superpowers-codex", "install-superpowers-claude", "install-superpowers-antigravity", "install-superpowers-opencode",
-		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project",
+		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project", "local-llm", "install-uv", "install-gh",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
 		"set-default-cwd", "install-monitor", "install-stress-gpu", "isolate-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive", "ssh-tools",
 		"create-env-alias", "add-alias", "bootstrap-python-from-venv", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
@@ -377,7 +378,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 	}
 	installerNames := []string{"install_codex.py", "install_claude.py", "install_antigravity.py", "install_opencode.py", "install_project.py"}
 	for index, installerName := range installerNames {
-		command := catalog.Commands[index+9]
+		command := catalog.Commands[index+8]
 		if command.Protocol != "interactive-python" {
 			t.Fatalf("command %q protocol = %q", command.Name, command.Protocol)
 		}

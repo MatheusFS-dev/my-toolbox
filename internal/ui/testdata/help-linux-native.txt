@@ -21,7 +21,7 @@ USAGE
     Show this usage and the tools supported in the current environment.
 
 AVAILABLE TOOLS
-  Agent Workspace
+  Agents Workspace Setup
     direct-project
       A supported direct-only project tool.
 

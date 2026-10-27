@@ -72,6 +72,9 @@ tb_info 'Building and staging the local toolbox...'
 cp "$repo_root/assets/payload/commands.json" "$stage/commands.json"
 cp -R "$repo_root/assets/payload/completions" "$stage/completions"
 tar -C "$repo_root/assets/payload" --exclude='*/.git' --exclude='*/__pycache__' -cf - packages | tar -C "$stage" -xf -
+tb_info 'Building the bundled local LLM application...'
+(cd "$repo_root/assets/payload/packages/opencode_local_llm" && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$stage/libexec/tb-local-llm" ./cmd/tb-local-llm) || fail 'Local LLM application build failed; the active version was not changed.'
+cp "$repo_root/assets/payload/packages/opencode_local_llm/src/models.json" "$stage/libexec/models.json"
 printf '%s\n' "$version" > "$stage/version.txt"
 (cd "$repo_root" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$stage/tb" ./cmd/tb) || fail 'Go build failed; the active version was not changed.'
 "$stage/tb" help >/dev/null || fail 'Local toolbox smoke test failed; the active version was not changed.'

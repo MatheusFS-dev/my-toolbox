@@ -71,6 +71,13 @@ build_payload() {
             -o "$payload/$binary_name" ./cmd/tb
     )
     mkdir -p "$payload/libexec"
+	if [ "$goos" = linux ]; then
+		(
+			cd "$repository_root/assets/payload/packages/opencode_local_llm"
+			GOOS=$goos GOARCH=$goarch CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$payload/libexec/tb-local-llm" ./cmd/tb-local-llm
+		)
+		cp "$repository_root/assets/payload/packages/opencode_local_llm/src/models.json" "$payload/libexec/models.json"
+	fi
     reader_name=tb-markdown-reader
     if [ "$goos" = windows ]; then reader_name=tb-markdown-reader.exe; fi
     cp -p "$reader_directory/$platform/libexec/$reader_name" "$payload/libexec/$reader_name"
@@ -151,13 +158,32 @@ destination.write_text(rendered, encoding="utf-8")
 PY
 for profile in "$template_root"/configs/codex/*.config.toml; do
     [ -f "$profile" ] || continue
+    if [ "$(basename "$profile")" = maestro.config.toml ]; then continue; fi
     cp "$profile" "$portable_home/.codex/$(basename "$profile")"
 done
+python3 - "$template_root" "$portable_home/.codex/maestro.config.toml" <<'PY'
+from pathlib import Path
+import sys
+import tomllib
+
+root = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+marker = "{{MAESTRO_INSTRUCTIONS}}"
+template = (root / "configs" / "codex" / "maestro.config.toml").read_text(encoding="utf-8")
+instructions = (root / "instructions" / "global.md").read_text(encoding="utf-8") + "\n\n" + (root / "instructions" / "maestro.md").read_text(encoding="utf-8")
+if template.count(marker) != 1 or "'''" in instructions:
+    raise RuntimeError("Cannot render portable Maestro profile safely.")
+rendered = template.replace(marker, instructions)
+tomllib.loads(rendered)
+destination.write_text(rendered, encoding="utf-8")
+PY
 cp -R "$template_root/skills/." "$portable_home/.codex/skills"
 
 cp "$template_root/instructions/global.md" "$portable_home/.claude/CLAUDE.md"
 cp "$template_root/configs/claude/settings.json" "$portable_home/.claude/settings.json"
 cp "$template_root/configs/statusline/statusline.py" "$portable_home/.claude/statusline.py"
+mkdir -p "$portable_home/.claude/agents"
+cp "$template_root/configs/claude/agents/maestro.md" "$portable_home/.claude/agents/maestro.md"
 cp -R "$template_root/skills/." "$portable_home/.claude/skills"
 
 mkdir -p "$portable_home/.gemini/antigravity-cli"
@@ -166,6 +192,9 @@ cp "$template_root/configs/antigravity/settings.json" \
     "$portable_home/.gemini/antigravity-cli/settings.json"
 cp "$template_root/configs/statusline/statusline.py" \
     "$portable_home/.gemini/antigravity-cli/statusline.py"
+mkdir -p "$portable_home/.gemini/config/agents/maestro"
+cp "$template_root/configs/antigravity/agents/maestro/agent.md" \
+    "$portable_home/.gemini/config/agents/maestro/agent.md"
 cp -R "$template_root/skills/." "$portable_home/.gemini/antigravity-cli/skills"
 
 cp "$template_root/instructions/global.md" "$portable_home/.config/opencode/AGENTS.md"
@@ -187,9 +216,9 @@ then replace them with the folders in `home/`.
 
 The package contains:
 
-- `.codex/config.toml`, the optional `research.config.toml` profile, and skills
-- `.claude/CLAUDE.md`, settings, status line, and skills
-- `.gemini/GEMINI.md`, Antigravity CLI settings, status line, and skills
+- `.codex/config.toml`, optional `research` and `maestro` profiles, and skills
+- `.claude/CLAUDE.md`, settings, status line, skills, and optional `maestro` agent
+- `.gemini/GEMINI.md`, Antigravity CLI settings, status line, skills, and optional `maestro` agent
 - `.config/opencode/AGENTS.md`, permissions, and skills
 
 Python 3 is required only for the Claude Code and Antigravity CLI status lines.

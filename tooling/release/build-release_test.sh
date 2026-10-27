@@ -151,7 +151,7 @@ for platform in linux-amd64 linux-arm64; do
         printf '%s contains reader sources or build products.\n' "$archive" >&2
         exit 1
     fi
-    for required_entry in tb libexec/ libexec/tb-markdown-reader libexec/tb-markdown-reader-LICENSE commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ packages/ssh_tools/direct_link.py packages/toolbox_output.py packages/macros/autohotkey/press_key_after_x_ms.ahk packages/macros/autohotkey/press_key_after_x_ms.json packages/macros/autohotkey/paste_screenshot_path.ahk packages/macros/autohotkey/paste_screenshot_path.json packages/macros/ydotool/press_key_after_x_ms.sh packages/macros/ydotool/press_key_after_x_ms.json version.txt; do
+    for required_entry in tb libexec/ libexec/tb-local-llm libexec/models.json libexec/tb-markdown-reader libexec/tb-markdown-reader-LICENSE commands.json completions/ completions/_tb completions/tb.bash completions/tb.ps1 packages/ packages/search/articles/ packages/ssh_tools/direct_link.py packages/toolbox_output.py packages/macros/autohotkey/press_key_after_x_ms.ahk packages/macros/autohotkey/press_key_after_x_ms.json packages/macros/autohotkey/paste_screenshot_path.ahk packages/macros/autohotkey/paste_screenshot_path.json packages/macros/ydotool/press_key_after_x_ms.sh packages/macros/ydotool/press_key_after_x_ms.json version.txt; do
         if ! printf '%s\n' "$entries" | grep -Fx "$required_entry" >/dev/null; then
             printf '%s is missing %s.\n' "$archive" "$required_entry" >&2
             exit 1
@@ -254,16 +254,18 @@ for required_entry in \
     agent-configs-portable/home/ \
     agent-configs-portable/home/.codex/ \
     agent-configs-portable/home/.codex/config.toml \
-    agent-configs-portable/home/.codex/research.config.toml \
+    agent-configs-portable/home/.codex/maestro.config.toml \
     agent-configs-portable/home/.claude/ \
     agent-configs-portable/home/.claude/CLAUDE.md \
     agent-configs-portable/home/.claude/settings.json \
     agent-configs-portable/home/.claude/statusline.py \
+    agent-configs-portable/home/.claude/agents/maestro.md \
     agent-configs-portable/home/.gemini/ \
     agent-configs-portable/home/.gemini/GEMINI.md \
     agent-configs-portable/home/.gemini/antigravity-cli/ \
     agent-configs-portable/home/.gemini/antigravity-cli/settings.json \
     agent-configs-portable/home/.gemini/antigravity-cli/statusline.py \
+    agent-configs-portable/home/.gemini/config/agents/maestro/agent.md \
     agent-configs-portable/home/.config/ \
     agent-configs-portable/home/.config/opencode/ \
     agent-configs-portable/home/.config/opencode/AGENTS.md \

@@ -26,7 +26,7 @@ func TestFilteredCommandsGroupAfterEnvironmentAndVisibilityFiltering(t *testing.
 
 func TestRedirectedHelpMatchesEnvironmentFixtures(t *testing.T) {
 	catalog := Catalog{Commands: []Command{
-		{Name: "direct-project", Category: "Agent Workspace", Description: "A supported direct-only project tool.", Visibility: "direct", Environments: []string{"linux-native", "linux-wsl", "windows"}},
+		{Name: "direct-project", Category: "Agents Workspace Setup", Description: "A supported direct-only project tool.", Visibility: "direct", Environments: []string{"linux-native", "linux-wsl", "windows"}},
 		{Name: "native-tool", Category: "Terminal", Description: "A native Linux tool.", Visibility: "list", Environments: []string{"linux-native"}},
 		{Name: "wsl-tool", Category: "Terminal", Description: "A WSL tool.", Visibility: "list", Environments: []string{"linux-wsl"}},
 		{Name: "windows-tool", Category: "Terminal", Description: "A Windows tool.", Visibility: "list", Environments: []string{"windows"}},

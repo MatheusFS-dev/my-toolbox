@@ -66,6 +66,7 @@ func (builtins *ToolboxBuiltins) SetHTTPClient(client *http.Client) { builtins.c
 //   - error: Plugin-management detection failure.
 func (builtins *ToolboxBuiltins) SkipReason(name string) (string, error) {
 	binaries := map[string]string{
+		"install-opencode":    "opencode",
 		"install-codex":       "codex",
 		"install-claude":      "claude",
 		"install-antigravity": "agy",
@@ -133,13 +134,31 @@ func (builtins *ToolboxBuiltins) SkipReason(name string) (string, error) {
 // Returns:
 //   - error: Unsupported arguments, download, verification, or process failure.
 func (builtins *ToolboxBuiltins) Run(name string, arguments []string) error {
-	if len(arguments) != 0 {
+	if len(arguments) != 0 && name != "local-llm" {
 		return fmt.Errorf("%s does not accept arguments", name)
+	}
+	if name == "local-llm" && len(arguments) > 0 && (arguments[0] == "maestro-mcp" || arguments[0] == "maestro-context" || arguments[0] == "maestro-guard" || arguments[0] == "job") {
+		binary := filepath.Join(builtins.root, "libexec", "tb-local-llm")
+		if !regularFile(binary) {
+			return fmt.Errorf("bundled local LLM application is unavailable: %s", binary)
+		}
+		return runInteractivePath(binary, "local-llm", arguments, nil, builtins.output)
 	}
 	return builtins.withToolOutput(name, func() error {
 		switch name {
 		case "install-codex":
 			return builtins.runOfficialInstaller("https://chatgpt.com/codex/install.sh", "https://chatgpt.com/codex/install.ps1", nil)
+		case "install-opencode":
+			return builtins.runOfficialInstaller("https://opencode.ai/v2/install", "", nil)
+		case "local-llm":
+			if _, err := resolveUserCommand("opencode", builtins.platform); err != nil {
+				return fmt.Errorf("OpenCode is missing; run tb install-opencode")
+			}
+			binary := filepath.Join(builtins.root, "libexec", "tb-local-llm")
+			if !regularFile(binary) {
+				return fmt.Errorf("bundled local LLM application is unavailable: %s", binary)
+			}
+			return runInteractivePath(binary, "local-llm", arguments, nil, builtins.output)
 		case "install-claude":
 			return builtins.runOfficialInstaller("https://claude.ai/install.sh", "https://claude.ai/install.ps1", nil)
 		case "install-antigravity":
@@ -186,6 +205,8 @@ func (builtins *ToolboxBuiltins) withToolOutput(name string, action func() error
 		progress = "Removing..."
 	} else if name == "update" {
 		progress = "Checking for updates..."
+	} else if name == "local-llm" {
+		progress = "Starting local LLM tool..."
 	}
 	if err := builtins.messages.Info(progress); err != nil {
 		return err
@@ -286,6 +307,18 @@ func runClosedPath(path, displayName string, arguments, environment []string, ou
 	configureNonInteractive(command)
 	command.Env = append(os.Environ(), environment...)
 	command.Stdin = strings.NewReader("")
+	command.Stdout = output
+	command.Stderr = output
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("%s failed: %w", displayName, err)
+	}
+	return nil
+}
+
+func runInteractivePath(path, displayName string, arguments, environment []string, output io.Writer) error {
+	command := exec.Command(path, arguments...)
+	command.Env = append(os.Environ(), environment...)
+	command.Stdin = os.Stdin
 	command.Stdout = output
 	command.Stderr = output
 	if err := command.Run(); err != nil {

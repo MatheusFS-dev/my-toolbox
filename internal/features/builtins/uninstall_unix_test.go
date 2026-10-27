@@ -77,6 +77,7 @@ func TestUninstallRejectsMalformedCompletionMarkersBeforeDeletingInstallation(t 
 	wrapper := filepath.Join(home, ".local", "bin", "tb")
 	bashProfile := filepath.Join(home, ".bashrc")
 	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
 	t.Setenv("XDG_DATA_HOME", dataBase)
 	for _, path := range []string{versionRoot, filepath.Dir(wrapper)} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -116,6 +117,7 @@ func TestUninstallRemovesOnlyToolboxManagedLinuxPaths(t *testing.T) {
 	wrapper := filepath.Join(home, ".local", "bin", "tb")
 	unrelated := filepath.Join(dataBase, "unrelated")
 	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
 	t.Setenv("XDG_DATA_HOME", dataBase)
 	for _, path := range []string{versionRoot, filepath.Dir(wrapper), unrelated} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -160,6 +162,7 @@ func TestUninstallPreservesUnrecognizedLinuxWrapper(t *testing.T) {
 	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
 	wrapper := filepath.Join(home, ".local", "bin", "tb")
 	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
 	t.Setenv("XDG_DATA_HOME", dataBase)
 	for _, path := range []string{versionRoot, filepath.Dir(wrapper)} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -185,6 +188,7 @@ func TestUninstallPreservesUnrecognizedLinuxWrapper(t *testing.T) {
 func TestUninstallRefusesDevelopmentExecutableRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("ZDOTDIR", home)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	builtins := NewToolboxBuiltins(t.TempDir(), "linux-amd64", "development", io.Discard)
 	err := builtins.uninstall()

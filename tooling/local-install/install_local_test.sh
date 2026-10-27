@@ -18,12 +18,20 @@ SH
 cat > "$test_root/bin/go" <<'SH'
 #!/bin/sh
 while [ "$#" -gt 0 ]; do
-    if [ "$1" = -o ]; then cp "$TB_TEST_BINARY" "$2"; exit 0; fi
+    if [ "$1" = -o ]; then
+        case "$*" in
+            *tb-local-llm*) cp "$TB_TEST_LLM_BINARY" "$2" ;;
+            *) cp "$TB_TEST_BINARY" "$2" ;;
+        esac
+        exit 0
+    fi
     shift
 done
 exit 1
 SH
 chmod 755 "$test_root/fake-tb" "$test_root/bin/go"
+printf '#!/bin/sh\nexit 0\n' > "$test_root/fake-local-llm"
+chmod 755 "$test_root/fake-local-llm"
 printf '%s\n' '1.9.4' > "$data_root/current.txt"
 # The fixture must evaluate its own first argument.
 # shellcheck disable=SC2016
@@ -32,11 +40,13 @@ chmod 755 "$test_root/reader"
 printf '#!/bin/sh\nexit 0\n' > "$data_root/versions/1.9.4/tb"
 chmod 755 "$data_root/versions/1.9.4/tb"
 
-HOME="$home_root" XDG_DATA_HOME="$test_root/data" PATH="$test_root/bin:$PATH" TB_TEST_BINARY="$test_root/fake-tb" TOOLBOX_READER="$test_root/reader" "$repo_root/install-local.sh" > "$test_root/output"
+HOME="$home_root" XDG_DATA_HOME="$test_root/data" PATH="$test_root/bin:$PATH" TB_TEST_BINARY="$test_root/fake-tb" TB_TEST_LLM_BINARY="$test_root/fake-local-llm" TOOLBOX_READER="$test_root/reader" "$repo_root/install-local.sh" > "$test_root/output"
 version=$(cat "$data_root/current.txt")
 case "$version" in 1.9.4-local.*) ;; *) printf 'Unexpected local version: %s\n' "$version" >&2; exit 1 ;; esac
 test -x "$data_root/versions/$version/tb"
 test -f "$data_root/versions/$version/commands.json"
+test -x "$data_root/versions/$version/libexec/tb-local-llm"
+test -f "$data_root/versions/$version/libexec/models.json"
 test -f "$data_root/versions/$version/packages/toolbox_output.py"
 test -x "$home_root/.local/bin/tb"
 test "$(HOME="$home_root" XDG_DATA_HOME="$test_root/data" "$home_root/.local/bin/tb" version)" = "$version"
@@ -51,7 +61,7 @@ done
 
 fresh_home=$test_root/fresh-home
 mkdir -p "$fresh_home"
-HOME="$fresh_home" XDG_DATA_HOME="$test_root/fresh-data" PATH="$test_root/bin:$PATH" TB_TEST_BINARY="$test_root/fake-tb" TOOLBOX_READER="$test_root/reader" "$repo_root/install-local.sh" > "$test_root/fresh-output"
+HOME="$fresh_home" XDG_DATA_HOME="$test_root/fresh-data" PATH="$test_root/bin:$PATH" TB_TEST_BINARY="$test_root/fake-tb" TB_TEST_LLM_BINARY="$test_root/fake-local-llm" TOOLBOX_READER="$test_root/reader" "$repo_root/install-local.sh" > "$test_root/fresh-output"
 fresh_version=$(cat "$test_root/fresh-data/my-toolbox/current.txt")
 case "$fresh_version" in 0.0.0-local.*) ;; *) printf 'Unexpected fresh version: %s\n' "$fresh_version" >&2; exit 1 ;; esac
 test "$(HOME="$fresh_home" XDG_DATA_HOME="$test_root/fresh-data" "$fresh_home/.local/bin/tb" version)" = "$fresh_version"

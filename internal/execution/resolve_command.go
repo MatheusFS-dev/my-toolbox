@@ -37,6 +37,9 @@ func ResolveUserCommand(name, platform string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if name == "opencode" {
+			candidates = append(candidates, filepath.Join(home, ".opencode", "bin", "opencode"))
+		}
 		candidates = append(candidates, filepath.Join(home, ".local", "bin", name))
 	}
 	for _, candidate := range candidates {
