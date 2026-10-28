@@ -27,6 +27,19 @@ case "$1 ${2:-}" in
             printf '%s\n' 0123456789012345678901234567890123456789
         fi
         ;;
+    'config -f')
+        case "$*" in
+            *--get-regexp*) printf '%s\n' 'submodule.example.path fixture' ;;
+            *) printf '%s\n' https://github.com/example/submodule.git ;;
+        esac ;;
+    'rev-parse :fixture') printf '%s\n' 1111111111111111111111111111111111111111 ;;
+    '-C '*fixture)
+        case "$*" in
+            *'config --file'*) printf '%s\n' https://github.com/example/submodule.git ;;
+            *'merge-base --is-ancestor'*) [ "${TB_RELEASE_TEST_SCENARIO:-success}" = submodule-published ] || exit 1 ;;
+            *'push '*) [ "${TB_RELEASE_TEST_SCENARIO:-success}" != submodule-push-fails ] || exit 1 ;;
+        esac
+        ;;
     'config --get') printf '%s\n' https://github.com/example/toolbox.git ;;
     'diff --cached')
         [ "${TB_RELEASE_TEST_SCENARIO:-success}" != no-change ] || exit 0
@@ -119,8 +132,16 @@ expect_status() {
 expect_status 0 success --message 'release relocation'
 grep -Fx 'git add -u' "$command_log" >/dev/null
 grep -F 'git commit -m release relocation' "$command_log" >/dev/null
+grep -F 'push https://github.com/example/submodule.git 1111111111111111111111111111111111111111:refs/heads/main' "$command_log" >/dev/null
 grep -F 'git push origin main' "$command_log" >/dev/null
 grep -F 'SUCCESS] Released 0123456789012345678901234567890123456789.' "$test_root/stdout" >/dev/null
+
+: > "$command_log"
+expect_status 1 submodule-push-fails --message 'failed submodule push'
+if grep -F 'git push origin main' "$command_log" >/dev/null; then
+    printf 'Parent pushed after submodule failure.\n' >&2
+    exit 1
+fi
 
 : > "$command_log"
 set +e
@@ -150,7 +171,19 @@ if grep -E 'git (add|commit|push)' "$command_log" >/dev/null; then
 fi
 grep -F 'PROMPT] Commit SHA to watch (required):' "$test_root/stdout" >/dev/null
 
+: > "$command_log"
 expect_status 3 no-change --message 'nothing to release'
+grep -F 'push https://github.com/example/submodule.git 1111111111111111111111111111111111111111:refs/heads/main' "$command_log" >/dev/null
+if grep -F 'git push origin main' "$command_log" >/dev/null; then
+    printf 'Parent pushed without changes.\n' >&2
+    exit 1
+fi
+: > "$command_log"
+expect_status 0 submodule-published --message 'already published'
+if grep -F 'push https://github.com/example/submodule.git' "$command_log" >/dev/null; then
+    printf 'Already published submodule was pushed again.\n' >&2
+    exit 1
+fi
 expect_status 1 non-main --message 'wrong branch'
 expect_status 1 stale --message 'stale branch'
 expect_status 1 unauthenticated --message 'no auth'

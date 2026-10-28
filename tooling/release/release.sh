@@ -204,7 +204,25 @@ origin_sha=$($git_bin rev-parse origin/main 2>/dev/null) || fail 'Could not reso
 
 tb_info 'Staging tracked changes, committing, and pushing main.'
 $git_bin add -u || fail 'Could not stage tracked changes.'
+no_changes=false
 if $git_bin diff --cached --quiet; then
+    no_changes=true
+fi
+tb_info 'Publishing recorded submodule commits before the parent release.'
+submodule_paths=$($git_bin config -f "$repository_root/.gitmodules" --get-regexp '^submodule\..*\.path$') || fail 'Could not read submodule paths.'
+while IFS=' ' read -r submodule_key submodule_path; do
+    [ -n "$submodule_path" ] || continue
+    submodule_name=${submodule_key%.path}
+    submodule_url=$($git_bin config -f "$repository_root/.gitmodules" --get "$submodule_name.url") || fail "Could not resolve the URL for $submodule_path."
+    submodule_sha=$($git_bin rev-parse ":$submodule_path") || fail "Could not resolve the staged commit for $submodule_path."
+    $git_bin -C "$repository_root/$submodule_path" fetch "$submodule_url" refs/heads/main >/dev/null || fail "Could not fetch main for $submodule_path."
+    if ! $git_bin -C "$repository_root/$submodule_path" merge-base --is-ancestor "$submodule_sha" FETCH_HEAD; then
+        $git_bin -C "$repository_root/$submodule_path" push "$submodule_url" "$submodule_sha:refs/heads/main" >/dev/null || fail "Could not publish $submodule_path."
+    fi
+done <<EOF
+$submodule_paths
+EOF
+if [ "$no_changes" = true ]; then
     tb_warn 'No tracked changes are staged for release.'
     finish 3 no_changes "$head_sha"
 fi
