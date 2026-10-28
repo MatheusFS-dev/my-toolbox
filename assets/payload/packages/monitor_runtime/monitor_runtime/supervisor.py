@@ -210,7 +210,7 @@ def _wait_for_restart(delay: float) -> None:
     time.sleep(delay)
 
 
-def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, title=None, queue_index=1, queue_total=1) -> Dict[str, Any]:
+def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, title=None, queue_index=1, queue_total=1, gpu_uuid=None) -> Dict[str, Any]:
     """Run one script until success or its crash-retry budget is exhausted.
 
     Args:
@@ -222,6 +222,7 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
         title: User-selected run title, or the filename when omitted.
         queue_index: One-based position of the target in its queue.
         queue_total: Total number of targets in the queue.
+        gpu_uuid: Optional NVIDIA GPU UUID to expose to the target.
 
     Returns:
         Final outcome, counters, elapsed time, and artifact location.
@@ -280,9 +281,12 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
             attempt += 1
             attempt_offset = output.tell()
             attempt_started = time.monotonic()
+            target_env = os.environ.copy()
+            if gpu_uuid is not None:
+                target_env["CUDA_VISIBLE_DEVICES"] = gpu_uuid
             process = subprocess.Popen(
                 [interpreter, "-u", script], cwd=str(Path(script).parent),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=target_env,
             )
             item = _event(sink, "attempt_started", attempt=attempt, pid=process.pid)
             lifecycle.append(item)
@@ -511,7 +515,7 @@ def _drain_output(messages: queue.Queue, output: Any, sink: EventSink, latest: c
         _record_output(output, sink, latest, attempt, stream_name, text)
 
 
-def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, titles=None) -> int:
+def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, titles=None, gpu_uuid=None) -> int:
     """Run scripts sequentially, stopping at the first terminal failure.
 
     Args:
@@ -521,6 +525,7 @@ def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink
         sink: Callback that receives protocol events.
         notifier: Optional callback that delivers runtime notifications.
         titles: Optional user-selected title for each target.
+        gpu_uuid: Optional NVIDIA GPU UUID for all target attempts.
 
     Returns:
         Zero on success, 130 on cancellation, or one on terminal failure.
@@ -528,7 +533,7 @@ def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink
     titles = titles or [Path(script).name for script in scripts]
     for index, (script, title) in enumerate(zip(scripts, titles)):
         _event(sink, "lifecycle", state="queue_start", queue_index=index + 1, queue_total=len(scripts), title=title, script=script)
-        result = supervise_script(script, interpreter, config, sink, notifier, title, index + 1, len(scripts))
+        result = supervise_script(script, interpreter, config, sink, notifier, title, index + 1, len(scripts), gpu_uuid)
         if result["outcome"] == "cancelled":
             return 130
         if result["outcome"] != "success":

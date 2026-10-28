@@ -4,6 +4,7 @@ package builtins
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/MatheusFS-dev/my-toolbox/internal/ui"
 
@@ -72,6 +74,7 @@ func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 	runConfigPath := configPath
 	titles, _ := resolveMonitorRunTitles(targets, "filename", nil)
 	var temporaryRunConfig string
+	gpuUUID := ""
 	defer func() {
 		if temporaryRunConfig != "" {
 			_ = os.Remove(temporaryRunConfig)
@@ -121,9 +124,70 @@ func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 		if err != nil {
 			return 130
 		}
+		devices, discoveryErr := discoverMonitorGPUs()
+		messages := newToolOutput(output, "monitor", nil, detectToolColor(output))
+		if discoveryErr != nil || len(devices) == 0 {
+			_ = messages.Warn("NVIDIA GPU discovery unavailable. Your code will choose its device.")
+		} else {
+			options := []huh.Option[string]{huh.NewOption("My code picks it or does not use (default)", "")}
+			for _, device := range devices {
+				options = append(options, huh.NewOption(fmt.Sprintf("GPU %d: %s (NVIDIA index %d)", device.Index+1, device.Name, device.Index), device.UUID))
+			}
+			if err := runMonitorConfigStep(huh.NewSelect[string]().Key("gpu").Title("Choose a GPU for this run").Description("The selected GPU is CUDA device 0 inside your code.").Options(options...).Value(&gpuUUID)); err != nil {
+				return 130
+			}
+			if gpuUUID != "" {
+				current, err := discoverMonitorGPUs()
+				found := false
+				for _, device := range current {
+					if device.UUID == gpuUUID {
+						found = true
+					}
+				}
+				if err != nil || !found {
+					_ = messages.Error("Selected GPU is no longer available.")
+					return 1
+				}
+				_ = messages.Info("Launching the queue with GPU " + gpuUUID + ".")
+			}
+		}
 		break
 	}
-	return invokeMonitorRuntime(targets, titles, interpreter, runConfigPath, output, errorOutput)
+	return invokeMonitorRuntime(targets, titles, interpreter, runConfigPath, gpuUUID, output, errorOutput)
+}
+
+type monitorLaunchGPU struct {
+	Index int
+	UUID  string
+	Name  string
+}
+
+func parseMonitorGPUs(raw string) []monitorLaunchGPU {
+	devices := []monitorLaunchGPU{}
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.SplitN(line, ",", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		uuid := strings.TrimSpace(fields[1])
+		name := strings.TrimSpace(fields[2])
+		if err != nil || index < 0 || !regexpMonitorGPU.MatchString(uuid) || name == "" {
+			continue
+		}
+		devices = append(devices, monitorLaunchGPU{Index: index, UUID: uuid, Name: name})
+	}
+	return devices
+}
+
+func discoverMonitorGPUs() ([]monitorLaunchGPU, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	content, err := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=index,uuid,name", "--format=csv,noheader,nounits").Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseMonitorGPUs(string(content)), nil
 }
 
 func promptMonitorRunTitles(targets []string) ([]string, error) {
@@ -1164,7 +1228,7 @@ func reserveMonitorPath(directory, pattern string) (string, error) {
 	return path, nil
 }
 
-func invokeMonitorRuntime(targets, titles []string, interpreter monitorInterpreter, configPath string, output, errorOutput io.Writer) int {
+func invokeMonitorRuntime(targets, titles []string, interpreter monitorInterpreter, configPath, gpuUUID string, output, errorOutput io.Writer) int {
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		fmt.Fprintln(errorOutput, "load Monitor run configuration:", err)
@@ -1176,6 +1240,9 @@ func invokeMonitorRuntime(targets, titles []string, interpreter monitorInterpret
 		return 1
 	}
 	request := map[string]any{"protocol_version": 1, "type": "run", "scripts": targets, "titles": titles, "interpreter": interpreter.Path, "config_path": configPath}
+	if gpuUUID != "" {
+		request["gpu_uuid"] = gpuUUID
+	}
 	dashboard := newMonitorDashboard(targets, interpreter, config)
 	dashboard.Titles = append([]string(nil), titles...)
 	return runMonitorProtocol(request, dashboard, output, errorOutput)

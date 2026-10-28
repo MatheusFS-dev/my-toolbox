@@ -951,3 +951,10 @@ func TestMonitorDashboardBoundsRecentActivityAndLabelsOutputStreams(t *testing.T
 		t.Fatalf("output = %#v", dashboard.Output)
 	}
 }
+
+func TestMonitorParseGPUs(t *testing.T) {
+	devices := parseMonitorGPUs("0, GPU-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa, First\n1, GPU-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb, Second\ninvalid\n")
+	if len(devices) != 2 || devices[1].Name != "Second" || devices[1].Index != 1 {
+		t.Fatalf("devices = %#v", devices)
+	}
+}

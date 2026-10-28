@@ -26,3 +26,8 @@ class ProtocolTests(unittest.TestCase):
                 "titles": ["Only one"],
                 "interpreter": "/usr/bin/python3",
             })
+
+    def test_rejects_invalid_gpu_uuid(self):
+        request = {"protocol_version": 1, "type": "run", "scripts": ["a.py"], "interpreter": "python", "gpu_uuid": "invalid"}
+        with self.assertRaisesRegex(ProtocolError, "gpu_uuid"):
+            validate_request(request)

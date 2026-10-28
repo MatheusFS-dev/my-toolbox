@@ -1,6 +1,7 @@
 """Versioned JSON-lines protocol shared by Monitor's frontend and runtime."""
 
 import json
+import re
 import sys
 from typing import Any, Dict
 
@@ -31,6 +32,9 @@ def validate_request(message: Dict[str, Any]) -> Dict[str, Any]:
     if request_type not in REQUEST_TYPES:
         raise ProtocolError("unsupported request type")
     if request_type == "run":
+        gpu_uuid = message.get("gpu_uuid")
+        if gpu_uuid is not None and (not isinstance(gpu_uuid, str) or not re.fullmatch(r"GPU-[0-9a-fA-F-]+", gpu_uuid)):
+            raise ProtocolError("invalid gpu_uuid")
         scripts = message.get("scripts")
         if not isinstance(scripts, list) or not scripts or not all(isinstance(item, str) and item for item in scripts):
             raise ProtocolError("run request requires scripts")

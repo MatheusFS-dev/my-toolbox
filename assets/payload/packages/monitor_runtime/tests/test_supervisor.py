@@ -576,3 +576,23 @@ class SupervisorTests(unittest.TestCase):
             created = next(event for event in events if event["type"] == "run_created")
             self.assertEqual(created["interpreter"], os.path.realpath(target_python))
             self.assertIn("target-only", (Path(result["run_directory"]) / "output.log").read_text(encoding="utf-8"))
+
+    def test_gpu_selection_only_changes_target_environment(self):
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "device.py"
+            script.write_text("import os\nprint(os.environ.get('CUDA_VISIBLE_DEVICES', 'missing'))\n", encoding="utf-8")
+            config = default_config()
+            config["reports_enabled"] = False
+            config["notifications"] = {key: False for key in config["notifications"]}
+            with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "inherited"}):
+                result = supervise_script(str(script), sys.executable, config, lambda event: None, gpu_uuid="GPU-aaaa")
+                self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "inherited")
+            self.assertEqual(result["outcome"], "success")
+            self.assertIn("GPU-aaaa", (Path(result["run_directory"]) / "output.log").read_text(encoding="utf-8"))
+
+    def test_gpu_selection_is_passed_to_every_queued_script(self):
+        from monitor_runtime.supervisor import run_queue
+
+        with patch("monitor_runtime.supervisor.supervise_script", return_value={"outcome": "success"}) as run:
+            self.assertEqual(run_queue(["a.py", "b.py"], sys.executable, default_config(), lambda event: None, gpu_uuid="GPU-aaaa"), 0)
+        self.assertEqual([call.args[-1] for call in run.call_args_list], ["GPU-aaaa", "GPU-aaaa"])

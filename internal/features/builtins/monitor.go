@@ -192,6 +192,7 @@ func validateMonitorTargets(arguments []string) ([]string, error) {
 }
 
 var monitorControlSequence = regexp.MustCompile(`(?:\x1b\[[0-?]*[ -/]*[@-~])|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)
+var regexpMonitorGPU = regexp.MustCompile(`^GPU-[0-9a-fA-F-]+$`)
 
 func sanitizeMonitorLines(value string, limit int) []string {
 	clean := monitorControlSequence.ReplaceAllString(value, "")

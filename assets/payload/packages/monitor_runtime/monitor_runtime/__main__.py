@@ -45,7 +45,7 @@ def main():
                     return False
 
             titles = request.get("titles") or [Path(script).name for script in request["scripts"]]
-            return run_queue(request["scripts"], request["interpreter"], config, _sink, notify, titles)
+            return run_queue(request["scripts"], request["interpreter"], config, _sink, notify, titles, request.get("gpu_uuid"))
         credentials_path = request.get("credentials_path", str(Path.home() / ".monitor" / "credentials.json"))
         credentials = validate_credentials(_load_json(credentials_path))
         message = build_message("test", "Monitor", config["recipients"], ["Email delivery is configured."], {})
