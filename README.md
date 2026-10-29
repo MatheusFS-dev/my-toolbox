@@ -353,6 +353,9 @@ The command catalog is defined in `assets/payload/commands.json`. The descriptio
 
 ### Project Utilities
 
+- `reset-git-history` (Linux or WSL): Replace the current branch history with one commit and force-push it to origin after explicit confirmation. Deletes other local refs and reflogs.
+  Requires: Bash; Git; grep.
+
 - `git-sync`: Synchronize tracked files between any two remote branches while preserving destination history and never force-pushing.
   Requires: Git.
 

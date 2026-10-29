@@ -200,7 +200,7 @@ func TestRepositoryCatalogPreservesExecutionMetadata(t *testing.T) {
 		}, "|"))
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(signatures, "\n"))))
-	const want = "784f9f0fda956d3b99a39f8cd01e2bbcc4afc9601af6db168c0a91b7ea18cc8e"
+	const want = "c9250ad7b7beb7d8c358d6a651e906ffaeec168825b41c8ef5bd679922b944c8"
 	if digest != want {
 		t.Fatalf("execution metadata digest = %s, want %s", digest, want)
 	}
@@ -297,8 +297,8 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"setup-venv":                      "Add or remove a `venv` shell command that activates the nearest `.venv`. Keeps unrelated Bash and Zsh configuration but does not create backups.",
 		"set-english-us-locale":           "Set persistent Ubuntu system and user locale to en_US.UTF-8, install English packs, and set GNOME region after showing differences and confirming. Backs up conflicting user overrides.",
 		"toggle-polkit-prompts":           "Toggle the managed Polkit authorization bypass for the active local user after showing status and confirming. Refuses unexpected rules.",
-		"install-opencode":                 "Install OpenCode for the current Linux or WSL user. Skips installation when `opencode` is already available.",
-		"local-llm":                        "Open the local Ollama and OpenCode dashboard, or run its Maestro worker interface.",
+		"install-opencode":                "Install OpenCode for the current Linux or WSL user. Skips installation when `opencode` is already available.",
+		"local-llm":                       "Open the local Ollama and OpenCode dashboard, or run its Maestro worker interface.",
 		"mount-drive":                     "Interactively label and mount a non-system ext4 or FAT32 filesystem. Can save its UUID mount in fstab and optionally change permissions after confirmation.",
 		"ssh-tools":                       "Open a task menu for passwordless SSH profiles and direct Ethernet setup, rollback, and status-monitor management.",
 		"toggle-nopasswd-sudo":            "Enable or disable passwordless sudo for one Linux or WSL user. Validates changes and manages a toolbox sudoers rule and, when needed, its final include in /etc/sudoers.",
@@ -306,6 +306,7 @@ func TestRepositoryCatalogUsesApprovedCategoriesAndDescriptions(t *testing.T) {
 		"add-alias":                       "Create a Bash and/or Zsh alias in a managed TB ALIASES section.",
 		"bootstrap-python-from-venv":      "Generate requirements, `pyproject.toml`, and `.python-version` from imports found in Python files and optional notebooks. Preserves unrelated TOML, stops on ambiguous input, and can run `uv lock`.",
 		"create-project-template":         "Merge the packaged project template into an existing directory without deleting destination-only files. Checks every conflict before asking to overwrite and does not create backups.",
+		"reset-git-history":               "Replace the current branch history with one commit and force-push it to origin after explicit confirmation. Deletes other local refs and reflogs.",
 		"git-sync":                        "Synchronize tracked files between two remote branches while preserving destination history and never force-pushing.",
 	}
 	if len(catalog.Commands) != len(wantDescriptions) {
@@ -360,7 +361,7 @@ func TestRepositoryCatalogContainsExpectedToolsInOrder(t *testing.T) {
 		"setup-agents-codex", "setup-agents-claude", "setup-agents-antigravity", "setup-agents-opencode", "setup-agents-project", "local-llm", "install-uv", "install-gh",
 		"setup-alacritty", "setup-kitty", "install-vscode-nautilus", "setup-windows", "set-terminal-hotkey", "setup-wsl", "set-vscode-wsl-cwd",
 		"set-default-cwd", "install-monitor", "install-stress-gpu", "isolate-gpu", "change-grub-order", "setup-venv", "toggle-nopasswd-sudo", "set-english-us-locale", "toggle-polkit-prompts", "mount-drive", "ssh-tools",
-		"create-env-alias", "add-alias", "bootstrap-python-from-venv", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
+		"create-env-alias", "add-alias", "bootstrap-python-from-venv", "reset-git-history", "git-sync", "create-project-template", "uninstall-monitor", "uninstall-stress-gpu",
 	}
 	if len(catalog.Commands) != len(want) {
 		t.Fatalf("got %d commands, want %d", len(catalog.Commands), len(want))
@@ -426,6 +427,7 @@ func TestRepositoryListInteractiveCommandsHavePromptAuditCoverage(t *testing.T) 
 		"add-alias":                  "utility Python managed-block tests",
 		"bootstrap-python-from-venv": "utility Python retry tests",
 		"create-project-template":    "utility Python retry tests",
+		"reset-git-history":          "isolated Git rewrite and cancellation tests",
 	}
 	for _, command := range catalog.Commands {
 		if command.Visibility != "list" || command.Protocol == "builtin" {

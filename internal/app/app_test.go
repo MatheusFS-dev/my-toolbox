@@ -235,6 +235,9 @@ func TestRepositoryCompletionCandidatesMatchEachEnvironment(t *testing.T) {
 	}
 	for _, test := range tests {
 		test.want = strings.Replace(test.want, "create-project-template\n", "create-project-template\ngit-sync\n", 1)
+		if test.environment != "windows" {
+			test.want = strings.Replace(test.want, "search\n", "reset-git-history\nsearch\n", 1)
+		}
 		if test.environment == "linux-native" {
 			test.want = strings.Replace(test.want, "setup-venv\n", "setup-venv\nssh-tools\n", 1)
 		} else if test.environment == "linux-wsl" {
