@@ -25,6 +25,38 @@ GetLatestScreenshotPath(directory, &modifiedTime := 0) {
     return latestPath
 }
 
+; Add CF_UNICODETEXT without EmptyClipboard so existing image formats survive.
+AddScreenshotPathToClipboard(path) {
+    memory := DllCall("GlobalAlloc", "uint", 0x42, "uptr", (StrLen(path) + 1) * 2, "ptr")
+    if !memory
+        throw OSError()
+    opened := false
+    try {
+        pointer := DllCall("GlobalLock", "ptr", memory, "ptr")
+        if !pointer
+            throw OSError()
+        try StrPut(path, pointer, StrLen(path) + 1, "UTF-16")
+        finally DllCall("GlobalUnlock", "ptr", memory)
+        Loop 20 {
+            if DllCall("OpenClipboard", "ptr", A_ScriptHwnd) {
+                opened := true
+                break
+            }
+            Sleep 10
+        }
+        if !opened
+            throw OSError()
+        if !DllCall("SetClipboardData", "uint", 13, "ptr", memory, "ptr")
+            throw OSError()
+        memory := 0 ; Windows owns the allocation after SetClipboardData succeeds.
+    } finally {
+        if opened
+            DllCall("CloseClipboard")
+        if memory
+            DllCall("GlobalFree", "ptr", memory)
+    }
+}
+
 class ScreenshotPathPaste {
     __New() {
         this.screenshotsDirectory := EnvGet("USERPROFILE") "\Pictures\Screenshots"
@@ -105,7 +137,7 @@ class ScreenshotPathPaste {
     CopyLatestPath() {
         path := GetLatestScreenshotPath(this.screenshotsDirectory, &modified)
         if path != "" {
-            A_Clipboard := path
+            AddScreenshotPathToClipboard(path)
             this.lastScreenshot := path "|" modified
             this.Log("path-copied")
         }
@@ -276,6 +308,27 @@ RunSelfTest() {
             A_Clipboard := "unrelated clipboard text"
             Assert(app.CopyLatestPath() = directory "\old.png", "copy newest path")
             Assert(A_Clipboard = directory "\old.png", "clipboard contains full path")
+            ; A one-pixel DIB models the image format supplied by Windows screenshots.
+            image := DllCall("GlobalAlloc", "uint", 0x42, "uptr", 44, "ptr")
+            pixels := DllCall("GlobalLock", "ptr", image, "ptr")
+            NumPut("uint", 40, "int", 1, "int", 1, "ushort", 1, "ushort", 32, pixels)
+            NumPut("uint", 0x123456, pixels, 40)
+            DllCall("GlobalUnlock", "ptr", image)
+            Assert(DllCall("OpenClipboard", "ptr", A_ScriptHwnd), "open image clipboard")
+            try {
+                DllCall("EmptyClipboard")
+                Assert(DllCall("SetClipboardData", "uint", 8, "ptr", image, "ptr"), "seed screenshot image")
+            } finally DllCall("CloseClipboard")
+            app.CopyLatestPath()
+            Assert(A_Clipboard = directory "\old.png", "path accompanies screenshot image")
+            Assert(DllCall("IsClipboardFormatAvailable", "uint", 8), "screenshot image remains available")
+            Assert(DllCall("OpenClipboard", "ptr", A_ScriptHwnd), "open preserved image")
+            try {
+                preserved := DllCall("GetClipboardData", "uint", 8, "ptr")
+                pixels := DllCall("GlobalLock", "ptr", preserved, "ptr")
+                try Assert(NumGet(pixels, 40, "uint") = 0x123456, "screenshot pixels remain unchanged")
+                finally DllCall("GlobalUnlock", "ptr", preserved)
+            } finally DllCall("CloseClipboard")
         } finally A_Clipboard := savedClipboard
         app.stateDirectory := directory
         app.configPath := directory "\settings.ini"
