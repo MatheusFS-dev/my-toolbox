@@ -1,5 +1,5 @@
 {
   "title": "Paste Screenshot Path",
-  "description": "Paste the matched Windows screenshot file path with Ctrl+Shift+V.",
+  "description": "Automatically copy the newest screenshot file path to the clipboard.",
   "arguments": []
 }

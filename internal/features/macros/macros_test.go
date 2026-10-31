@@ -2,6 +2,7 @@ package macros
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -204,7 +205,7 @@ func TestLoadScreenshotPathPasteMacro(t *testing.T) {
 		if macro.Title != "Paste Screenshot Path" {
 			t.Fatalf("title = %q", macro.Title)
 		}
-		if macro.Description != "Paste the matched Windows screenshot file path with Ctrl+Shift+V." {
+		if macro.Description != "Automatically copy the newest screenshot file path to the clipboard." {
 			t.Fatalf("description = %q", macro.Description)
 		}
 		if len(macro.Arguments) != 0 {
@@ -371,5 +372,31 @@ func TestYdotoolInstallerRejectsCorruptDownload(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "bin")); !os.IsNotExist(err) {
 		t.Fatal("corrupt archive installed files")
+	}
+}
+
+// TestScreenshotPathPasteRuntime exercises the bundled macro against real files
+// and the Windows clipboard. Machines without AutoHotkey still load metadata.
+func TestScreenshotPathPasteRuntime(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows AutoHotkey macro")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ahk, err := findAutoHotkeyV2("windows", home)
+	if err != nil {
+		t.Skip("AutoHotkey v2 is not installed")
+	}
+	script, err := filepath.Abs(filepath.Join("..", "..", "..", "assets", "payload", "packages", "macros", "autohotkey", "paste_screenshot_path.ahk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, ahk, "/ErrorStdOut", script, "--self-test").CombinedOutput()
+	if err != nil {
+		t.Fatalf("screenshot macro self-test: %v\n%s", err, output)
 	}
 }

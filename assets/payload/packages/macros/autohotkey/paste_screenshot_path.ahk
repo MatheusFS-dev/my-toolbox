@@ -2,118 +2,127 @@
 #SingleInstance Force
 Persistent
 
-; Paste Screenshot Path correlates the current clipboard image with a file in
-; Pictures\Screenshots. It never writes to the clipboard and only owns
-; Ctrl+Shift+V while the correlation is current and unambiguous.
-
+; Copy newly saved screenshot paths automatically using Windows directory notifications.
 global ScreenshotPathPasteApp := 0
 SetTimer LaunchScreenshotPathPaste, -1
 
-IsScreenshotPathReady() {
-    global ScreenshotPathPasteApp
-    return IsObject(ScreenshotPathPasteApp) && ScreenshotPathPasteApp.IsActive()
-}
-
-PasteScreenshotPath() {
-    global ScreenshotPathPasteApp
-    if !ScreenshotPathPasteApp.RevalidateActiveAssociation() {
-        Send "^+v"
-        return
+GetLatestScreenshotPath(directory, &modifiedTime := 0) {
+    latestPath := ""
+    latestTime := 0
+    attributes := Buffer(36, 0)
+    Loop Files directory "\*", "F" {
+        if !RegExMatch(A_LoopFileExt, "i)^(png|jpe?g|bmp|gif|webp|tiff?|heic)$")
+            continue
+        if !DllCall("GetFileAttributesExW", "wstr", A_LoopFileFullPath, "int", 0, "ptr", attributes)
+            continue
+        modified := NumGet(attributes, 20, "int64")
+        if modified > latestTime || (modified = latestTime && StrCompare(A_LoopFileFullPath, latestPath) > 0) {
+            latestTime := modified
+            latestPath := A_LoopFileFullPath
+        }
     }
-    SendText ScreenshotPathPasteApp.active.path
-}
-
-HasSelfTestArgument() {
-    for argument in A_Args {
-        if argument = "--self-test"
-            return true
-    }
-    return false
+    modifiedTime := latestTime
+    return latestPath
 }
 
 class ScreenshotPathPaste {
-    static Inactive := "INACTIVE"
-    static Pending := "PENDING"
-    static Active := "ACTIVE"
-    static Invalidated := "INVALIDATED"
-    static CorrelationWindowMs := 5000
-    static WatcherCadenceMs := 50
-    static StabilityWaitMs := 50
-    static AssociationSettleMs := 0
-    static ClipboardReadRetryMs := 1000
-    static ClipboardReadRetryCadenceMs := 50
-    static MaxCandidates := 128
-    static MaxEncodedBytes := 128 * 1024 * 1024
-    static MaxPixels := 33554432
-
     __New() {
-        this.state := ScreenshotPathPaste.Inactive
-        this.pending := 0
-        this.active := 0
-        this.clipboardChange := 0
-        this.candidates := Map()
-        this.directoryChanged := false
-        this.diagnosticsEnabled := false
-        this.watcher := 0
-        this.gdiplusToken := 0
-        this.mutex := 0
-        this.clipboardCallback := this.OnClipboardChange.Bind(this)
-        this.clipboardRetryCallback := this.ProcessClipboardChange.Bind(this)
-        this.tickCallback := this.Tick.Bind(this)
         this.screenshotsDirectory := EnvGet("USERPROFILE") "\Pictures\Screenshots"
         this.stateDirectory := EnvGet("LOCALAPPDATA") "\my-toolbox\macros\screenshot-path-paste"
+        this.configPath := this.stateDirectory "\settings.ini"
         this.launcherPath := this.stateDirectory "\launcher.ahk"
         this.diagnosticLog := this.stateDirectory "\diagnostics.log"
         this.shortcutPath := A_AppData "\Microsoft\Windows\Start Menu\Programs\Startup\my-toolbox Paste Screenshot Path.lnk"
+        this.diagnosticsEnabled := false
+        this.watcher := 0
+        this.lastScreenshot := ""
     }
 
     Start() {
-        if !this.AcquireMutex() {
+        this.screenshotsDirectory := IniRead(this.configPath, "ScreenshotPath", "Directory", "")
+        if !DirExist(this.screenshotsDirectory) && !this.ConfigureDirectory()
             ExitApp 0
-        }
-        this.StartGdiplus()
         this.ConfigureTray()
-        if !DirExist(this.screenshotsDirectory) {
-            this.SetState(ScreenshotPathPaste.Invalidated, "The Screenshots folder is unavailable.")
-            return
-        }
         this.RequestStartupConsent()
-        OnClipboardChange(this.clipboardCallback)
-        this.watcher := DirectoryWatcher(this.screenshotsDirectory)
-        if !this.watcher.Start() {
-            this.SetState(ScreenshotPathPaste.Invalidated, "The Screenshots folder cannot be watched.")
-            return
+        this.WatchDirectory()
+    }
+
+    WatchDirectory() {
+        if IsObject(this.watcher)
+            this.watcher.Stop()
+        this.watcher := ScreenshotDirectoryWatcher(this.screenshotsDirectory)
+        this.CopyLatestPath()
+    }
+
+    Run() {
+        loop {
+            handles := Buffer(A_PtrSize)
+            NumPut("ptr", this.watcher.event, handles)
+            result := DllCall("MsgWaitForMultipleObjectsEx", "uint", 1, "ptr", handles, "uint", 0xFFFFFFFF, "uint", 0x04FF, "uint", 0x06, "uint")
+            if result = 0
+                this.ProcessChanges()
+            else if result = 0xFFFFFFFF
+                throw OSError()
+            Sleep -1
         }
-        SetTimer this.tickCallback, ScreenshotPathPaste.WatcherCadenceMs
-        this.SetState(ScreenshotPathPaste.Inactive, "Waiting for a screenshot.")
-        this.OnClipboardChange(0)
     }
 
-    AcquireMutex() {
-        name := "Local\my-toolbox-paste-screenshot-path-" A_UserName
-        this.mutex := DllCall("CreateMutexW", "ptr", 0, "int", false, "wstr", name, "ptr")
-        return this.mutex && A_LastError != 183
+    ProcessChanges() {
+        if !this.watcher.Wait(0)
+            return
+        this.watcher.Rearm()
+        try {
+            path := GetLatestScreenshotPath(this.screenshotsDirectory, &modified)
+            if path != "" && path "|" modified != this.lastScreenshot
+                this.CopyLatestPath()
+        } catch as error {
+            TrayTip "Could not copy the screenshot path: " error.Message, "Paste Screenshot Path", 3
+        }
     }
 
-    StartGdiplus() {
-        startupInput := Buffer(A_PtrSize = 8 ? 24 : 16, 0)
-        NumPut("UInt", 1, startupInput, 0)
-        status := DllCall("gdiplus\GdiplusStartup", "ptr*", &token := 0, "ptr", startupInput.Ptr, "ptr", 0, "uint")
-        if status != 0
-            throw Error("GDI+ initialization failed.")
-        this.gdiplusToken := token
+    ConfigureDirectory(*) {
+        defaultPath := this.screenshotsDirectory != "" ? this.screenshotsDirectory : EnvGet("USERPROFILE") "\Pictures\Screenshots"
+        loop {
+            result := InputBox("Screenshot folder (required). Enter an existing full folder path.", "Paste Screenshot Path", "w560 h140", defaultPath)
+            if result.Result != "OK"
+                return false
+            directory := Trim(result.Value, " `t`r`n" Chr(34))
+            if StrLen(directory) > 3
+                directory := RTrim(directory, "\/")
+            if !RegExMatch(directory, "i)^(?:[a-z]:\\|\\\\)") || !DirExist(directory) {
+                MsgBox "Enter an existing full screenshot folder path, or choose Cancel.", "Paste Screenshot Path", "Icon!"
+                continue
+            }
+            DirCreate this.stateDirectory
+            IniWrite directory, this.configPath, "ScreenshotPath", "Directory"
+            this.screenshotsDirectory := directory
+            if IsObject(this.watcher)
+                this.WatchDirectory()
+            return true
+        }
+    }
+
+    CopyLatestPath() {
+        path := GetLatestScreenshotPath(this.screenshotsDirectory, &modified)
+        if path != "" {
+            A_Clipboard := path
+            this.lastScreenshot := path "|" modified
+            this.Log("path-copied")
+        }
+        return path
     }
 
     ConfigureTray() {
         A_TrayMenu.Delete()
         A_TrayMenu.Add("Status", this.ShowStatus.Bind(this))
+        A_TrayMenu.Add("Change screenshot folder", this.ConfigureDirectory.Bind(this))
         A_TrayMenu.Add("Enable diagnostic logging", this.ToggleDiagnostics.Bind(this))
         A_TrayMenu.Add("Enable at sign-in", this.EnableAtSignIn.Bind(this))
         A_TrayMenu.Add()
         A_TrayMenu.Add("Exit", this.Exit.Bind(this))
         A_TrayMenu.Add("Uninstall", this.Uninstall.Bind(this))
         A_TrayMenu.Default := "Status"
-        this.UpdateTray()
+        A_IconTip := "Paste Screenshot Path: Watching screenshots"
     }
 
     RequestStartupConsent() {
@@ -122,7 +131,7 @@ class ScreenshotPathPaste {
             return
         if !DirExist(this.screenshotsDirectory)
             return
-        answer := MsgBox("Enable Paste Screenshot Path at sign-in? You can change this later from the tray menu.", "Paste Screenshot Path", "YN Icon?")
+        answer := MsgBox("Enable Paste Screenshot Path at sign-in? You can change this later from the tray menu.", "Paste Screenshot Path", "YN Default2 Icon?")
         DirCreate this.stateDirectory
         FileAppend(answer = "Yes" ? "enabled`n" : "declined`n", marker, "UTF-8")
         if answer = "Yes"
@@ -145,7 +154,7 @@ class ScreenshotPathPaste {
             shortcut.Description := "Paste Screenshot Path"
             shortcut.Save()
             this.Log("startup-enabled")
-            TrayTip "Paste Screenshot Path", "Enabled at sign-in.", 2
+            TrayTip "Enabled at sign-in.", "Paste Screenshot Path", 2
         } catch as error {
             MsgBox "Could not enable at sign-in: " error.Message, "Paste Screenshot Path", "Iconx"
         }
@@ -171,222 +180,8 @@ class ScreenshotPathPaste {
             . runLine "`n"
     }
 
-    OnClipboardChange(*) {
-        this.clipboardChange := {sequence: DllCall("GetClipboardSequenceNumber", "uint"), detectedTick: A_TickCount, detectedTime: A_Now}
-        SetTimer this.clipboardRetryCallback, -1
-    }
-
-    ProcessClipboardChange() {
-        if !IsObject(this.clipboardChange)
-            return
-        change := this.clipboardChange
-        if DllCall("GetClipboardSequenceNumber", "uint") != change.sequence
-            return
-        readStatus := ""
-        signature := ClipboardImageSignature(&readStatus)
-        if !IsObject(signature) {
-            if A_TickCount - change.detectedTick < ScreenshotPathPaste.ClipboardReadRetryMs {
-                SetTimer this.clipboardRetryCallback, -ScreenshotPathPaste.ClipboardReadRetryCadenceMs
-                return
-            }
-            this.clipboardChange := 0
-            this.Invalidate("Clipboard changed to non-image content.")
-            this.Log("clipboard-read-" readStatus)
-            return
-        }
-        this.BeginPendingAssociation(change.sequence, signature, change.detectedTick, change.detectedTime)
-    }
-
-    BeginPendingAssociation(sequence, signature, detectedTick, detectedTime) {
-        this.clipboardChange := 0
-        this.pending := {sequence: sequence, signature: signature, detectedTick: detectedTick, detectedTime: detectedTime, matches: Map()}
-        this.active := 0
-        this.candidates := Map()
-        this.SetState(ScreenshotPathPaste.Pending, "Waiting for the screenshot file.")
-        this.Log("clipboard-image-pending")
-        this.ScanCandidates()
-    }
-
-    Tick() {
-        if IsObject(this.pending) {
-            this.ScanCandidates()
-            if A_TickCount - this.pending.detectedTick >= ScreenshotPathPaste.CorrelationWindowMs
-                this.FinalizePendingAssociation()
-            return
-        }
-        if IsObject(this.watcher) && this.watcher.HasChanges() {
-            this.directoryChanged := true
-            this.Log("directory-change")
-        }
-        if this.directoryChanged || IsObject(this.pending) {
-            this.directoryChanged := false
-            this.ScanCandidates()
-        }
-    }
-
-    ScanCandidates() {
-        if !IsObject(this.pending) || !DirExist(this.screenshotsDirectory)
-            return
-        candidates := []
-        Loop Files this.screenshotsDirectory "\*.*", "F" {
-            if A_LoopFileSize > ScreenshotPathPaste.MaxEncodedBytes
-                continue
-            age := DateDiff(this.pending.detectedTime, A_LoopFileTimeModified, "Seconds")
-            if Abs(age) > 5
-                continue
-            candidates.Push({path: A_LoopFileFullPath, size: A_LoopFileSize, modified: A_LoopFileTimeModified})
-        }
-        this.SortCandidates(candidates)
-        if candidates.Length > ScreenshotPathPaste.MaxCandidates
-            candidates.Length := ScreenshotPathPaste.MaxCandidates
-        for candidate in candidates
-            this.CheckCandidate(candidate)
-    }
-
-    SortCandidates(candidates) {
-        Loop candidates.Length {
-            outer := A_Index
-            Loop candidates.Length - outer {
-                inner := A_Index
-                if candidates[inner].modified < candidates[inner + 1].modified {
-                    swap := candidates[inner]
-                    candidates[inner] := candidates[inner + 1]
-                    candidates[inner + 1] := swap
-                }
-            }
-        }
-    }
-
-    CheckCandidate(candidate) {
-        if !IsObject(this.pending)
-            return
-        key := candidate.path
-        if !this.candidates.Has(key) {
-            this.candidates[key] := {size: candidate.size, modified: candidate.modified, observedTick: A_TickCount}
-            return
-        }
-        observed := this.candidates[key]
-        if observed.size != candidate.size || observed.modified != candidate.modified {
-            this.candidates[key] := {size: candidate.size, modified: candidate.modified, observedTick: A_TickCount}
-            return
-        }
-        if A_TickCount - observed.observedTick < ScreenshotPathPaste.StabilityWaitMs
-            return
-        if this.pending.matches.Has(key)
-            return
-        signature := FileImageSignature(candidate.path)
-        if !IsObject(signature)
-            return
-        if !ImageSignaturesEqual(signature, this.pending.signature)
-            return
-        this.RecordCandidateMatch(candidate.path, candidate.size, candidate.modified, signature)
-    }
-
-    RecordCandidateMatch(path, size, modified, signature) {
-        if !IsObject(this.pending)
-            return
-        if !this.pending.matches.Has(path)
-            this.pending.matches[path] := {size: size, modified: modified, signature: signature, matchedTick: A_TickCount}
-        if this.pending.matches.Count > 1
-            this.Invalidate("More than one file matches the screenshot.")
-        else if ScreenshotPathPaste.ShouldPromotePendingMatch(this.pending.matches[path].matchedTick, A_TickCount)
-            this.PromotePendingAssociation()
-    }
-
-    FinalizePendingAssociation() {
-        if !IsObject(this.pending)
-            return
-        if this.pending.matches.Count != 1 {
-            this.Invalidate("Screenshot correlation expired without one matching file.")
-            return
-        }
-        if !this.IsActive() && !this.PromotePendingAssociation()
-            return
-        this.pending := 0
-    }
-
-    PromotePendingAssociation() {
-        if !IsObject(this.pending) || this.pending.matches.Count != 1
-            return false
-        if DllCall("GetClipboardSequenceNumber", "uint") != this.pending.sequence {
-            this.Invalidate("Clipboard changed during screenshot correlation.")
-            return false
-        }
-        clipboard := ClipboardImageSignature()
-        if !IsObject(clipboard) || !ImageSignaturesEqual(clipboard, this.pending.signature) {
-            this.Invalidate("Clipboard image changed during screenshot correlation.")
-            return false
-        }
-        match := this.SinglePendingMatch()
-        if !IsObject(match) {
-            this.Invalidate("Screenshot correlation did not retain a matching file.")
-            return false
-        }
-        this.active := {path: match.path, sequence: this.pending.sequence, signature: match.signature, size: match.size, modified: match.modified}
-        this.SetState(ScreenshotPathPaste.Active, "Screenshot path is ready.")
-        this.Log("screenshot-associated")
-        return true
-    }
-
-    SinglePendingMatch() {
-        for path, match in this.pending.matches
-            return {path: path, size: match.size, modified: match.modified, signature: match.signature}
-        return 0
-    }
-
-    static ShouldPromotePendingMatch(matchedTick, currentTick) {
-        return currentTick - matchedTick >= ScreenshotPathPaste.AssociationSettleMs
-    }
-
-    RevalidateActiveAssociation() {
-        if !this.IsActive()
-            return false
-        if DllCall("GetClipboardSequenceNumber", "uint") != this.active.sequence {
-            this.Invalidate("Clipboard sequence changed.")
-            return false
-        }
-        clipboard := ClipboardImageSignature()
-        if !IsObject(clipboard) || !ImageSignaturesEqual(clipboard, this.active.signature) {
-            this.Invalidate("Clipboard image changed.")
-            return false
-        }
-        if !FileExist(this.active.path) || FileGetSize(this.active.path) != this.active.size || FileGetTime(this.active.path, "M") != this.active.modified {
-            this.Invalidate("Screenshot file changed or disappeared.")
-            return false
-        }
-        file := FileImageSignature(this.active.path)
-        if !IsObject(file) || !ImageSignaturesEqual(file, this.active.signature) {
-            this.Invalidate("Screenshot file signature changed.")
-            return false
-        }
-        return true
-    }
-
-    IsActive() {
-        return this.state = ScreenshotPathPaste.Active && IsObject(this.active)
-    }
-
-    Invalidate(reason) {
-        this.pending := 0
-        this.active := 0
-        this.candidates := Map()
-        this.SetState(ScreenshotPathPaste.Invalidated, reason)
-        this.Log("association-invalidated")
-    }
-
-    SetState(state, detail) {
-        this.state := state
-        this.detail := detail
-        this.UpdateTray()
-    }
-
-    UpdateTray() {
-        stateName := this.state
-        A_IconTip := "Paste Screenshot Path: " stateName
-    }
-
     ShowStatus(*) {
-        MsgBox "State: " this.state "`n" this.detail, "Paste Screenshot Path", "Iconi"
+        MsgBox "Screenshot folder: " this.screenshotsDirectory "`nNew screenshot paths are copied to the clipboard automatically. Paste with Ctrl+V.", "Paste Screenshot Path", "Iconi"
     }
 
     ToggleDiagnostics(*) {
@@ -404,7 +199,7 @@ class ScreenshotPathPaste {
     Log(event) {
         if !this.diagnosticsEnabled
             return
-        try FileAppend FormatTime(, "yyyy-MM-dd HH:mm:ss") " state=" this.state " event=" event "`n", this.diagnosticLog, "UTF-8"
+        try FileAppend FormatTime(, "yyyy-MM-dd HH:mm:ss") " event=" event "`n", this.diagnosticLog, "UTF-8"
     }
 
     Exit(*) {
@@ -412,7 +207,7 @@ class ScreenshotPathPaste {
     }
 
     Uninstall(*) {
-        answer := MsgBox("Remove Paste Screenshot Path startup files and diagnostic logs?", "Paste Screenshot Path", "YN Icon!")
+        answer := MsgBox("Remove Paste Screenshot Path settings, startup files, and diagnostic logs?", "Paste Screenshot Path", "YN Default2 Icon!")
         if answer != "Yes"
             return
         try {
@@ -427,168 +222,91 @@ class ScreenshotPathPaste {
     }
 }
 
-class DirectoryWatcher {
-    __New(path) {
-        this.path := path
-        this.handle := 0
-        this.event := 0
-        this.overlapped := Buffer(A_PtrSize = 8 ? 32 : 20, 0)
-        this.buffer := Buffer(65536, 0)
+; Windows signals this handle when a file is created, renamed, or written.
+; No polling timer, asynchronous buffers, or image processing is needed.
+class ScreenshotDirectoryWatcher {
+    __New(directory) {
+        this.event := DllCall("FindFirstChangeNotificationW", "wstr", directory, "int", false, "uint", 0x19, "ptr")
+        if !this.event || this.event = -1
+            throw OSError()
     }
 
-    Start() {
-        this.handle := DllCall("CreateFileW", "wstr", this.path, "uint", 0x0001, "uint", 0x00000007, "ptr", 0, "uint", 3, "uint", 0x42000000, "ptr", 0, "ptr")
-        if this.handle = -1 || !this.handle
-            return false
-        this.event := DllCall("CreateEventW", "ptr", 0, "int", false, "int", false, "ptr", 0, "ptr")
-        if !this.event
-            return false
-        NumPut("ptr", this.event, this.overlapped, A_PtrSize = 8 ? 24 : 16)
-        return this.Request()
+    Wait(timeout) {
+        return DllCall("WaitForSingleObject", "ptr", this.event, "uint", timeout, "uint") = 0
     }
 
-    Request() {
-        bytes := 0
-        return DllCall("ReadDirectoryChangesW", "ptr", this.handle, "ptr", this.buffer.Ptr, "uint", this.buffer.Size, "int", false, "uint", 0x0000001B, "uint*", &bytes, "ptr", this.overlapped.Ptr, "ptr", 0, "int") || A_LastError = 997
+    Rearm() {
+        if !DllCall("FindNextChangeNotification", "ptr", this.event)
+            throw OSError()
     }
 
-    HasChanges() {
-        if !this.handle || DllCall("WaitForSingleObject", "ptr", this.event, "uint", 0, "uint") != 0
-            return false
-        bytes := 0
-        DllCall("GetOverlappedResult", "ptr", this.handle, "ptr", this.overlapped.Ptr, "uint*", &bytes, "int", false)
-        NumPut("ptr", 0, this.overlapped, A_PtrSize = 8 ? 24 : 16)
-        return this.Request()
+    Stop() {
+        if this.event && this.event != -1 {
+            DllCall("FindCloseChangeNotification", "ptr", this.event)
+            this.event := 0
+        }
     }
 
     __Delete() {
-        if this.handle && this.handle != -1
-            DllCall("CloseHandle", "ptr", this.handle)
-        if this.event
-            DllCall("CloseHandle", "ptr", this.event)
+        this.Stop()
     }
-}
-
-ClipboardImageSignature(&status := "") {
-    if !DllCall("OpenClipboard", "ptr", 0, "int") {
-        status := "open-failed"
-        return 0
-    }
-    try {
-        bitmap := DllCall("GetClipboardData", "uint", 2, "ptr")
-        if !bitmap {
-            status := "bitmap-unavailable"
-            return 0
-        }
-        status := DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "ptr", bitmap, "ptr", 0, "ptr*", &image := 0, "uint")
-        if status != 0 {
-            status := "bitmap-load-failed"
-            return 0
-        }
-        try {
-            signature := GdipImageSignature(image)
-            status := IsObject(signature) ? "ready" : "signature-failed"
-            return signature
-        }
-        finally DllCall("gdiplus\GdipDisposeImage", "ptr", image)
-    } finally DllCall("CloseClipboard")
-}
-
-FileImageSignature(path) {
-    try {
-        if FileGetSize(path) > ScreenshotPathPaste.MaxEncodedBytes
-            return 0
-        status := DllCall("gdiplus\GdipCreateBitmapFromFile", "wstr", path, "ptr*", &image := 0, "uint")
-        if status != 0
-            return 0
-        try return GdipImageSignature(image)
-        finally DllCall("gdiplus\GdipDisposeImage", "ptr", image)
-    } catch {
-        return 0
-    }
-}
-
-GdipImageSignature(image) {
-    width := 0, height := 0
-    if DllCall("gdiplus\GdipGetImageWidth", "ptr", image, "uint*", &width, "uint") != 0 || DllCall("gdiplus\GdipGetImageHeight", "ptr", image, "uint*", &height, "uint") != 0
-        return 0
-    if !width || !height || width * height > ScreenshotPathPaste.MaxPixels
-        return 0
-    rect := Buffer(16, 0), data := Buffer(A_PtrSize = 8 ? 32 : 24, 0)
-    NumPut("int", width, rect, 8), NumPut("int", height, rect, 12)
-    pixelFormat := 0x26200A
-    if DllCall("gdiplus\GdipBitmapLockBits", "ptr", image, "ptr", rect.Ptr, "uint", 1, "int", pixelFormat, "ptr", data.Ptr, "uint") != 0
-        return 0
-    try {
-        stride := NumGet(data, 8, "int"), scan0 := NumGet(data, 16, "ptr")
-        if !scan0 || Abs(stride) < width * 4
-            return 0
-        hash := Sha256Rows(scan0, stride, width * 4, height)
-        return hash != "" ? {width: width, height: height, hash: hash} : 0
-    } finally DllCall("gdiplus\GdipBitmapUnlockBits", "ptr", image, "ptr", data.Ptr)
-}
-
-Sha256Rows(scan0, stride, rowBytes, height) {
-    if DllCall("bcrypt\BCryptOpenAlgorithmProvider", "ptr*", &algorithm := 0, "wstr", "SHA256", "ptr", 0, "uint", 0, "uint") != 0
-        return 0
-    try {
-        propertySize := 0
-        DllCall("bcrypt\BCryptGetProperty", "ptr", algorithm, "wstr", "ObjectLength", "ptr", 0, "uint", 0, "uint*", &propertySize, "uint", 0)
-        property := Buffer(propertySize, 0)
-        if DllCall("bcrypt\BCryptGetProperty", "ptr", algorithm, "wstr", "ObjectLength", "ptr", property.Ptr, "uint", property.Size, "uint*", &propertySize, "uint", 0) != 0
-            return 0
-        objectLength := NumGet(property, 0, "uint")
-        hashObject := Buffer(objectLength, 0)
-        if DllCall("bcrypt\BCryptCreateHash", "ptr", algorithm, "ptr*", &hash := 0, "ptr", hashObject.Ptr, "uint", hashObject.Size, "ptr", 0, "uint", 0, "uint", 0, "uint") != 0
-            return 0
-        try {
-            offset := stride < 0 ? (height - 1) * -stride : 0
-            Loop height {
-                if DllCall("bcrypt\BCryptHashData", "ptr", hash, "ptr", scan0 + offset, "uint", rowBytes, "uint", 0, "uint") != 0
-                    return 0
-                offset += stride
-            }
-            digest := Buffer(32, 0)
-            if DllCall("bcrypt\BCryptFinishHash", "ptr", hash, "ptr", digest.Ptr, "uint", digest.Size, "uint", 0, "uint") != 0
-                return 0
-            result := ""
-            Loop digest.Size
-                result .= Format("{:02x}", NumGet(digest, A_Index - 1, "uchar"))
-            return result
-        } finally DllCall("bcrypt\BCryptDestroyHash", "ptr", hash)
-    } finally DllCall("bcrypt\BCryptCloseAlgorithmProvider", "ptr", algorithm, "uint", 0)
-}
-
-ImageSignaturesEqual(left, right) {
-    return IsObject(left) && IsObject(right) && left.width = right.width && left.height = right.height && left.hash = right.hash
 }
 
 RunSelfTest() {
-    Assert(ImageSignaturesEqual({width: 10, height: 20, hash: "a"}, {width: 10, height: 20, hash: "a"}), "equal signatures")
-    Assert(!ImageSignaturesEqual({width: 10, height: 20, hash: "a"}, {width: 10, height: 21, hash: "a"}), "different dimensions")
-    Assert(ScreenshotPathPaste.ShouldPromotePendingMatch(100, 100), "first stable match promotes immediately")
-    Assert(ScreenshotPathPaste.ShouldPromotePendingMatch(100, 600), "stable match promotes promptly")
-    Assert(ScreenshotPathPaste.ShouldPromotePendingMatch(100, 200), "stable match is not delayed")
-    Assert(ScreenshotPathPaste.WatcherCadenceMs = 50, "fast pending watcher cadence")
-    Assert(ScreenshotPathPaste.StabilityWaitMs = 50, "fast file stability check")
-    app := ScreenshotPathPaste()
-    Assert(IsObject(app.tickCallback), "retained tick callback")
-    app.SetState(ScreenshotPathPaste.Pending, "test")
-    Assert(app.state = ScreenshotPathPaste.Pending, "pending state")
-    app.BeginPendingAssociation(123, {width: 10, height: 20, hash: "a"}, A_TickCount, A_Now)
-    Assert(app.state = ScreenshotPathPaste.Pending && app.pending.sequence = 123, "deferred clipboard association")
-    app.Invalidate("test")
-    Assert(app.state = ScreenshotPathPaste.Invalidated && !IsObject(app.active), "invalidation state")
-    launcher := app.BuildLauncher()
-    Assert(InStr(launcher, "#Requires AutoHotkey v2.0") && InStr(launcher, "Run Chr(34) A_AhkPath Chr(34)"), "launcher content")
-    app.pending := {sequence: 1, signature: {width: 10, height: 20, hash: "a"}, detectedTick: A_TickCount, detectedTime: A_Now, matches: Map("one.png", {size: 1, modified: A_Now, signature: {width: 10, height: 20, hash: "a"}})}
-    app.RecordCandidateMatch("two.png", 1, A_Now, app.pending.signature)
-    Assert(app.state = ScreenshotPathPaste.Invalidated, "ambiguous matches")
-    app.pending := {matches: Map("one.png", {size: 1, modified: A_Now, signature: {width: 10, height: 20, hash: "a"}})}
-    match := app.SinglePendingMatch()
-    Assert(match.path = "one.png", "single pending match")
-    Assert(!RegExMatch("../bad", "^[A-Za-z0-9._-]+$"), "malformed version")
-    FileAppend "self-test passed`n", "*"
+    originalClipboard := ClipboardAll()
+    directory := A_Temp "\tb-screenshot-test-" DllCall("GetCurrentProcessId")
+    DirCreate directory
+    try {
+        Assert(GetLatestScreenshotPath(directory) = "", "empty folder")
+        FileAppend "old", directory "\old.png"
+        FileSetTime "20200101000000", directory "\old.png", "M"
+        FileAppend "new", directory "\new screenshot.PNG"
+        FileSetTime "20210101000000", directory "\new screenshot.PNG", "M"
+        FileAppend "ignored", directory "\notes.txt"
+        Assert(GetLatestScreenshotPath(directory) = directory "\new screenshot.PNG", "newest image regardless of clipboard or age")
+        FileDelete directory "\new screenshot.PNG"
+        Assert(GetLatestScreenshotPath(directory) = directory "\old.png", "deleted newest file")
+        DirCreate directory "\folder.png"
+        Assert(GetLatestScreenshotPath(directory) = directory "\old.png", "ignore directories")
+        Assert(GetLatestScreenshotPath(directory "\missing") = "", "missing folder")
+        app := ScreenshotPathPaste()
+        app.screenshotsDirectory := directory
+        savedClipboard := ClipboardAll()
+        try {
+            A_Clipboard := "unrelated clipboard text"
+            Assert(app.CopyLatestPath() = directory "\old.png", "copy newest path")
+            Assert(A_Clipboard = directory "\old.png", "clipboard contains full path")
+        } finally A_Clipboard := savedClipboard
+        app.stateDirectory := directory
+        app.configPath := directory "\settings.ini"
+        IniWrite directory, app.configPath, "ScreenshotPath", "Directory"
+        FileAppend "declined", directory "\startup-consent.txt"
+        app.screenshotsDirectory := ""
+        app.Start()
+        Assert(app.screenshotsDirectory = directory, "load saved screenshot folder on startup")
+        app.Start()
+        Assert(app.screenshotsDirectory = directory, "restart without a stale mutex")
+        savedClipboard := ClipboardAll()
+        try {
+            A_Clipboard := "ordinary copied text"
+            FileAppend "screenshot", directory "\automatic.png"
+            Assert(app.watcher.Wait(5000), "new screenshot signals watcher without a hotkey")
+            app.ProcessChanges()
+            Assert(A_Clipboard = directory "\automatic.png", "new screenshot path is copied automatically")
+            A_Clipboard := "keep ordinary text"
+            FileAppend "unrelated", directory "\notes.txt"
+            Assert(app.watcher.Wait(5000), "directory event")
+            app.ProcessChanges()
+            Assert(A_Clipboard = "keep ordinary text", "unrelated file changes preserve clipboard")
+        } finally {
+            app.watcher.Stop()
+            A_Clipboard := savedClipboard
+        }
+        Assert(InStr(app.BuildLauncher(), "#Requires AutoHotkey v2.0"), "startup launcher")
+    } finally {
+        A_Clipboard := originalClipboard
+        DirDelete directory, true
+    }
 }
 
 Assert(condition, message) {
@@ -598,14 +316,21 @@ Assert(condition, message) {
 
 LaunchScreenshotPathPaste() {
     global ScreenshotPathPasteApp
-    if HasSelfTestArgument() {
-        RunSelfTest()
-        ExitApp 0
+    for argument in A_Args {
+        if argument = "--self-test" {
+            OnError((*) => ExitApp(1))
+            RunSelfTest()
+            ExitApp 0
+        }
     }
     ScreenshotPathPasteApp := ScreenshotPathPaste()
+    OnExit(StopScreenshotWatcher)
     ScreenshotPathPasteApp.Start()
+    ScreenshotPathPasteApp.Run()
 }
 
-#HotIf IsScreenshotPathReady()
-$^+v::PasteScreenshotPath()
-#HotIf
+StopScreenshotWatcher(*) {
+    global ScreenshotPathPasteApp
+    if IsObject(ScreenshotPathPasteApp) && IsObject(ScreenshotPathPasteApp.watcher)
+        ScreenshotPathPasteApp.watcher.Stop()
+}
