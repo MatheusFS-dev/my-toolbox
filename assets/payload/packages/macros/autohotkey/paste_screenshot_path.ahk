@@ -68,6 +68,10 @@ class ScreenshotPathPaste {
         this.diagnosticsEnabled := false
         this.watcher := 0
         this.lastScreenshot := ""
+        this.pendingPath := ""
+        this.pendingDeadline := 0
+        this.clipboardCallback := this.ClipboardChanged.Bind(this)
+        this.retryCallback := this.RetryPendingPath.Bind(this)
     }
 
     Start() {
@@ -76,6 +80,8 @@ class ScreenshotPathPaste {
             ExitApp 0
         this.ConfigureTray()
         this.RequestStartupConsent()
+        OnClipboardChange(this.clipboardCallback, 0)
+        OnClipboardChange(this.clipboardCallback)
         this.WatchDirectory()
     }
 
@@ -137,11 +143,47 @@ class ScreenshotPathPaste {
     CopyLatestPath() {
         path := GetLatestScreenshotPath(this.screenshotsDirectory, &modified)
         if path != "" {
-            AddScreenshotPathToClipboard(path)
-            this.lastScreenshot := path "|" modified
-            this.Log("path-copied")
+            this.pendingPath := path
+            this.pendingModified := modified
+            this.pendingDeadline := A_TickCount + 5000
+            this.RetryPendingPath()
         }
         return path
+    }
+
+    ClipboardChanged(kind) {
+        if this.pendingPath = "" || A_TickCount > this.pendingDeadline
+            return
+        ; Ignore our own text notification and stop following ordinary copies.
+        if kind = 1 {
+            if A_Clipboard != this.pendingPath {
+                this.pendingPath := ""
+                SetTimer this.retryCallback, 0
+            }
+            return
+        }
+        ; The screenshot image can arrive after its file notification.
+        if kind = 2
+            this.RetryPendingPath()
+    }
+
+    RetryPendingPath() {
+        if this.pendingPath = "" || A_TickCount > this.pendingDeadline
+            return
+        try {
+            AddScreenshotPathToClipboard(this.pendingPath)
+            this.lastScreenshot := this.pendingPath "|" this.pendingModified
+            SetTimer this.retryCallback, 0
+            this.Log("path-copied")
+        } catch as error {
+            if A_TickCount < this.pendingDeadline {
+                SetTimer this.retryCallback, -100
+                this.Log("clipboard-retry")
+            } else {
+                this.Log("clipboard-error")
+                TrayTip "Could not copy the screenshot path: " error.Message, "Paste Screenshot Path", 3
+            }
+        }
     }
 
     ConfigureTray() {
@@ -159,8 +201,12 @@ class ScreenshotPathPaste {
 
     RequestStartupConsent() {
         marker := this.stateDirectory "\startup-consent.txt"
-        if FileExist(marker)
+        if FileExist(marker) {
+            if Trim(FileRead(marker), " `t`r`n") = "enabled"
+                && (!FileExist(this.launcherPath) || FileRead(this.launcherPath) != this.BuildLauncher() || !FileExist(this.shortcutPath))
+                this.EnableAtSignIn()
             return
+        }
         if !DirExist(this.screenshotsDirectory)
             return
         answer := MsgBox("Enable Paste Screenshot Path at sign-in? You can change this later from the tray menu.", "Paste Screenshot Path", "YN Default2 Icon?")
@@ -199,7 +245,7 @@ class ScreenshotPathPaste {
             return "#Requires AutoHotkey v2.0`n"
                 . "currentFile := EnvGet(" quote "LOCALAPPDATA" quote ") " quote "\my-toolbox\current.txt" quote "`n"
                 . "if !FileExist(currentFile)`n    ExitApp 1`n"
-                . "version := Trim(FileRead(currentFile))`n"
+                . "version := Trim(FileRead(currentFile), " quote " ``t``r``n" quote ")`n"
                 . "if !RegExMatch(version, " quote "^[A-Za-z0-9._-]+$" quote ")`n    ExitApp 1`n"
                 . "target := EnvGet(" quote "LOCALAPPDATA" quote ") " quote "\my-toolbox\versions\" quote " version " quote "\packages\macros\autohotkey\paste_screenshot_path.ahk" quote "`n"
                 . "if !FileExist(target)`n    ExitApp 1`n"

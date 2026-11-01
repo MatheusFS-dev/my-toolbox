@@ -400,3 +400,109 @@ func TestScreenshotPathPasteRuntime(t *testing.T) {
 		t.Fatalf("screenshot macro self-test: %v\n%s", err, output)
 	}
 }
+
+// TestScreenshotPathPasteEventLoop runs the real event loop with both possible
+// orderings of screenshot file creation and clipboard image publication.
+func TestScreenshotPathPasteEventLoop(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows AutoHotkey macro")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ahk, err := findAutoHotkeyV2("windows", home)
+	if err != nil {
+		t.Skip("AutoHotkey v2 is not installed")
+	}
+	script, err := filepath.Abs(filepath.Join("..", "..", "..", "assets", "payload", "packages", "macros", "autohotkey", "paste_screenshot_path.ahk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs(filepath.Join("testdata", "screenshot_event_loop.ahk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, order := range []string{"file-first", "image-first", "clipboard-locked", "startup-locked", "startup-repair"} {
+		t.Run(order, func(t *testing.T) {
+			directory := t.TempDir()
+			wrapper := filepath.Join(directory, "event-loop.ahk")
+			content := "#Include " + script + "\nSetTimer LaunchScreenshotPathPaste, 0\n#Include " + fixture + "\n"
+			if err := os.WriteFile(wrapper, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			output, err := exec.CommandContext(ctx, ahk, "/ErrorStdOut", wrapper, directory, order).CombinedOutput()
+			if err != nil {
+				diagnostic, _ := os.ReadFile(filepath.Join(directory, "failure.txt"))
+				t.Fatalf("screenshot event-loop %s: %v\n%s\n%s", order, err, output, diagnostic)
+			}
+		})
+	}
+}
+
+func TestScreenshotPathPasteStartupLauncher(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows AutoHotkey macro")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ahk, err := findAutoHotkeyV2("windows", home)
+	if err != nil {
+		t.Skip("AutoHotkey v2 is not installed")
+	}
+	script, err := filepath.Abs(filepath.Join("..", "..", "..", "assets", "payload", "packages", "macros", "autohotkey", "paste_screenshot_path.ahk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := filepath.Abs(filepath.Join("testdata", "screenshot_event_loop.ahk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ending := range []string{"\n", "\r\n"} {
+		t.Run(strings.ReplaceAll(strings.ReplaceAll(ending, "\r", "CR"), "\n", "LF"), func(t *testing.T) {
+			directory := t.TempDir()
+			localData := filepath.Join(directory, "local")
+			root := filepath.Join(localData, "my-toolbox")
+			macroRoot := filepath.Join(root, "versions", "1.0.0", "packages", "macros", "autohotkey")
+			if err := os.MkdirAll(macroRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("LOCALAPPDATA", localData)
+			t.Setenv("TB_SCREENSHOT_TEST_DIRECTORY", directory)
+			if err := os.WriteFile(filepath.Join(root, "current.txt"), []byte("1.0.0"+ending), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			launcher := filepath.Join(directory, "launcher.ahk")
+			generator := filepath.Join(macroRoot, "generate-launcher.ahk")
+			generation := "#Include " + script + "\nSetTimer LaunchScreenshotPathPaste, 0\nFileAppend ScreenshotPathPaste().BuildLauncher(), A_Args[1]\nExitApp 0\n"
+			if err := os.WriteFile(generator, []byte(generation), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if output, err := exec.CommandContext(ctx, ahk, "/ErrorStdOut", generator, launcher).CombinedOutput(); err != nil {
+				t.Fatalf("generate startup launcher: %v\n%s", err, output)
+			}
+			wrapper := "#Include " + script + "\nSetTimer LaunchScreenshotPathPaste, 0\n#Include " + fixture + "\n"
+			if err := os.WriteFile(filepath.Join(macroRoot, "paste_screenshot_path.ahk"), []byte(wrapper), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if output, err := exec.CommandContext(ctx, ahk, "/ErrorStdOut", launcher).CombinedOutput(); err != nil {
+				t.Fatalf("run startup launcher: %v\n%s", err, output)
+			}
+			deadline := time.Now().Add(6 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(filepath.Join(directory, "passed.txt")); err == nil {
+					return
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			diagnostic, _ := os.ReadFile(filepath.Join(directory, "failure.txt"))
+			t.Fatalf("startup child did not complete screenshot checks: %s", diagnostic)
+		})
+	}
+}

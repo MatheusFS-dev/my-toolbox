@@ -65,6 +65,7 @@ func TestWindowsUninstallRemovesManagedUserPathAndNotifies(t *testing.T) {
 	binRoot := filepath.Join(dataRoot, "bin")
 	wrapper := filepath.Join(binRoot, "tb.cmd")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	documents := useTemporaryWindowsDocuments(t)
 	if err := os.MkdirAll(binRoot, 0o755); err != nil {
 		t.Fatal(err)
@@ -140,6 +141,7 @@ func TestWindowsUninstallRejectsMalformedCompletionMarkersBeforeDeletingInstalla
 	documents := useTemporaryWindowsDocuments(t)
 	profile := filepath.Join(documents, "WindowsPowerShell", "profile.ps1")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	for _, directory := range []string{versionRoot, filepath.Dir(wrapper), filepath.Dir(profile)} {
 		if err := os.MkdirAll(directory, 0o755); err != nil {
 			t.Fatal(err)
@@ -249,6 +251,7 @@ func TestWindowsCleanupRemovesToolboxAndPreservesGitHubCLI(t *testing.T) {
 	currentFile := filepath.Join(dataRoot, "current.txt")
 	unrelated := filepath.Join(localAppData, "unrelated")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	for _, path := range []string{versionsRoot, binRoot, completionRoot, markerRoot, unrelated} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
@@ -334,6 +337,7 @@ func TestWindowsCleanupReinstallsAfterManagedRemoval(t *testing.T) {
 	installerPath := filepath.Join(t.TempDir(), "install.ps1")
 	marker := filepath.Join(t.TempDir(), "installed")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	useTemporaryWindowsDocuments(t)
 	t.Setenv("TOOLBOX_TEST_DATA_ROOT", dataRoot)
 	t.Setenv("TOOLBOX_TEST_MARKER", marker)
@@ -376,6 +380,7 @@ func TestWindowsReinstallReportsInstallerOutput(t *testing.T) {
 	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
 	installerPath := filepath.Join(t.TempDir(), "install.ps1")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	useTemporaryWindowsDocuments(t)
 	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
 		t.Fatal(err)
@@ -416,6 +421,7 @@ func TestWindowsUpdateRefusesUnrecognizedWrapperBeforeSchedulingRemoval(t *testi
 	versionRoot := filepath.Join(dataRoot, "versions", "0.1.1")
 	wrapper := filepath.Join(dataRoot, "bin", "tb.cmd")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	if err := os.MkdirAll(versionRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -446,6 +452,7 @@ func TestWindowsCleanupDoesNotFollowDirectoryJunctions(t *testing.T) {
 	externalFile := filepath.Join(external, "preserved.txt")
 	junction := filepath.Join(versionsRoot, "external")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	if err := os.MkdirAll(versionsRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -471,6 +478,7 @@ func TestWindowsCleanupRejectsToolboxRootJunction(t *testing.T) {
 	external := t.TempDir()
 	externalFile := filepath.Join(external, "preserved.txt")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	if err := os.WriteFile(externalFile, []byte("preserved"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -493,6 +501,7 @@ func TestWindowsCleanupPreservesExistingIsolationPath(t *testing.T) {
 	wrapper := filepath.Join(binRoot, "tb.cmd")
 	isolationPath := filepath.Join(binRoot, ".tb-uninstall.cmd")
 	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", t.TempDir())
 	if err := os.MkdirAll(binRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
