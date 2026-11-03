@@ -334,7 +334,7 @@ The command catalog is defined in `assets/payload/commands.json`. The descriptio
 - `isolate-gpu` (native Ubuntu 24.04 or 26.04): Reserve non-desktop NVIDIA GPUs from GDM and Xorg by anchoring the desktop to the NVIDIA GPU currently used by Xorg. Supports status, dry-run, apply, and checksum-verified undo.
   Requires: Bash; sudo; Ubuntu 24.04 or 26.04; nvidia-smi; awk; cat; chmod; grep; install; mkdir; mktemp; pgrep; rm; sha256sum; systemctl; tr.
 
-  This tool requires GDM, an active Xorg session, and at least two NVIDIA GPUs. It writes only `/etc/X11/xorg.conf.d/90-tb-isolate-gpu.conf` and its checksum state under `/var/lib/my-toolbox/`. Run `tb isolate-gpu apply --dry-run` before applying, then restart GDM or reboot. Run `tb isolate-gpu undo` to remove an unchanged managed configuration. Wayland and non-Ubuntu systems are intentionally unsupported.
+  This tool requires GDM, an active Xorg session, and at least two NVIDIA GPUs. It writes only `/etc/X11/xorg.conf.d/90-tb-isolate-gpu.conf` and its checksum state under `/var/lib/my-toolbox/`. Run `tb isolate-gpu` and choose status, preview, apply, or undo. Apply and undo ask for confirmation. After applying or undoing, restart GDM or reboot. Undo removes an unchanged managed configuration. Wayland and non-Ubuntu systems are intentionally unsupported.
 
 - `change-grub-order` (native Linux): Choose the default GRUB boot entry from an interactive list. Backs up the current GRUB settings before applying the change.
   Requires: Bash; sudo; Python 3; GRUB configuration files; GRUB utilities; `awk`; `cat`; `cp`; `date`; `grep`.

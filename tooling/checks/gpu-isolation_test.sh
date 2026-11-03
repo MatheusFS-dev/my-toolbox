@@ -42,17 +42,29 @@ export GPU_ISOLATION_XORG_CONFIG="$tmp/root/etc/X11/xorg.conf.d/90-tb-isolate-gp
 export GPU_ISOLATION_STATE="$tmp/root/var/lib/my-toolbox/isolate-gpu.sha256"
 export GPU_ISOLATION_XORG_ROOT="$tmp/root/etc/X11"
 
-bash "$script" status > "$tmp/status"
+printf '1\n' | bash "$script" > "$tmp/interactive-status"
+grep -Fq 'GPU 0: NVIDIA RTX Desktop [desktop-active]' "$tmp/interactive-status"
+grep -Fq 'Select an action [required: 1-4]' "$tmp/interactive-status"
+printf '\n9\n1\n' | bash "$script" > "$tmp/interactive-retry"
+grep -Fq 'Select 1, 2, 3, or 4 to continue.' "$tmp/interactive-retry"
+grep -Fq 'GPU isolation status checked successfully.' "$tmp/interactive-retry"
+if bash "$script" status > "$tmp/error" 2>&1; then
+    printf 'Positional arguments were accepted.\n' >&2
+    exit 1
+fi
+grep -Fq 'Usage: tb isolate-gpu' "$tmp/error"
+
+printf '1\n' | bash "$script" > "$tmp/status"
 grep -Fq 'GPU 0: NVIDIA RTX Desktop [desktop-active]' "$tmp/status"
 grep -Fq 'GPU 1: NVIDIA RTX Worker [available]' "$tmp/status"
 
-bash "$script" apply --dry-run > "$tmp/apply"
+printf '2\n' | bash "$script" > "$tmp/apply"
 grep -Fq 'Section "Device"' "$tmp/apply"
 grep -Fq 'BusID "PCI:1:0:0"' "$tmp/apply"
 grep -Fq 'Option "AutoAddGPU" "false"' "$tmp/apply"
 grep -Fq 'Option "AutoBindGPU" "false"' "$tmp/apply"
 grep -Fq 'Option "AllowNVIDIAGPUScreens" "false"' "$tmp/apply"
-grep -Fq 'tb isolate-gpu undo' "$tmp/apply"
+grep -Fq 'choose Undo' "$tmp/apply"
 if grep -Fq 'Section "Screen"' "$tmp/apply" ||
    [[ $(grep -Fc 'Section "Device"' "$tmp/apply") -ne 1 ]]; then
     printf 'Dry-run configuration was not anchor-only.\n' >&2
@@ -61,24 +73,24 @@ fi
 test ! -e "$GPU_ISOLATION_XORG_CONFIG"
 test ! -e "$GPU_ISOLATION_STATE"
 
-bash "$script" apply <<< 'y' > "$tmp/applied"
+printf '3\ny\n' | bash "$script" > "$tmp/applied"
 test -f "$GPU_ISOLATION_XORG_CONFIG"
 test -f "$GPU_ISOLATION_STATE"
-bash "$script" undo --dry-run > "$tmp/undo"
-grep -Fq "Dry run complete; would remove $GPU_ISOLATION_XORG_CONFIG" "$tmp/undo"
+printf '4\nn\n' | bash "$script" > "$tmp/undo"
+grep -Fq 'Cancelled; no files were changed.' "$tmp/undo"
 test -f "$GPU_ISOLATION_XORG_CONFIG"
 
-printf 'y\n' | bash "$script" undo > "$tmp/undo-real"
+printf '4\ny\n' | bash "$script" > "$tmp/undo-real"
 test ! -e "$GPU_ISOLATION_XORG_CONFIG"
 test ! -e "$GPU_ISOLATION_STATE"
 
 sed -i 's/00000000:01:00.0/00000001:01:00.0/' "$tmp/bin/nvidia-smi"
-bash "$script" apply --dry-run > "$tmp/domain"
+printf '2\n' | bash "$script" > "$tmp/domain"
 grep -Fq 'BusID "PCI:1@1:0:0"' "$tmp/domain"
 sed -i 's/00000001:01:00.0/00000000:01:00.0/' "$tmp/bin/nvidia-smi"
 
 ln -s "$tmp/missing" "$GPU_ISOLATION_XORG_CONFIG"
-if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
+if printf '2\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Apply accepted a dangling managed-path symlink.\n' >&2
     exit 1
 fi
@@ -89,7 +101,7 @@ original_config=$GPU_ISOLATION_XORG_CONFIG
 mkdir -p "$tmp/root/linked-xorg-target"
 ln -s "$tmp/root/linked-xorg-target" "$tmp/root/linked-xorg-parent"
 export GPU_ISOLATION_XORG_CONFIG="$tmp/root/linked-xorg-parent/90-tb-isolate-gpu.conf"
-if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
+if printf '2\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Apply accepted a symbolic-link parent directory.\n' >&2
     exit 1
 fi
@@ -101,7 +113,7 @@ Section "ServerFlags"
     Option "AutoAddGPU" "true"
 EndSection
 EOF
-if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
+if printf '2\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Apply accepted a conflicting Xorg GPU configuration.\n' >&2
     exit 1
 fi
@@ -115,7 +127,7 @@ if [[ "\${*: -1}" == "$GPU_ISOLATION_STATE" ]]; then exit 73; fi
 exec "$real_install" "\$@"
 EOF
 chmod +x "$tmp/bin/install"
-if printf 'y\n' | bash "$script" apply > "$tmp/error" 2>&1; then
+if printf '3\ny\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Apply accepted a failed checksum-state installation.\n' >&2
     exit 1
 fi
@@ -123,10 +135,10 @@ test ! -e "$GPU_ISOLATION_XORG_CONFIG"
 test ! -e "$GPU_ISOLATION_STATE"
 rm "$tmp/bin/install"
 
-bash "$script" apply <<< 'y' > "$tmp/applied"
+printf '3\ny\n' | bash "$script" > "$tmp/applied"
 
 printf '\n# changed\n' >> "$GPU_ISOLATION_XORG_CONFIG"
-if bash "$script" undo --dry-run > "$tmp/error" 2>&1; then
+if printf '4\ny\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Undo accepted a modified managed configuration.\n' >&2
     exit 1
 fi
@@ -145,7 +157,7 @@ case "$*" in
 esac
 EOF
 chmod +x "$tmp/bin/nvidia-smi"
-if bash "$script" status > "$tmp/error" 2>&1; then
+if printf '1\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'A failed NVIDIA inventory query was accepted.\n' >&2
     exit 1
 fi
@@ -164,11 +176,11 @@ case "$*" in
 esac
 EOF
 chmod +x "$tmp/bin/nvidia-smi"
-bash "$script" apply --dry-run > "$tmp/sparse"
+printf '2\n' | bash "$script" > "$tmp/sparse"
 grep -Fq 'BusID "PCI:1:0:0"' "$tmp/sparse"
 
 sed -i 's/24\.04/25.04/' "$GPU_ISOLATION_OS_RELEASE"
-if bash "$script" status > "$tmp/error" 2>&1; then
+if printf '1\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Unsupported Ubuntu version was accepted.\n' >&2
     exit 1
 fi
@@ -184,7 +196,7 @@ case "$*" in
 esac
 EOF
 chmod +x "$tmp/bin/nvidia-smi"
-if bash "$script" apply --dry-run > "$tmp/error" 2>&1; then
+if printf '2\n' | bash "$script" > "$tmp/error" 2>&1; then
     printf 'Single-GPU configuration was accepted.\n' >&2
     exit 1
 fi
