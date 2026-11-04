@@ -5,6 +5,7 @@ on:
     types: [agent-workspace-template-updated]
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -39,3 +40,7 @@ jobs:
           git add assets/payload/packages/agent-workspace-template
           git commit -m "chore: update agent workspace template to $TEMPLATE_SHA"
           git push origin HEAD:main
+      - name: Run CI for updated toolbox
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
