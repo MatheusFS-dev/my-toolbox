@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Commit the prepared tracked changes, then observe the CI-gated release chain.
+# Commit the prepared changes, then observe the CI-gated release chain.
 # --watch is deliberately read-only so automation can observe submodule updates.
 
 set -u
@@ -202,8 +202,8 @@ head_sha=$($git_bin rev-parse HEAD 2>/dev/null) || fail 'Could not resolve HEAD.
 origin_sha=$($git_bin rev-parse origin/main 2>/dev/null) || fail 'Could not resolve origin/main.'
 [ "$head_sha" = "$origin_sha" ] || fail 'Local main must exactly match origin/main before release.'
 
-tb_info 'Staging tracked changes, committing, and pushing main.'
-$git_bin add -u || fail 'Could not stage tracked changes.'
+tb_info 'Staging changes, committing, and pushing main.'
+$git_bin add -A -- :/ || fail 'Could not stage changes.'
 no_changes=false
 if $git_bin diff --cached --quiet; then
     no_changes=true
@@ -223,7 +223,7 @@ done <<EOF
 $submodule_paths
 EOF
 if [ "$no_changes" = true ]; then
-    tb_warn 'No tracked changes are staged for release.'
+    tb_warn 'No changes are staged for release.'
     finish 3 no_changes "$head_sha"
 fi
 $git_bin commit -m "$message" >/dev/null || fail 'Could not create the release commit.'

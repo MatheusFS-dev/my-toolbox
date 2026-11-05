@@ -10,12 +10,14 @@ trap 'rm -rf "$test_root"' EXIT HUP INT TERM
 
 mkdir -p "$test_root/bin"
 command_log="$test_root/commands"
+real_git=$(command -v git)
 
 cat > "$test_root/bin/git" <<'SH'
 #!/bin/sh
 set -eu
 printf 'git %s\n' "$*" >> "$TB_RELEASE_TEST_LOG"
 case "$1 ${2:-}" in
+    'add '*) "$TB_RELEASE_TEST_REAL_GIT" -C "$TB_RELEASE_TEST_REPO" "$@" ;;
     'branch --show-current')
         if [ "${TB_RELEASE_TEST_SCENARIO:-success}" = non-main ]; then printf 'feature\n'; else printf 'main\n'; fi
         ;;
@@ -93,6 +95,8 @@ run_controller() {
     shift
     TB_RELEASE_TEST_LOG="$command_log" \
         TB_RELEASE_TEST_SCENARIO="$scenario" \
+        TB_RELEASE_TEST_REPO="$test_root/repo" \
+        TB_RELEASE_TEST_REAL_GIT="$real_git" \
         PATH="$test_root/bin:$PATH" \
         RELEASE_TIMEOUT_SECONDS=0 \
         RELEASE_SLEEP_SECONDS=0 \
@@ -106,6 +110,8 @@ run_wrapper() {
     shift
     TB_RELEASE_TEST_LOG="$command_log" \
         TB_RELEASE_TEST_SCENARIO="$scenario" \
+        TB_RELEASE_TEST_REPO="$test_root/repo" \
+        TB_RELEASE_TEST_REAL_GIT="$real_git" \
         PATH="$test_root/bin:$PATH" \
         RELEASE_TIMEOUT_SECONDS=0 \
         RELEASE_SLEEP_SECONDS=0 \
@@ -128,9 +134,18 @@ expect_status() {
     }
 }
 
+mkdir "$test_root/repo"
+git -C "$test_root/repo" init -q
+printf 'new\n' > "$test_root/repo/new-file"
+printf 'ignored\n' > "$test_root/repo/.gitignore"
+printf 'ignored\n' > "$test_root/repo/ignored"
 : > "$command_log"
 expect_status 0 success --message 'release relocation'
-grep -Fx 'git add -u' "$command_log" >/dev/null
+git -C "$test_root/repo" diff --cached --name-only | grep -Fx 'new-file' >/dev/null
+if git -C "$test_root/repo" diff --cached --name-only | grep -Fx 'ignored' >/dev/null; then
+    printf 'Ignored file was staged.\n' >&2
+    exit 1
+fi
 grep -F 'git commit -m release relocation' "$command_log" >/dev/null
 grep -F 'push https://github.com/example/submodule.git 1111111111111111111111111111111111111111:refs/heads/main' "$command_log" >/dev/null
 grep -F 'git push origin main' "$command_log" >/dev/null

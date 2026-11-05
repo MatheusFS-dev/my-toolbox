@@ -13,7 +13,7 @@ Add only durable repository-specific information below, such as non-obvious arch
 
 ## Releases
 
-When the user asks to "release a new version", prepare the requested work for release by running the relevant local checks and reporting the outcome, but never commit, push, run `release.sh`, trigger CI, or watch CI or release workflows. Tell the user when the work is ready and instruct them to run `bash release.sh` from the repository root. Explicitly remind them to stage each intended new file first because the controller uses `git add -u`. If a commit or CI run was triggered externally, report its SHA and tell the user to select the watch option in `release.sh`; do not monitor it. Do not create a release manually when the automatic release workflow is available.
+When the user asks to "release a new version", prepare the requested work for release by running the relevant local checks and reporting the outcome, but never commit, push, run `release.sh`, trigger CI, or watch CI or release workflows. Tell the user when the work is ready and instruct them to run `bash release.sh` from the repository root. The controller stages all non-ignored changes automatically. If a commit or CI run was triggered externally, report its SHA and tell the user to select the watch option in `release.sh`; do not monitor it. Do not create a release manually when the automatic release workflow is available.
 
 ## Terminal output contract
 
