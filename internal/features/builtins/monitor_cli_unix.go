@@ -129,12 +129,26 @@ func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 		if discoveryErr != nil || len(devices) == 0 {
 			_ = messages.Warn("NVIDIA GPU discovery unavailable. Your code will choose its device.")
 		} else {
+			settings, scanErr := detectMonitorGPUSettings(targets, interpreter.Path)
+			if scanErr != nil {
+				_ = messages.Warn("Could not inspect GPU settings. Your code may override Monitor's GPU selection.")
+			}
+			warnMonitorGPUSettings(settings, messages)
 			options := []huh.Option[string]{huh.NewOption("My code picks it or does not use (default)", "")}
 			for _, device := range devices {
 				options = append(options, huh.NewOption(fmt.Sprintf("GPU %d: %s (NVIDIA index %d)", device.Index+1, device.Name, device.Index), device.UUID))
 			}
-			if err := runMonitorConfigStep(huh.NewSelect[string]().Key("gpu").Title("Choose a GPU for this run").Description("The selected GPU is CUDA device 0 inside your code.").Options(options...).Value(&gpuUUID)); err != nil {
-				return 130
+			for {
+				if err := runMonitorConfigStep(huh.NewSelect[string]().Key("gpu").Title("Choose a GPU for this run").Description("The selected GPU becomes CUDA device 0 unless your code overrides the selection.").Options(options...).Value(&gpuUUID)); err != nil {
+					return 130
+				}
+				accepted, err := confirmMonitorGPUSelection(settings, gpuUUID, devices, messages, runMonitorConfigStep)
+				if err != nil {
+					return 130
+				}
+				if accepted {
+					break
+				}
 			}
 			if gpuUUID != "" {
 				current, err := discoverMonitorGPUs()
