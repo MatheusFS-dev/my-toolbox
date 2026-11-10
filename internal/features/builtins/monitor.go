@@ -172,23 +172,117 @@ func regularExecutable(path string) bool {
 	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
+func validateMonitorTarget(argument string) (string, error) {
+	absolute, err := filepath.Abs(argument)
+	if err != nil {
+		return "", fmt.Errorf("resolve target %s: %w", argument, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o444 == 0 || strings.ToLower(filepath.Ext(absolute)) != ".py" {
+		return "", fmt.Errorf("target must be a readable regular .py file: %s", argument)
+	}
+	return absolute, nil
+}
+
 func validateMonitorTargets(arguments []string) ([]string, error) {
 	if len(arguments) == 0 {
 		return nil, fmt.Errorf("at least one Python script is required")
 	}
 	targets := make([]string, 0, len(arguments))
 	for _, argument := range arguments {
-		absolute, err := filepath.Abs(argument)
+		absolute, err := validateMonitorTarget(argument)
 		if err != nil {
-			return nil, fmt.Errorf("resolve target %s: %w", argument, err)
-		}
-		info, err := os.Stat(absolute)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o444 == 0 || strings.ToLower(filepath.Ext(absolute)) != ".py" {
-			return nil, fmt.Errorf("target must be a readable regular .py file: %s", argument)
+			return nil, err
 		}
 		targets = append(targets, absolute)
 	}
 	return targets, nil
+}
+
+func parseMonitorTargets(groups []string) ([]string, [][]string, error) {
+	if len(groups) == 0 {
+		return nil, nil, fmt.Errorf("at least one Python script is required")
+	}
+	targets := make([]string, 0, len(groups))
+	scriptArgs := make([][]string, 0, len(groups))
+	for _, group := range groups {
+		if strings.ContainsRune(group, '\x00') {
+			return nil, nil, monitorArgumentSyntaxError()
+		}
+		if target, err := validateMonitorTarget(group); err == nil {
+			targets = append(targets, target)
+			scriptArgs = append(scriptArgs, nil)
+			continue
+		}
+		parts, err := splitMonitorCommand(group)
+		if err != nil || len(parts) == 0 {
+			return nil, nil, monitorArgumentSyntaxError()
+		}
+		target, err := validateMonitorTarget(parts[0])
+		if err != nil {
+			return nil, nil, monitorArgumentSyntaxError()
+		}
+		targets = append(targets, target)
+		scriptArgs = append(scriptArgs, append([]string(nil), parts[1:]...))
+	}
+	return targets, scriptArgs, nil
+}
+
+func monitorArgumentSyntaxError() error {
+	return fmt.Errorf("invalid script arguments. Use monitor \"script.py --argument value\" \"other.py\", or monitor script.py other.py when no arguments are needed.")
+}
+
+func splitMonitorCommand(value string) ([]string, error) {
+	var parts []string
+	var word strings.Builder
+	var quote rune
+	escaped := false
+	inWord := false
+	flush := func() {
+		if inWord {
+			parts = append(parts, word.String())
+			word.Reset()
+			inWord = false
+		}
+	}
+	for _, char := range value {
+		if escaped {
+			word.WriteRune(char)
+			escaped = false
+			inWord = true
+			continue
+		}
+		if char == '\\' && quote != '\'' {
+			escaped = true
+			inWord = true
+			continue
+		}
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			} else {
+				word.WriteRune(char)
+			}
+			inWord = true
+			continue
+		}
+		if char == '\'' || char == '"' {
+			quote = char
+			inWord = true
+			continue
+		}
+		if char == ' ' || char == '\t' || char == '\n' || char == '\r' {
+			flush()
+			continue
+		}
+		word.WriteRune(char)
+		inWord = true
+	}
+	if escaped || quote != 0 {
+		return nil, fmt.Errorf("unterminated command quote or escape")
+	}
+	flush()
+	return parts, nil
 }
 
 var monitorControlSequence = regexp.MustCompile(`(?:\x1b\[[0-?]*[ -/]*[@-~])|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)

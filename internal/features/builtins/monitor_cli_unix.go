@@ -30,17 +30,19 @@ const monitorHelp = `Monitor supervises non-interactive Python scripts for the c
 
 Usage:
   monitor <script.py> [more.py ...]  Review and run scripts sequentially
+  monitor "script.py --argument value" ["more.py --argument value" ...]
+                                 Run scripts with arguments
   monitor config                       Edit email and runtime defaults
   monitor --help                       Show this help
   monitor --version                    Show the Monitor version
 `
 
 func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Reader, output, errorOutput io.Writer) int {
-	if len(arguments) == 1 && (arguments[0] == "--help" || arguments[0] == "-h") {
+	if monitorHasOuterArgument(arguments, "--help", "-h") {
 		fmt.Fprint(output, monitorHelp)
 		return 0
 	}
-	if len(arguments) == 1 && arguments[0] == "--version" {
+	if monitorHasOuterArgument(arguments, "--version") {
 		fmt.Fprintf(output, "monitor %s\n", monitorVersion)
 		return 0
 	}
@@ -55,9 +57,10 @@ func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 		fmt.Fprint(errorOutput, monitorHelp)
 		return 2
 	}
-	targets, err := validateMonitorTargets(arguments)
+	targets, scriptArgs, err := parseMonitorTargets(arguments)
 	if err != nil {
-		fmt.Fprintln(errorOutput, err)
+		messages := newToolOutput(errorOutput, "monitor", nil, detectToolColor(errorOutput))
+		_ = messages.Warn(err.Error())
 		return 2
 	}
 	interpreter, err := resolveMonitorInterpreter("")
@@ -90,7 +93,7 @@ func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 	for terminalInteractive() {
 		fmt.Fprintf(output, "\nQueue: %d script(s)\nInterpreter: %s\nEnvironment: %s\n", len(targets), interpreter.Path, interpreter.Environment)
 		for index, target := range targets {
-			fmt.Fprintf(output, "  %d. %s\n", index+1, target)
+			fmt.Fprintf(output, "  %d. %s%s\n", index+1, target, formatMonitorScriptArgs(scriptArgs[index]))
 		}
 		action := "run"
 		err := ui.ToolboxHuhForm(huh.NewSelect[string]().Title("Review Monitor launch").Options(
@@ -167,7 +170,37 @@ func RunMonitorCLI(root, monitorVersion string, arguments []string, input io.Rea
 		}
 		break
 	}
-	return invokeMonitorRuntime(targets, titles, interpreter, runConfigPath, gpuUUID, output, errorOutput)
+	return invokeMonitorRuntime(root, targets, scriptArgs, titles, interpreter, runConfigPath, gpuUUID, output, errorOutput)
+}
+
+func monitorHasOuterArgument(arguments []string, matches ...string) bool {
+	for _, argument := range arguments {
+		for _, match := range matches {
+			if argument == match {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func formatMonitorScriptArgs(arguments []string) string {
+	if len(arguments) == 0 {
+		return ""
+	}
+	rendered := make([]string, len(arguments))
+	for index, argument := range arguments {
+		rendered[index] = strconv.Quote(argument)
+	}
+	return " " + strings.Join(rendered, " ")
+}
+
+func monitorScriptArgsForRequest(scriptArgs [][]string) [][]string {
+	result := make([][]string, len(scriptArgs))
+	for index, arguments := range scriptArgs {
+		result[index] = append([]string{}, arguments...)
+	}
+	return result
 }
 
 type monitorLaunchGPU struct {
@@ -388,15 +421,14 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, promp
 	scheduledNotificationEnabled := boolValue(notifications["scheduled_restart"], true)
 	finalFailureEnabled := boolValue(notifications["final_failure"], true)
 	completionEnabled := boolValue(notifications["completion"], true)
-	leakNotificationEnabled := boolValue(notifications["possible_leak"], true)
+	leakNotificationEnabled := boolValue(notifications["possible_leak"], false)
 	codeErrorNotificationEnabled := boolValue(notifications["possible_code_error"], true)
-	leakEnabled := boolValue(leak["enabled"], true)
+	leakEnabled := boolValue(leak["enabled"], false)
 	leakWarmupSeconds := strconv.FormatFloat(numberValue(leak["warmup_seconds"], 300), 'f', -1, 64)
 	leakWindowSeconds := strconv.FormatFloat(numberValue(leak["window_seconds"], 300), 'f', -1, 64)
 	leakMinimumGrowthMiB := strconv.FormatFloat(numberValue(leak["minimum_growth_mib"], 100), 'f', -1, 64)
 	leakMinimumSlope := strconv.FormatFloat(numberValue(leak["minimum_slope_mib_per_minute"], 5), 'f', -1, 64)
 	reportsEnabled := boolValue(config["reports_enabled"], true)
-	viewerEnabled := boolValue(config["gui_viewer"], false)
 	editingStopped := false
 	runStep := func(field huh.Field) error {
 		if editingStopped {
@@ -506,9 +538,7 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, promp
 	if err := runStep(huh.NewConfirm().Key("reports-enabled").Title("Write detailed reports and graphs for this run?").Description("Create metric samples, summaries, and CPU, RAM, and GPU graphs beside the run logs.").Value(&reportsEnabled)); err != nil {
 		return interpreter, "", err
 	}
-	if err := runStep(huh.NewConfirm().Key("viewer-enabled").Title("Open a separate live log viewer for this run?").Description("When a supported graphical terminal is available, open a read-only live tail while retaining the dashboard.").Value(&viewerEnabled)); err != nil {
-		return interpreter, "", err
-	}
+
 
 	selected, err := resolveMonitorInterpreter(path)
 	if err != nil {
@@ -566,7 +596,7 @@ func editMonitorRunWith(configPath string, interpreter monitorInterpreter, promp
 	leak["minimum_growth_mib"] = leakGrowthCount
 	leak["minimum_slope_mib_per_minute"] = leakSlopeCount
 	config["reports_enabled"] = reportsEnabled
-	config["gui_viewer"] = viewerEnabled
+	delete(config, "gui_viewer")
 	temporary, err := os.CreateTemp(filepath.Dir(configPath), ".run-config-*.json")
 	if err != nil {
 		return interpreter, "", err
@@ -688,11 +718,10 @@ func configureMonitor(root string, output io.Writer) error {
 	scheduledNotificationEnabled := boolValue(notifications["scheduled_restart"], true)
 	finalFailureEnabled := boolValue(notifications["final_failure"], true)
 	completionEnabled := boolValue(notifications["completion"], true)
-	leakNotificationEnabled := boolValue(notifications["possible_leak"], true)
+	leakNotificationEnabled := boolValue(notifications["possible_leak"], false)
 	codeErrorNotificationEnabled := boolValue(notifications["possible_code_error"], true)
 	reportsEnabled := boolValue(config["reports_enabled"], true)
-	viewerEnabled := boolValue(config["gui_viewer"], false)
-	leakEnabled := boolValue(leak["enabled"], true)
+	leakEnabled := boolValue(leak["enabled"], false)
 
 	step := 1
 	title := func(label string) string {
@@ -815,8 +844,8 @@ func configureMonitor(root string, output io.Writer) error {
 		crashRetries, rapidCrashSeconds, scheduledMinutes, memoryLimitGB, heartbeatMinutes, leakWarmupMinutes = "10", "60", "0", "1", "60", "5"
 		automaticRestartsEnabled, automaticRestartMode = false, "time"
 		heartbeatEnabled, runtimeCrashNotificationEnabled, scheduledNotificationEnabled = false, true, true
-		finalFailureEnabled, completionEnabled, leakNotificationEnabled, codeErrorNotificationEnabled = true, true, true, true
-		leakEnabled, reportsEnabled, viewerEnabled = true, true, false
+		finalFailureEnabled, completionEnabled, leakNotificationEnabled, codeErrorNotificationEnabled = true, true, false, true
+		leakEnabled, reportsEnabled = false, true
 	} else {
 		if err := runMonitorConfigStep(huh.NewInput().
 			Title(title("Set crash retries")).
@@ -943,12 +972,7 @@ func configureMonitor(root string, output io.Writer) error {
 			Value(&reportsEnabled)); err != nil {
 			return err
 		}
-		if err := runMonitorConfigStep(huh.NewConfirm().
-			Title(title("Open a separate live log viewer?")).
-			Description("When a supported graphical terminal is available, Monitor opens a read-only live tail. The dashboard always remains active.").
-			Value(&viewerEnabled)); err != nil {
-			return err
-		}
+
 	}
 
 	crashRetryCount, _ := strconv.Atoi(crashRetries)
@@ -980,7 +1004,7 @@ func configureMonitor(root string, output io.Writer) error {
 		return err
 	}
 	config["reports_enabled"] = reportsEnabled
-	config["gui_viewer"] = viewerEnabled
+	delete(config, "gui_viewer")
 	portNumber, _ := strconv.Atoi(email.Port)
 	credentials := map[string]any{"provider": email.Provider, "host": email.Host, "port": portNumber, "security": email.Security, "sender": email.Sender, "password": email.Password}
 	confirm := true
@@ -1012,7 +1036,7 @@ func configureMonitor(root string, output io.Writer) error {
 		return err
 	}
 	fmt.Fprintln(output, "Sending a test email to every recipient…")
-	if code := invokeMonitorTestEmail(temporaryConfig, temporaryCredentials, output); code != 0 {
+	if code := invokeMonitorTestEmail(root, temporaryConfig, temporaryCredentials, output); code != 0 {
 		return fmt.Errorf("test email failed; configuration was not saved")
 	}
 	if err := writeMonitorConfigPair(configPath, config, credentialsPath, credentials); err != nil {
@@ -1126,10 +1150,10 @@ func boolValue(value any, fallback bool) bool {
 func monitorDefaultConfig(recipients []string) map[string]any {
 	return map[string]any{
 		"schema_version": 1, "recipients": recipients, "sampling_interval_seconds": 1,
-		"heartbeat_interval_minutes": 60, "reports_enabled": true, "gui_viewer": false,
-		"notifications":  map[string]any{"heartbeat": false, "runtime_crash": true, "scheduled_restart": true, "final_failure": true, "completion": true, "possible_leak": true, "possible_code_error": true},
+		"heartbeat_interval_minutes": 60, "reports_enabled": true,
+		"notifications":  map[string]any{"heartbeat": false, "runtime_crash": true, "scheduled_restart": true, "final_failure": true, "completion": true, "possible_leak": false, "possible_code_error": true},
 		"restart":        map[string]any{"crash_retries": 10, "base_delay_seconds": 3, "backoff_multiplier": 1.2, "max_delay_seconds": 30, "rapid_crash_seconds": 60, "scheduled_interval_minutes": 0, "memory_aware": false, "memory_limit_gb": 1.0},
-		"leak_detection": map[string]any{"enabled": true, "warmup_seconds": 300, "window_seconds": 300, "minimum_growth_mib": 100, "minimum_slope_mib_per_minute": 5},
+		"leak_detection": map[string]any{"enabled": false, "warmup_seconds": 300, "window_seconds": 300, "minimum_growth_mib": 100, "minimum_slope_mib_per_minute": 5},
 	}
 }
 
@@ -1242,7 +1266,7 @@ func reserveMonitorPath(directory, pattern string) (string, error) {
 	return path, nil
 }
 
-func invokeMonitorRuntime(targets, titles []string, interpreter monitorInterpreter, configPath, gpuUUID string, output, errorOutput io.Writer) int {
+func invokeMonitorRuntime(root string, targets []string, scriptArgs [][]string, titles []string, interpreter monitorInterpreter, configPath, gpuUUID string, output, errorOutput io.Writer) int {
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		fmt.Fprintln(errorOutput, "load Monitor run configuration:", err)
@@ -1254,20 +1278,24 @@ func invokeMonitorRuntime(targets, titles []string, interpreter monitorInterpret
 		return 1
 	}
 	request := map[string]any{"protocol_version": 1, "type": "run", "scripts": targets, "titles": titles, "interpreter": interpreter.Path, "config_path": configPath}
+	if len(scriptArgs) > 0 {
+		request["script_args"] = monitorScriptArgsForRequest(scriptArgs)
+	}
 	if gpuUUID != "" {
 		request["gpu_uuid"] = gpuUUID
 	}
 	dashboard := newMonitorDashboard(targets, interpreter, config)
 	dashboard.Titles = append([]string(nil), titles...)
-	return runMonitorProtocol(request, dashboard, output, errorOutput)
+	dashboard.ScriptArgs = append([][]string(nil), scriptArgs...)
+	return runMonitorProtocol(root, request, dashboard, output, errorOutput)
 }
 
-func invokeMonitorTestEmail(configPath, credentialsPath string, output io.Writer) int {
+func invokeMonitorTestEmail(root, configPath, credentialsPath string, output io.Writer) int {
 	request := map[string]any{"protocol_version": 1, "type": "test_email", "config_path": configPath, "credentials_path": credentialsPath}
-	return runMonitorProtocol(request, newMonitorDashboard(nil, monitorInterpreter{}), output, output)
+	return runMonitorProtocol(root, request, newMonitorDashboard(nil, monitorInterpreter{}), output, output)
 }
 
-func runMonitorProtocol(request map[string]any, dashboard *monitorDashboard, output, errorOutput io.Writer) int {
+func runMonitorProtocol(root string, request map[string]any, dashboard *monitorDashboard, output, errorOutput io.Writer) int {
 	_, runtimeRoot, _, err := monitorPaths()
 	if err != nil {
 		fmt.Fprintln(errorOutput, err)
@@ -1276,7 +1304,7 @@ func runMonitorProtocol(request map[string]any, dashboard *monitorDashboard, out
 	python := filepath.Join(runtimeRoot, "venv", "bin", "python")
 	command := exec.Command(python, "-m", "monitor_runtime")
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(runtimeRoot, "app"))
+	command.Env = monitorRuntimeEnvironment(root, os.Environ())
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		fmt.Fprintln(errorOutput, err)
@@ -1379,4 +1407,8 @@ func validMonitorEventType(eventType string) bool {
 	default:
 		return false
 	}
+}
+
+func monitorRuntimeEnvironment(root string, environment []string) []string {
+	return append(append([]string(nil), environment...), "PYTHONPATH="+filepath.Join(root, "packages", "monitor_runtime"))
 }

@@ -33,6 +33,25 @@ class MainTests(unittest.TestCase):
             self.assertEqual(events[0]["type"], "handshake")
             self.assertEqual(events[-1]["type"], "final_outcome")
 
+    def test_run_request_passes_script_args_to_the_target(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "argv.py"
+            script.write_text("import sys\nprint(repr(sys.argv[1:]))\n", encoding="utf-8")
+            config = default_config()
+            config["reports_enabled"] = False
+            config["notifications"] = {key: False for key in config["notifications"]}
+            config_path = root / "config.json"
+            save_json_atomic(config_path, config)
+            request = {"protocol_version": 1, "type": "run", "scripts": [str(script)], "script_args": [["--epochs", "10", "first run", ""]], "interpreter": sys.executable, "config_path": str(config_path)}
+            output = io.StringIO()
+            with patch("sys.stdin", io.StringIO(json.dumps(request) + "\n")), patch("sys.stdout", output):
+                code = main()
+            events = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(code, 0)
+            target_output = [event["text"] for event in events if event["type"] == "target_output"]
+            self.assertIn("['--epochs', '10', 'first run', '']", target_output)
+
     def test_sigint_finalizes_run_and_returns_130(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

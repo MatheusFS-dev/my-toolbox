@@ -1,0 +1,6 @@
+attempts: 1
+crash_restarts: 0
+exit_code: 130
+memory_restarts: 0
+outcome: cancelled
+scheduled_restarts: 0

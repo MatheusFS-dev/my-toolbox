@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,28 @@ func TestMonitorHelpDocumentsPublicCommandsAndSequentialTargets(t *testing.T) {
 		if !strings.Contains(output.String(), text) {
 			t.Fatalf("help is missing %q: %q", text, output.String())
 		}
+	}
+}
+
+func TestMonitorMetadataFlagsOutsideScriptGroupsDoNotLaunchTargets(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		arguments []string
+		want      string
+	}{
+		{name: "help", arguments: []string{"script.py", "--help"}, want: "Usage:"},
+		{name: "version", arguments: []string{"script.py", "--version"}, want: "monitor 1.2.3"},
+		{name: "script argument", arguments: []string{"script.py --help"}, want: "invalid script arguments"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := &bytes.Buffer{}
+			if code := RunMonitorCLI("/payload", "1.2.3", test.arguments, strings.NewReader(""), output, output); code != map[string]int{"help": 0, "version": 0, "script argument": 2}[test.name] {
+				t.Fatalf("RunMonitorCLI() = %d", code)
+			}
+			if !strings.Contains(output.String(), test.want) {
+				t.Fatalf("output = %q, missing %q", output.String(), test.want)
+			}
+		})
 	}
 }
 
@@ -90,6 +113,65 @@ func TestSingleScriptTitlePromptSkipsModeSelection(t *testing.T) {
 	}
 }
 
+func TestParseMonitorTargetsAcceptsQuotedCommandGroups(t *testing.T) {
+	directory := t.TempDir()
+	first := filepath.Join(directory, "first.py")
+	second := filepath.Join(directory, "second.py")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte("print('ok')\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	targets, arguments, err := parseMonitorTargets([]string{first + " --epochs 10 --name 'first run'", second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(targets, []string{first, second}) {
+		t.Fatalf("targets = %#v", targets)
+	}
+	if !reflect.DeepEqual(arguments, [][]string{{"--epochs", "10", "--name", "first run"}, nil}) {
+		t.Fatalf("arguments = %#v", arguments)
+	}
+	targets, arguments, err = parseMonitorTargets([]string{first + " --path 'C:\\data'"})
+	if err != nil || !reflect.DeepEqual(targets, []string{first}) || !reflect.DeepEqual(arguments, [][]string{{"--path", "C:\\data"}}) {
+		t.Fatalf("backslash arguments = %#v, %#v, %v", targets, arguments, err)
+	}
+	targets, arguments, err = parseMonitorTargets([]string{first + " --help"})
+	if err != nil || !reflect.DeepEqual(targets, []string{first}) || !reflect.DeepEqual(arguments, [][]string{{"--help"}}) {
+		t.Fatalf("inner help argument = %#v, %#v, %v", targets, arguments, err)
+	}
+}
+
+func TestParseMonitorTargetsRejectsMalformedCommandGroups(t *testing.T) {
+	_, _, err := parseMonitorTargets([]string{"job.py --name 'unterminated"})
+	if err == nil || !strings.Contains(err.Error(), "monitor \"script.py --argument value\"") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestParseMonitorTargetsRejectsNULArguments(t *testing.T) {
+	_, _, err := parseMonitorTargets([]string{"job.py --name bad\x00value"})
+	if err == nil || !strings.Contains(err.Error(), "invalid script arguments") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestMonitorScriptArgsForRequestUsesEmptyLists(t *testing.T) {
+	encoded, err := json.Marshal(monitorScriptArgsForRequest([][]string{{"--epochs", "10"}, nil}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `[["--epochs","10"],[]]` {
+		t.Fatalf("encoded script args = %s", encoded)
+	}
+}
+
+func TestFormatMonitorScriptArgsQuotesValues(t *testing.T) {
+	if got := formatMonitorScriptArgs([]string{"--name", "first run", ""}); got != ` "--name" "first run" ""` {
+		t.Fatalf("formatted arguments = %q", got)
+	}
+}
+
 func TestEditMonitorRunOffersEveryRuntimeSettingWithoutChangingSavedDefaults(t *testing.T) {
 	stateRoot := t.TempDir()
 	configPath := filepath.Join(stateRoot, "config.json")
@@ -130,7 +212,7 @@ func TestEditMonitorRunOffersEveryRuntimeSettingWithoutChangingSavedDefaults(t *
 		"notification-runtime-crash", "notification-scheduled-restart", "notification-final-failure",
 		"notification-completion", "notification-possible-leak", "notification-possible-code-error",
 		"leak-detection-enabled", "leak-warmup", "leak-window", "leak-minimum-growth",
-		"leak-minimum-slope", "reports-enabled", "viewer-enabled",
+		"leak-minimum-slope", "reports-enabled",
 	}
 	if strings.Join(keys, "|") != strings.Join(wantKeys, "|") {
 		t.Fatalf("run editor fields = %#v, want %#v", keys, wantKeys)
@@ -150,7 +232,7 @@ func TestEditMonitorRunOffersEveryRuntimeSettingWithoutChangingSavedDefaults(t *
 	if err := json.Unmarshal(content, &temporary); err != nil {
 		t.Fatal(err)
 	}
-	if numberValue(temporary["sampling_interval_seconds"], 0) != 1 || !boolValue(temporary["reports_enabled"], false) || boolValue(temporary["gui_viewer"], true) {
+	if numberValue(temporary["sampling_interval_seconds"], 0) != 1 || !boolValue(temporary["reports_enabled"], false) || boolValue(temporary["gui_viewer"], false) {
 		t.Fatalf("temporary run settings = %#v", temporary)
 	}
 }
@@ -305,12 +387,12 @@ func TestMonitorFinalSummaryShowsRunDetailsAndEmailResult(t *testing.T) {
 	}
 }
 
-func TestDashboardRetainsOnlyTenLatestOutputLines(t *testing.T) {
+func TestDashboardRetainsOutputHistoryForPanels(t *testing.T) {
 	dashboard := newMonitorDashboard([]string{"a.py"}, monitorInterpreter{Path: "/venv/bin/python3", Environment: "venv"})
-	for index := 0; index < 12; index++ {
+	for index := 0; index < 1001; index++ {
 		dashboard.apply(monitorEvent{Type: "target_output", Text: fmt.Sprintf("line-%d", index)})
 	}
-	if len(dashboard.Output) != 10 || dashboard.Output[0] != "line-2" || dashboard.Output[9] != "line-11" {
+	if len(dashboard.Output) != 1000 || dashboard.Output[0] != "line-1" || dashboard.Output[999] != "line-1000" {
 		t.Fatalf("dashboard output = %v", dashboard.Output)
 	}
 }
@@ -468,6 +550,18 @@ func TestMonitorLeakWarmupConvertsMinutesToSeconds(t *testing.T) {
 	}
 }
 
+func TestMonitorLeakDetectionDisabledByDefault(t *testing.T) {
+	notifications := monitorDefaultConfig(nil)["notifications"].(map[string]any)
+	if boolValue(notifications["possible_leak"], true) {
+		t.Fatal("possible leak email should be disabled by default")
+	}
+
+	leak := monitorDefaultConfig(nil)["leak_detection"].(map[string]any)
+	if boolValue(leak["enabled"], true) {
+		t.Fatal("memory-leak detection should be disabled by default")
+	}
+}
+
 func TestMonitorDashboardShowsConfigurationAndGraphicalResources(t *testing.T) {
 	config := monitorDefaultConfig([]string{"alerts@example.com"})
 	restart := config["restart"].(map[string]any)
@@ -477,6 +571,7 @@ func TestMonitorDashboardShowsConfigurationAndGraphicalResources(t *testing.T) {
 	config["notifications"].(map[string]any)["heartbeat"] = true
 	config["heartbeat_interval_minutes"] = 12
 	leak := config["leak_detection"].(map[string]any)
+	leak["enabled"] = true
 	leak["warmup_seconds"] = 420
 	dashboard := newMonitorDashboard([]string{"/work/job.py"}, monitorInterpreter{Path: "/venv/bin/python3", Environment: "venv"}, config)
 	dashboard.Width = 120
@@ -497,7 +592,7 @@ func TestMonitorDashboardShowsConfigurationAndGraphicalResources(t *testing.T) {
 	visibleView := strings.Join(sanitizeMonitorLines(view, -1), "\n")
 	for _, expected := range []string{
 		"╭", "TARGET", "RESOURCES", "RESTART POLICY", "MONITORING", "RECENT ACTIVITY", "MONITOR LOG",
-		"/venv/bin/python3", "Memory-aware", "100 GB", "Rapid crash", "60s", "0.454 / 32.000 GB", "SYSTEM-WIDE", "0.268 / 8.590 GB", "4", "7m", "12m", "━━", "Ctrl+C stop target and quit",
+		"/venv/bin/python3", "Memory-aware", "100 GB", "Rapid crash", "60s", "0.454 / 32.000 GB", "SYSTEM-WIDE", "0.268 / 8.590 GB", "4", "7m", "12m", "━━", "Ctrl+C stop", "target and quit",
 	} {
 		if !strings.Contains(visibleView, expected) {
 			t.Fatalf("dashboard is missing %q:\n%s", expected, view)
@@ -734,7 +829,6 @@ func TestMonitorDashboardWrapsNarrowTextWithoutEllipses(t *testing.T) {
 	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
 	dashboard.Width = 36
 	dashboard.Height = 30
-	dashboard.Settings.ViewerEnabled = true
 	dashboard.Current.Title = "quarterly-analysis-with-a-deliberately-long-name"
 	dashboard.MonitorLog = []string{"12:34:56  configured failure notifications are evaluated after retry exhaustion"}
 
@@ -747,7 +841,7 @@ func TestMonitorDashboardWrapsNarrowTextWithoutEllipses(t *testing.T) {
 	}
 	view := dashboard.View().Content
 	visibleView := strings.Join(sanitizeMonitorLines(view, -1), "\n")
-	for _, expected := range []string{"quarterly-", "deliberately-", "long-name", "V reopen", "viewer", "Ctrl+C stop", "target and quit"} {
+	for _, expected := range []string{"quarterly-", "deliberately-", "long-name", "V open", "viewer", "Ctrl+C stop", "target and quit"} {
 		if !strings.Contains(visibleView, expected) {
 			t.Fatalf("narrow dashboard lost %q:\n%s", expected, visibleView)
 		}
@@ -772,7 +866,10 @@ func TestMonitorDashboardFitsWhenWrappedChromeConsumesMinimumHeight(t *testing.T
 	dashboard.Width = 36
 	dashboard.Height = 6
 	for _, viewerEnabled := range []bool{false, true} {
-		dashboard.Settings.ViewerEnabled = viewerEnabled
+		config := monitorDefaultConfig(nil)
+		config["gui_viewer"] = viewerEnabled
+		dashboard = newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, config)
+		dashboard.resize(36, 6)
 		view := dashboard.View().Content
 		if lines := strings.Count(view, "\n") + 1; lines > dashboard.Height {
 			t.Fatalf("viewer enabled %t: minimum dashboard height = %d lines, terminal height = %d:\n%s", viewerEnabled, lines, dashboard.Height, view)
@@ -783,28 +880,110 @@ func TestMonitorDashboardFitsWhenWrappedChromeConsumesMinimumHeight(t *testing.T
 			}
 		}
 		visible := strings.Join(sanitizeMonitorLines(view, -1), "\n")
-		if viewerEnabled && (!strings.Contains(visible, "V reopen") || !strings.Contains(visible, "target and quit")) {
+		if !strings.Contains(visible, "V open") || !strings.Contains(visible, "target and quit") {
 			t.Fatalf("minimum dashboard lost wrapped viewer help:\n%s", visible)
 		}
 	}
 }
 
-func TestMonitorLogShowsNewestSixteenEntries(t *testing.T) {
+func TestMonitorLogShowsNewestEightEntries(t *testing.T) {
 	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
 	for index := 1; index <= 20; index++ {
 		dashboard.MonitorLog = append(dashboard.MonitorLog, fmt.Sprintf("event %02d", index))
 	}
 
 	log := dashboard.monitorLogPanel()
-	if lines := strings.Count(log, "\n") + 1; lines != 16 {
-		t.Fatalf("monitor log body height = %d lines, want 16:\n%s", lines, log)
+	if lines := strings.Count(log, "\n") + 1; lines != 8 {
+		t.Fatalf("monitor log body height = %d lines, want 8:\n%s", lines, log)
 	}
-	if strings.Contains(log, "event 04") || !strings.Contains(log, "event 05") || !strings.Contains(log, "event 20") {
-		t.Fatalf("monitor log did not keep the newest sixteen entries:\n%s", log)
+	if strings.Contains(log, "event 12") || !strings.Contains(log, "event 13") || !strings.Contains(log, "event 20") {
+		t.Fatalf("monitor log did not keep the newest eight entries:\n%s", log)
 	}
 	dashboard.MonitorLog = []string{"one", "two"}
-	if lines := strings.Count(dashboard.monitorLogPanel(), "\n") + 1; lines != 16 {
-		t.Fatalf("short monitor log body height = %d lines, want 16", lines)
+	if lines := strings.Count(dashboard.monitorLogPanel(), "\n") + 1; lines != 8 {
+		t.Fatalf("short monitor log body height = %d lines, want 8", lines)
+	}
+}
+
+func TestMonitorDashboardPanelControlsScrollResizeAndFollow(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.Width = 80
+	for index := range 80 {
+		dashboard.Output = append(dashboard.Output, fmt.Sprintf("line %02d", index))
+	}
+	updated, _ := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	dashboard = updated.(*monitorDashboard)
+	if dashboard.focus != monitorLogFocus {
+		t.Fatalf("focus = %d, want monitor log", dashboard.focus)
+	}
+	updated, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	dashboard = updated.(*monitorDashboard)
+	if dashboard.focus != monitorOutputFocus {
+		t.Fatalf("focus = %d, want latest output", dashboard.focus)
+	}
+	updated, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	dashboard = updated.(*monitorDashboard)
+	if dashboard.outputFollow || dashboard.outputOffset != 0 {
+		t.Fatalf("home did not stop following output: follow=%t offset=%d", dashboard.outputFollow, dashboard.outputOffset)
+	}
+	updated, _ = dashboard.Update(tea.KeyPressMsg{Code: '+'})
+	dashboard = updated.(*monitorDashboard)
+	if dashboard.outputRows != 22 {
+		t.Fatalf("output rows = %d, want 22", dashboard.outputRows)
+	}
+	updated, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	dashboard = updated.(*monitorDashboard)
+	if dashboard.outputFollow {
+		t.Fatal("page down should stop following output")
+	}
+	for range 10 {
+		updated, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		dashboard = updated.(*monitorDashboard)
+	}
+	if !dashboard.outputFollow {
+		t.Fatal("reaching the latest output should resume following")
+	}
+	updated, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	dashboard = updated.(*monitorDashboard)
+	if !dashboard.outputFollow || !strings.Contains(dashboard.outputPanel(76), "line 79") {
+		t.Fatalf("end did not resume following latest output: %q", dashboard.outputPanel(76))
+	}
+}
+
+func TestMonitorDashboardResizePreservesSelectedOutputLine(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.Width = 80
+	dashboard.Output = []string{"first very long output line that wraps at the old width", "second output line", "third output line"}
+	dashboard.outputOffset = 1
+	dashboard.outputFollow = false
+	dashboard.resize(45, 24)
+	if !strings.Contains(dashboard.outputPanel(39), "first very long") && !strings.Contains(dashboard.outputPanel(39), "second output") {
+		t.Fatalf("resize lost selected output anchor: %q", dashboard.outputPanel(39))
+	}
+}
+
+func TestMonitorDashboardPreservesPanelAnchorWhenHistoryEvicts(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	dashboard.Width = 80
+	for index := range 1000 {
+		dashboard.Output = append(dashboard.Output, fmt.Sprintf("line %d", index))
+	}
+	dashboard.outputOffset = 500
+	dashboard.outputFollow = false
+	dashboard.apply(monitorEvent{Type: "target_output", Text: "line 1000"})
+	if dashboard.outputOffset != 499 {
+		t.Fatalf("output offset = %d, want 499 after one evicted line", dashboard.outputOffset)
+	}
+}
+
+func TestMonitorDashboardPanelHistoriesRetainOneThousandEntries(t *testing.T) {
+	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
+	for index := range 1001 {
+		dashboard.apply(monitorEvent{Type: "target_output", Text: fmt.Sprintf("output %d", index)})
+		dashboard.appendMonitorLog(fmt.Sprintf("log %d", index))
+	}
+	if len(dashboard.Output) != 1000 || len(dashboard.MonitorLog) != 1000 {
+		t.Fatalf("history lengths = output %d, log %d", len(dashboard.Output), len(dashboard.MonitorLog))
 	}
 }
 
@@ -863,9 +1042,8 @@ func TestMonitorDashboardCtrlCCancelsExactlyOnceAndWaitsForFinalOutcome(t *testi
 	}
 }
 
-func TestMonitorDashboardReopensConfiguredViewerForCurrentRun(t *testing.T) {
+func TestMonitorDashboardOpensViewerWithoutConfiguration(t *testing.T) {
 	dashboard := newMonitorDashboard([]string{"job.py"}, monitorInterpreter{}, monitorDefaultConfig(nil))
-	dashboard.Settings.ViewerEnabled = true
 	dashboard.Current.RunDirectory = "/work/run"
 	opened := ""
 	dashboard.OpenViewer = func(path string) error {

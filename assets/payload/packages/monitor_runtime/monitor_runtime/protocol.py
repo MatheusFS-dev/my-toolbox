@@ -47,6 +47,12 @@ def validate_request(message: Dict[str, Any]) -> Dict[str, Any]:
                 or len(titles) != len(scripts)
                 or not all(isinstance(item, str) and item.strip() for item in titles)):
             raise ProtocolError("run request titles must match scripts")
+        script_args = message.get("script_args")
+        if script_args is not None and (
+                not isinstance(script_args, list)
+                or len(script_args) != len(scripts)
+                or not all(isinstance(arguments, list) and all(isinstance(argument, str) and "\x00" not in argument for argument in arguments) for arguments in script_args)):
+            raise ProtocolError("run request script_args must match scripts and contain strings without NUL characters")
     return message
 
 

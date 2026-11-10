@@ -1,0 +1,6 @@
+{"attempt": 1, "pid": 3032890, "protocol_version": 1, "type": "attempt_started"}
+{"message": "Sending SIGTERM to the target process group.", "protocol_version": 1, "state": "cleanup_sigterm", "type": "lifecycle"}
+{"message": "Waiting up to 5.0s for target descendants to exit cleanly.", "protocol_version": 1, "state": "cleanup_waiting", "type": "lifecycle"}
+{"message": "The target and descendants stopped after SIGTERM.", "protocol_version": 1, "state": "cleanup_processes_stopped", "type": "lifecycle"}
+{"message": "Draining remaining target output.", "protocol_version": 1, "state": "cleanup_draining_output", "type": "lifecycle"}
+{"message": "Writing samples, reports, and plots.", "protocol_version": 1, "state": "cleanup_writing_reports", "type": "lifecycle"}

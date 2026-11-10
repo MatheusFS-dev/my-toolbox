@@ -22,7 +22,7 @@ class HeartbeatClock:
 
 def possible_memory_leak(samples, settings):
     """Detect sustained process-tree RSS growth after the warm-up period."""
-    if not settings.get("enabled", True) or len(samples) < 2:
+    if not settings.get("enabled", False) or len(samples) < 2:
         return False
     newest = samples[-1]
     if newest["elapsed_seconds"] < settings["warmup_seconds"]:

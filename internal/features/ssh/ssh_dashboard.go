@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type sshDashboard struct {
@@ -88,7 +89,8 @@ func (model sshDashboard) View() tea.View {
 		profileLines = append(profileLines, row)
 	}
 	lines = append(lines, profileLines...)
-	lines = append(lines, "", "↑/↓ select  •  enter connect  •  a add  •  e edit  •  t test  •  x remove", "r refresh  •  q back")
+	guidance := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("Connect from a terminal with: ssh <alias>")
+	lines = append(lines, "", guidance, "↑/↓ select  •  enter connect  •  a add  •  e edit  •  t test  •  x remove", "r refresh  •  q back")
 	if model.height > 0 && len(lines) > model.height {
 		lines = lines[:model.height]
 	}

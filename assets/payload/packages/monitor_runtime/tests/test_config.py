@@ -20,6 +20,12 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config["notifications"]["possible_code_error"])
         self.assertEqual(config["sampling_interval_seconds"], 1)
         self.assertEqual(config["leak_detection"]["warmup_seconds"], 300)
+        self.assertFalse(config["leak_detection"]["enabled"])
+        self.assertFalse(config["notifications"]["possible_leak"])
+
+    def test_explicit_leak_detection_setting_is_preserved(self):
+        config = validate_config({"schema_version": 1, "leak_detection": {"enabled": True}})
+        self.assertTrue(config["leak_detection"]["enabled"])
 
     def test_rapid_crash_threshold_must_be_positive_seconds(self):
         config = default_config()

@@ -220,6 +220,12 @@ func TestSSHDashboardContainsOnlySavedProfiles(t *testing.T) {
 		if !strings.Contains(model.View().Content, "q back") {
 			t.Fatalf("%s dashboard help = %q", environment, model.View().Content)
 		}
+		if !strings.Contains(model.View().Content, "Connect from a terminal with: ssh <alias>") {
+			t.Fatalf("%s dashboard is missing alias connection guidance: %q", environment, model.View().Content)
+		}
+		if !strings.Contains(model.View().Content, "\x1b[38;5;208mConnect from a terminal with: ssh <alias>\x1b[m") {
+			t.Fatalf("%s dashboard alias guidance is not orange: %q", environment, model.View().Content)
+		}
 	}
 }
 

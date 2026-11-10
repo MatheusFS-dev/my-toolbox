@@ -397,7 +397,18 @@ monitor script.py
 monitor first.py second.py
 ```
 
+When a script takes arguments, quote its path and arguments together as one command group:
+
+```sh
+monitor "first.py --firstarg 10 --otherarg 2" "second.py"
+monitor "'my script.py' --name 'first run'" "second.py"
+```
+
+Inner quotes keep paths or argument values containing spaces together. Monitor parses these groups without running a shell. Ungrouped script arguments stop the launch and display the correct syntax.
+
 During a run, the terminal dashboard shows queue progress, elapsed time, recent output, resource usage, restart activity, and email-delivery results. Monitor samples CPU and process-tree memory, detects NVIDIA GPU usage when available, writes logs and optional charts below each script's `runs/monitor_logs/` directory, and stops the active target and remaining queue when you press Ctrl+C.
+
+Press Tab or Shift+Tab to select the dashboard, Monitor Log, or Latest Output. Arrow keys, Page Up/Down, and Home/End scroll the selected area. In a log or output panel, `+` and `-` change its height, and End resumes following new entries. Each panel retains the latest 1,000 lines for scrolling. Full target output remains in the run's log files.
 
 Runtime safeguards include configurable crash retries with backoff, rapid-crash detection for possible code errors, memory-leak detection, and either memory-aware or time-scheduled restarts. Email notifications can report heartbeats, recovery, scheduled restarts, final failures, completion, possible leaks, and possible code errors. SMTP credentials and defaults are configured interactively and stored with current-user-only permissions under `~/.monitor`:
 

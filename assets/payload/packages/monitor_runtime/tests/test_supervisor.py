@@ -166,8 +166,11 @@ class SupervisorTests(unittest.TestCase):
             script.write_text("import sys\nprint(sys.executable)\n", encoding="utf-8")
             config = default_config()
             config["reports_enabled"] = False
+            config["gui_viewer"] = True  # Legacy preferences must not open a window automatically.
             events = []
-            result = supervise_script(str(script), sys.executable, config, events.append)
+            with patch("monitor_runtime.viewer.open_log_viewer") as open_viewer:
+                result = supervise_script(str(script), sys.executable, config, events.append)
+            open_viewer.assert_not_called()
             self.assertEqual(result["outcome"], "success")
             output = Path(result["run_directory"]) / "output.log"
             content = output.read_text(encoding="utf-8")
@@ -595,4 +598,23 @@ class SupervisorTests(unittest.TestCase):
 
         with patch("monitor_runtime.supervisor.supervise_script", return_value={"outcome": "success"}) as run:
             self.assertEqual(run_queue(["a.py", "b.py"], sys.executable, default_config(), lambda event: None, gpu_uuid="GPU-aaaa"), 0)
-        self.assertEqual([call.args[-1] for call in run.call_args_list], ["GPU-aaaa", "GPU-aaaa"])
+        self.assertEqual([call.args[-2] for call in run.call_args_list], ["GPU-aaaa", "GPU-aaaa"])
+
+    def test_queue_maps_arguments_to_their_scripts(self):
+        from monitor_runtime.supervisor import run_queue
+
+        with patch("monitor_runtime.supervisor.supervise_script", return_value={"outcome": "success"}) as run:
+            self.assertEqual(run_queue(["a.py", "b.py"], sys.executable, default_config(), lambda event: None, script_args=[["--first"], ["--second", "2"]]), 0)
+        self.assertEqual([call.args[-1] for call in run.call_args_list], [["--first"], ["--second", "2"]])
+
+    def test_script_arguments_reach_every_attempt(self):
+        with TemporaryDirectory() as directory:
+            script = Path(directory) / "argv.py"
+            script.write_text("import sys\nprint(repr(sys.argv[1:]))\n", encoding="utf-8")
+            config = default_config()
+            config["reports_enabled"] = False
+            config["notifications"] = {key: False for key in config["notifications"]}
+            result = supervise_script(str(script), sys.executable, config, lambda event: None, script_args=["--epochs", "10", "first run", ""])
+            self.assertEqual(result["outcome"], "success")
+            output = (Path(result["run_directory"]) / "output.log").read_text(encoding="utf-8")
+            self.assertIn("['--epochs', '10', 'first run', '']", output)

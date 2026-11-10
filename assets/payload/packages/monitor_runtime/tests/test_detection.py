@@ -17,3 +17,8 @@ class DetectionTests(unittest.TestCase):
         self.assertTrue(possible_memory_leak(samples, settings))
         samples[-1]["ram_mib"] = 150
         self.assertFalse(possible_memory_leak(samples, settings))
+
+    def test_leak_detection_requires_explicit_enablement(self):
+        settings = {"warmup_seconds": 300, "window_seconds": 300, "minimum_growth_mib": 100, "minimum_slope_mib_per_minute": 5}
+        samples = [{"elapsed_seconds": 300, "ram_mib": 100}, {"elapsed_seconds": 600, "ram_mib": 210}]
+        self.assertFalse(possible_memory_leak(samples, settings))

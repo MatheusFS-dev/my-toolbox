@@ -80,7 +80,6 @@ type monitorDashboardSettings struct {
 	LeakEnabled        bool
 	LeakWarmupSeconds  int
 	ReportsEnabled     bool
-	ViewerEnabled      bool
 	HeartbeatEnabled   bool
 	HeartbeatMinutes   int
 	NotificationStates []monitorNotificationState
@@ -97,7 +96,17 @@ type monitorViewerResult struct{ Error error }
 const monitorPetFrameInterval = 500 * time.Millisecond
 
 const monitorActivityEntries = 8
-const monitorLogEntries = monitorActivityEntries * 2
+const monitorLogEntries = monitorActivityEntries
+const monitorPanelMinimumRows = 3
+const monitorPanelMaximumRows = 60
+
+type monitorPanelFocus int
+
+const (
+	monitorDashboardFocus monitorPanelFocus = iota
+	monitorLogFocus
+	monitorOutputFocus
+)
 
 // Frame ranges for the independently selected eye, tail, and ear animations.
 var monitorCatFrames = []string{
@@ -120,30 +129,38 @@ var monitorCatFrames = []string{
 }
 
 type monitorDashboard struct {
-	Scripts       []string
-	Titles        []string
-	Interpreter   monitorInterpreter
-	Settings      monitorDashboardSettings
-	Output        []string
-	Activity      []string
-	ActivityLevel []monitorMessageSeverity
-	MonitorLog    []string
-	Current       monitorEvent
-	Width         int
-	Height        int
-	Stopping      bool
-	CodeError     bool
-	CodeErrorText string
-	Cancel        chan<- struct{}
-	OpenViewer    func(string) error
-	cancelSent    bool
-	lastHeartbeat float64
-	emailKind     string
-	emailSuccess  bool
-	emailSeen     bool
-	petFrame      int
-	petEnd        int
-	viewport      viewport.Model
+	Scripts          []string
+	ScriptArgs       [][]string
+	Titles           []string
+	Interpreter      monitorInterpreter
+	Settings         monitorDashboardSettings
+	Output           []string
+	Activity         []string
+	ActivityLevel    []monitorMessageSeverity
+	MonitorLog       []string
+	Current          monitorEvent
+	Width            int
+	Height           int
+	Stopping         bool
+	CodeError        bool
+	CodeErrorText    string
+	Cancel           chan<- struct{}
+	OpenViewer       func(string) error
+	cancelSent       bool
+	lastHeartbeat    float64
+	emailKind        string
+	emailSuccess     bool
+	emailSeen        bool
+	petFrame         int
+	petEnd           int
+	viewport         viewport.Model
+	focus            monitorPanelFocus
+	monitorLogRows   int
+	outputRows       int
+	monitorLogOffset int
+	outputOffset     int
+	monitorLogFollow bool
+	outputFollow     bool
 }
 
 func newMonitorDashboard(scripts []string, interpreter monitorInterpreter, configs ...map[string]any) *monitorDashboard {
@@ -154,8 +171,14 @@ func newMonitorDashboard(scripts []string, interpreter monitorInterpreter, confi
 	dashboard := &monitorDashboard{
 		Scripts: append([]string(nil), scripts...), Interpreter: interpreter,
 		Settings: monitorDashboardSettingsFromConfig(config), Width: 80, Height: 24,
-		OpenViewer: openMonitorLogViewer,
-		viewport:   viewport.New(),
+		OpenViewer:       openMonitorLogViewer,
+		viewport:         viewport.New(),
+		monitorLogRows:   monitorLogEntries,
+		outputRows:       20,
+		monitorLogOffset: 1 << 30,
+		outputOffset:     1 << 30,
+		monitorLogFollow: true,
+		outputFollow:     true,
 	}
 	dashboard.resize(80, 24)
 	return dashboard
@@ -188,7 +211,7 @@ func monitorDashboardSettingsFromConfig(config map[string]any) monitorDashboardS
 		AutomaticMode:     mode, ScheduledMinutes: int(numberValue(restart["scheduled_interval_minutes"], 0)), MemoryLimitGB: numberValue(restart["memory_limit_gb"], 1),
 		SampleSeconds: numberValue(config["sampling_interval_seconds"], 1), LeakEnabled: boolValue(leak["enabled"], true),
 		LeakWarmupSeconds: int(numberValue(leak["warmup_seconds"], 300)), ReportsEnabled: boolValue(config["reports_enabled"], true),
-		ViewerEnabled: boolValue(config["gui_viewer"], false), HeartbeatEnabled: boolValue(notifications["heartbeat"], false),
+		HeartbeatEnabled: boolValue(notifications["heartbeat"], false),
 		HeartbeatMinutes: int(numberValue(config["heartbeat_interval_minutes"], 60)), NotificationStates: notificationStates,
 	}
 }
@@ -215,7 +238,10 @@ func (dashboard *monitorDashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) 
 	case tea.WindowSizeMsg:
 		dashboard.resize(message.Width, message.Height)
 	case tea.KeyPressMsg:
-		if message.Code == 'v' && dashboard.Settings.ViewerEnabled {
+		if dashboard.handlePanelKey(message) {
+			return dashboard, nil
+		}
+		if message.Code == 'v' {
 			if dashboard.Current.RunDirectory == "" {
 				dashboard.appendMonitorLog("viewer unavailable • waiting for run directory")
 				return dashboard, nil
@@ -288,11 +314,23 @@ func (dashboard *monitorDashboard) View() tea.View {
 			footer = dashboard.Current.Message
 		}
 	} else {
-		viewerHelp := ""
-		if dashboard.Settings.ViewerEnabled {
-			viewerHelp = " • V reopen viewer"
+		viewerHelp := " • V open log viewer"
+		focus := "Dashboard"
+		if dashboard.focus == monitorLogFocus {
+			focus = "Monitor Log"
+		} else if dashboard.focus == monitorOutputFocus {
+			focus = "Latest Output"
 		}
-		footer = fmt.Sprintf("↑/↓ PgUp/PgDn Home/End scroll • %d%%%s • Ctrl+C stop target and quit", int(dashboard.viewport.ScrollPercent()*100), viewerHelp)
+		position := fmt.Sprintf("%d%%", int(dashboard.viewport.ScrollPercent()*100))
+		state := "dashboard"
+		if dashboard.focus != monitorDashboardFocus {
+			position = fmt.Sprintf("%d%%", int(float64(dashboard.panelOffset())/float64(max(1, dashboard.panelMaximum(dashboard.focus)))*100))
+			state = "paused"
+			if dashboard.panelFollowing() {
+				state = "following"
+			}
+		}
+		footer = fmt.Sprintf("Tab panel • ↑/↓ PgUp/PgDn Home/End scroll • +/- resize • %s %s %s%s • Ctrl+C stop target and quit", focus, position, state, viewerHelp)
 	}
 	footerColor := "244"
 	if dashboard.Stopping {
@@ -316,14 +354,61 @@ func (dashboard *monitorDashboard) View() tea.View {
 	return view
 }
 
+func (dashboard *monitorDashboard) panelOffset() int {
+	if dashboard.focus == monitorOutputFocus {
+		return dashboard.outputOffset
+	}
+	return dashboard.monitorLogOffset
+}
+
+func (dashboard *monitorDashboard) panelFollowing() bool {
+	if dashboard.focus == monitorOutputFocus {
+		return dashboard.outputFollow
+	}
+	return dashboard.monitorLogFollow
+}
+
 func (dashboard *monitorDashboard) resize(width, height int) {
-	dashboard.Width = max(36, width)
+	newWidth := max(36, width)
+	if dashboard.Width > 0 && dashboard.Width != newWidth {
+		dashboard.translatePanelOffset(dashboard.MonitorLog, &dashboard.monitorLogOffset, dashboard.monitorLogFollow, dashboard.Width, newWidth)
+		dashboard.translatePanelOffset(dashboard.Output, &dashboard.outputOffset, dashboard.outputFollow, dashboard.Width, newWidth)
+	}
+	dashboard.Width = newWidth
 	dashboard.Height = max(6, height)
 	headerHeight := 3
 	footerHeight := 1
 	dashboard.viewport.SetWidth(dashboard.Width)
 	dashboard.viewport.SetHeight(max(1, dashboard.Height-headerHeight-footerHeight))
 	dashboard.rebuildViewport()
+}
+
+func (dashboard *monitorDashboard) translatePanelOffset(source []string, offset *int, follow bool, oldWidth, newWidth int) {
+	if follow || len(source) == 0 {
+		return
+	}
+	oldBodyWidth := max(8, max(34, oldWidth-2)-4)
+	newBodyWidth := max(8, max(34, newWidth-2)-4)
+	remaining := *offset
+	lineIndex, wrappedIndex := 0, 0
+	for lineIndex < len(source) {
+		count := len(strings.Split(wrapMonitorBlock(source[lineIndex], oldBodyWidth), "\n"))
+		if remaining < count {
+			wrappedIndex = remaining
+			break
+		}
+		remaining -= count
+		lineIndex++
+	}
+	if lineIndex >= len(source) {
+		return
+	}
+	translated := 0
+	for _, line := range source[:lineIndex] {
+		translated += len(strings.Split(wrapMonitorBlock(line, newBodyWidth), "\n"))
+	}
+	newCount := len(strings.Split(wrapMonitorBlock(source[lineIndex], newBodyWidth), "\n"))
+	*offset = translated + min(wrappedIndex, newCount-1)
 }
 
 func (dashboard *monitorDashboard) rebuildViewport() {
@@ -355,8 +440,8 @@ func (dashboard *monitorDashboard) viewportContent() string {
 	}
 	sections = append(sections,
 		dashboard.panel("RECENT ACTIVITY", dashboard.activityPanel(), inner),
-		dashboard.panel("MONITOR LOG", dashboard.monitorLogPanel(), inner),
-		dashboard.panel("LATEST OUTPUT", dashboard.outputPanel(), inner),
+		dashboard.panel("MONITOR LOG", dashboard.monitorLogPanel(inner-4), inner),
+		dashboard.panel("LATEST OUTPUT", dashboard.outputPanel(inner-4), inner),
 	)
 	return strings.Join(sections, "\n")
 }
@@ -390,7 +475,8 @@ func (dashboard *monitorDashboard) status() string {
 
 func (dashboard *monitorDashboard) panel(title, body string, width int) string {
 	content := dashboard.panelContent(title, body, width)
-	return renderMonitorPanel(content, width, 0)
+	selected := (title == "MONITOR LOG" && dashboard.focus == monitorLogFocus) || (title == "LATEST OUTPUT" && dashboard.focus == monitorOutputFocus)
+	return renderMonitorPanel(content, width, 0, selected)
 }
 
 func (dashboard *monitorDashboard) panelPair(leftTitle, leftBody, rightTitle, rightBody string, leftWidth, rightWidth int) string {
@@ -406,6 +492,9 @@ func (dashboard *monitorDashboard) panelPair(leftTitle, leftBody, rightTitle, ri
 }
 
 func (dashboard *monitorDashboard) panelContent(title, body string, width int) string {
+	if (title == "MONITOR LOG" && dashboard.focus == monitorLogFocus) || (title == "LATEST OUTPUT" && dashboard.focus == monitorOutputFocus) {
+		title += " • SELECTED"
+	}
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(title)
 	if title == "RECENT ACTIVITY" {
 		lines := strings.Split(body, "\n")
@@ -426,8 +515,12 @@ func (dashboard *monitorDashboard) panelContent(title, body string, width int) s
 	return heading + "\n" + body
 }
 
-func renderMonitorPanel(content string, width, height int) string {
-	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1).Width(max(10, width))
+func renderMonitorPanel(content string, width, height int, selected ...bool) string {
+	border := lipgloss.Color("240")
+	if len(selected) > 0 && selected[0] {
+		border = lipgloss.Color("75")
+	}
+	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1).Width(max(10, width))
 	if height > 0 {
 		style = style.Height(height + style.GetVerticalBorderSize())
 	}
@@ -436,12 +529,20 @@ func renderMonitorPanel(content string, width, height int) string {
 
 func (dashboard *monitorDashboard) targetPanel() string {
 	script := dashboard.Current.Script
+	index := min(max(dashboard.Current.QueueIndex-1, 0), max(0, len(dashboard.ScriptArgs)-1))
+	arguments := "—"
+	if len(dashboard.ScriptArgs) > 0 {
+		arguments = strings.TrimSpace(formatMonitorScriptArgs(dashboard.ScriptArgs[index]))
+		if arguments == "" {
+			arguments = "—"
+		}
+	}
 	if script == "" && len(dashboard.Scripts) > 0 {
 		script = dashboard.Scripts[0]
 	}
-	return fmt.Sprintf("Title        %s\nScript       %s\nWorking dir  %s\nEnvironment  %s\nInterpreter  %s\nPID          %s\nAttempt      %d\nRun logs     %s",
-		emptyMonitorValue(dashboard.Current.Title), filepath.Base(script), filepath.Dir(script), dashboard.Interpreter.Environment, dashboard.Interpreter.Path,
-		formatMonitorPID(dashboard.Current.PID), dashboard.Current.Attempt, emptyMonitorValue(dashboard.Current.RunDirectory))
+	return fmt.Sprintf("Title        %s\nScript       %s\nArguments    %s\nWorking dir  %s\nEnvironment  %s\nInterpreter  %s\nPID          %s\nAttempt      %d\nRun logs     %s",
+		emptyMonitorValue(dashboard.Current.Title), filepath.Base(script), arguments, filepath.Dir(script), dashboard.Interpreter.Environment,
+		dashboard.Interpreter.Path, formatMonitorPID(dashboard.Current.PID), dashboard.Current.Attempt, emptyMonitorValue(dashboard.Current.RunDirectory))
 }
 
 func (dashboard *monitorDashboard) resourcePanel() string {
@@ -558,7 +659,7 @@ func (dashboard *monitorDashboard) monitoringPanel() string {
 		notificationLines = append(notificationLines, fmt.Sprintf("%-21s %s", notification.Label, onOff(notification.Enabled)))
 	}
 	return fmt.Sprintf("Sampling       %.1fs\nLeak detection %s\nHeartbeat      %s\nReports        %s\nLog viewer     %s\n%s",
-		dashboard.Settings.SampleSeconds, leak, heartbeat, onOff(dashboard.Settings.ReportsEnabled), onOff(dashboard.Settings.ViewerEnabled), strings.Join(notificationLines, "\n"))
+		dashboard.Settings.SampleSeconds, leak, heartbeat, onOff(dashboard.Settings.ReportsEnabled), "press V to open", strings.Join(notificationLines, "\n"))
 }
 
 func (dashboard *monitorDashboard) activityPanel() string {
@@ -568,19 +669,12 @@ func (dashboard *monitorDashboard) activityPanel() string {
 	return strings.Join(dashboard.Activity, "\n")
 }
 
-func (dashboard *monitorDashboard) monitorLogPanel() string {
-	lines := dashboard.MonitorLog
-	if len(lines) > monitorLogEntries {
-		lines = lines[len(lines)-monitorLogEntries:]
+func (dashboard *monitorDashboard) monitorLogPanel(widths ...int) string {
+	width := 10000
+	if len(widths) > 0 {
+		width = max(8, widths[0])
 	}
-	if len(lines) == 0 {
-		lines = []string{"Waiting for monitor events…"}
-	}
-	lines = append([]string(nil), lines...)
-	for len(lines) < monitorLogEntries {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
+	return dashboard.panelLines(dashboard.MonitorLog, dashboard.monitorLogRows, &dashboard.monitorLogOffset, &dashboard.monitorLogFollow, width, "Waiting for monitor events…")
 }
 
 func (dashboard *monitorDashboard) appendMonitorLog(message string) {
@@ -588,17 +682,134 @@ func (dashboard *monitorDashboard) appendMonitorLog(message string) {
 		return
 	}
 	dashboard.MonitorLog = append(dashboard.MonitorLog, time.Now().Format("15:04:05")+"  "+message)
-	if len(dashboard.MonitorLog) > 100 {
-		dashboard.MonitorLog = dashboard.MonitorLog[len(dashboard.MonitorLog)-100:]
-	}
+	dashboard.trimPanelHistory(&dashboard.MonitorLog, &dashboard.monitorLogOffset, dashboard.monitorLogFollow)
 	dashboard.rebuildViewport()
 }
 
-func (dashboard *monitorDashboard) outputPanel() string {
-	if len(dashboard.Output) == 0 {
-		return "Waiting for target output…"
+func (dashboard *monitorDashboard) outputPanel(widths ...int) string {
+	width := 10000
+	if len(widths) > 0 {
+		width = max(8, widths[0])
 	}
-	return strings.Join(dashboard.Output, "\n")
+	return dashboard.panelLines(dashboard.Output, dashboard.outputRows, &dashboard.outputOffset, &dashboard.outputFollow, width, "Waiting for target output…")
+}
+
+func (dashboard *monitorDashboard) panelLines(source []string, rows int, offset *int, follow *bool, width int, empty string) string {
+	if len(source) == 0 {
+		source = []string{empty}
+	}
+	lines := []string{}
+	for _, line := range source {
+		lines = append(lines, strings.Split(wrapMonitorBlock(line, width), "\n")...)
+	}
+	maximum := max(0, len(lines)-rows)
+	if *follow {
+		*offset = maximum
+	}
+	*offset = min(max(0, *offset), maximum)
+	visible := lines[*offset:min(len(lines), *offset+rows)]
+	for len(visible) < rows {
+		visible = append(visible, "")
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (dashboard *monitorDashboard) handlePanelKey(key tea.KeyPressMsg) bool {
+	if key.Code == tea.KeyTab && !key.Mod.Contains(tea.ModShift) {
+		dashboard.focus = (dashboard.focus + 1) % 3
+		dashboard.rebuildViewport()
+		dashboard.revealFocusedPanel()
+		return true
+	}
+	if key.Code == tea.KeyTab && key.Mod.Contains(tea.ModShift) {
+		dashboard.focus = (dashboard.focus + 2) % 3
+		dashboard.rebuildViewport()
+		dashboard.revealFocusedPanel()
+		return true
+	}
+	if dashboard.focus == monitorDashboardFocus {
+		return false
+	}
+	rows, offset, follow := &dashboard.monitorLogRows, &dashboard.monitorLogOffset, &dashboard.monitorLogFollow
+	if dashboard.focus == monitorOutputFocus {
+		rows, offset, follow = &dashboard.outputRows, &dashboard.outputOffset, &dashboard.outputFollow
+	}
+	switch key.Code {
+	case '+', '=':
+		*rows = min(monitorPanelMaximumRows, *rows+2)
+	case '-':
+		*rows = max(monitorPanelMinimumRows, *rows-2)
+	case tea.KeyUp:
+		*offset = max(0, *offset-1)
+		*follow = false
+	case tea.KeyDown:
+		*offset++
+		*follow = false
+	case tea.KeyPgUp:
+		*offset = max(0, *offset-*rows)
+		*follow = false
+	case tea.KeyPgDown:
+		*offset += *rows
+		*follow = false
+	case tea.KeyHome:
+		*offset = 0
+		*follow = false
+	case tea.KeyEnd:
+		*offset = 1 << 30
+		*follow = true
+	default:
+		return false
+	}
+	dashboard.rebuildViewport()
+	if key.Code == tea.KeyDown || key.Code == tea.KeyPgDown {
+		*follow = *offset >= dashboard.panelMaximum(dashboard.focus)
+	}
+	return true
+}
+
+func (dashboard *monitorDashboard) panelMaximum(focus monitorPanelFocus) int {
+	source, rows := dashboard.MonitorLog, dashboard.monitorLogRows
+	if focus == monitorOutputFocus {
+		source, rows = dashboard.Output, dashboard.outputRows
+	}
+	if len(source) == 0 {
+		source = []string{""}
+	}
+	width := max(8, max(34, dashboard.Width-2)-4)
+	count := 0
+	for _, line := range source {
+		count += len(strings.Split(wrapMonitorBlock(line, width), "\n"))
+	}
+	return max(0, count-rows)
+}
+
+func (dashboard *monitorDashboard) trimPanelHistory(lines *[]string, offset *int, follow bool) {
+	if len(*lines) <= 1000 {
+		return
+	}
+	dropped := (*lines)[:len(*lines)-1000]
+	if !follow {
+		width := max(8, max(34, dashboard.Width-2)-4)
+		for _, line := range dropped {
+			*offset = max(0, *offset-len(strings.Split(wrapMonitorBlock(line, width), "\n")))
+		}
+	}
+	*lines = (*lines)[len(*lines)-1000:]
+}
+
+func (dashboard *monitorDashboard) revealFocusedPanel() {
+	if dashboard.focus == monitorDashboardFocus {
+		return
+	}
+	title := "MONITOR LOG"
+	if dashboard.focus == monitorOutputFocus {
+		title = "LATEST OUTPUT"
+	}
+	content := dashboard.viewportContent()
+	index := strings.Index(content, title)
+	if index >= 0 {
+		dashboard.viewport.SetYOffset(strings.Count(content[:index], "\n"))
+	}
 }
 
 func (dashboard *monitorDashboard) apply(event monitorEvent) {
@@ -664,9 +875,7 @@ func (dashboard *monitorDashboard) apply(event monitorEvent) {
 			}
 			dashboard.Output = append(dashboard.Output, line)
 		}
-		if len(dashboard.Output) > 10 {
-			dashboard.Output = dashboard.Output[len(dashboard.Output)-10:]
-		}
+		dashboard.trimPanelHistory(&dashboard.Output, &dashboard.outputOffset, dashboard.outputFollow)
 	}
 	if activity := monitorActivityLine(event); activity != "" {
 		dashboard.Activity = append(dashboard.Activity, activity)
@@ -678,9 +887,7 @@ func (dashboard *monitorDashboard) apply(event monitorEvent) {
 	}
 	if line := monitorLogLine(event); line != "" {
 		dashboard.MonitorLog = append(dashboard.MonitorLog, time.Now().Format("15:04:05")+"  "+line)
-		if len(dashboard.MonitorLog) > 100 {
-			dashboard.MonitorLog = dashboard.MonitorLog[len(dashboard.MonitorLog)-100:]
-		}
+		dashboard.trimPanelHistory(&dashboard.MonitorLog, &dashboard.monitorLogOffset, dashboard.monitorLogFollow)
 	}
 	dashboard.rebuildViewport()
 }

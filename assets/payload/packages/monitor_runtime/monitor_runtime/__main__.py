@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import load_config, validate_credentials
 from .emailer import build_message, send_message
 from .protocol import PROTOCOL_VERSION, ProtocolError, emit, validate_request
@@ -28,7 +29,7 @@ def main():
         if not line:
             raise ProtocolError("missing protocol request")
         request = validate_request(json.loads(line))
-        emit("handshake", runtime_version="1.0.0", pid=os.getpid())
+        emit("handshake", runtime_version=__version__, pid=os.getpid())
         config = load_config(Path(request.get("config_path", Path.home() / ".monitor" / "config.json")))
         if request["type"] == "run":
             credentials_path = request.get("credentials_path", str(Path.home() / ".monitor" / "credentials.json"))
@@ -45,7 +46,7 @@ def main():
                     return False
 
             titles = request.get("titles") or [Path(script).name for script in request["scripts"]]
-            return run_queue(request["scripts"], request["interpreter"], config, _sink, notify, titles, request.get("gpu_uuid"))
+            return run_queue(request["scripts"], request["interpreter"], config, _sink, notify, titles, request.get("gpu_uuid"), request.get("script_args"))
         credentials_path = request.get("credentials_path", str(Path.home() / ".monitor" / "credentials.json"))
         credentials = validate_credentials(_load_json(credentials_path))
         message = build_message("test", "Monitor", config["recipients"], ["Email delivery is configured."], {})

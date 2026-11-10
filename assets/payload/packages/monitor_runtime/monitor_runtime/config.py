@@ -28,7 +28,7 @@ def default_config() -> Dict[str, Any]:
             "scheduled_restart": True,
             "final_failure": True,
             "completion": True,
-            "possible_leak": True,
+            "possible_leak": False,
             "possible_code_error": True,
         },
         "heartbeat_interval_minutes": 60,
@@ -43,7 +43,7 @@ def default_config() -> Dict[str, Any]:
             "memory_limit_gb": 1.0,
         },
         "leak_detection": {
-            "enabled": True,
+            "enabled": False,
             "warmup_seconds": 300,
             "window_seconds": 300,
             "minimum_growth_mib": 100,
@@ -51,7 +51,6 @@ def default_config() -> Dict[str, Any]:
         },
         "sampling_interval_seconds": 1,
         "reports_enabled": True,
-        "gui_viewer": False,
     }
 
 

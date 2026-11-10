@@ -17,7 +17,6 @@ from typing import Any, Callable, Dict, List, Optional
 from .reports import write_reports
 from .restart import RestartPolicy
 from .detection import HeartbeatClock, possible_memory_leak
-from .viewer import open_log_viewer
 
 
 EventSink = Callable[[Dict[str, Any]], None]
@@ -210,7 +209,7 @@ def _wait_for_restart(delay: float) -> None:
     time.sleep(delay)
 
 
-def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, title=None, queue_index=1, queue_total=1, gpu_uuid=None) -> Dict[str, Any]:
+def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, title=None, queue_index=1, queue_total=1, gpu_uuid=None, script_args=None) -> Dict[str, Any]:
     """Run one script until success or its crash-retry budget is exhausted.
 
     Args:
@@ -223,11 +222,13 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
         queue_index: One-based position of the target in its queue.
         queue_total: Total number of targets in the queue.
         gpu_uuid: Optional NVIDIA GPU UUID to expose to the target.
+        script_args: Optional command-line arguments passed to every attempt.
 
     Returns:
         Final outcome, counters, elapsed time, and artifact location.
     """
     script = str(Path(script).resolve())
+    script_args = list(script_args or [])
     title = title or Path(script).name
     run_directory = _run_directory(script)
     output_path = run_directory / "output.log"
@@ -272,11 +273,6 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
     final_code = 1
     outcome = "failed"
     with output_path.open("w", encoding="utf-8", buffering=1) as output:
-        viewer = None
-        if config.get("gui_viewer"):
-            viewer, warning = open_log_viewer(output_path)
-            if warning:
-                lifecycle.append(_event(sink, "lifecycle", state="viewer_warning", message=warning))
         while True:
             attempt += 1
             attempt_offset = output.tell()
@@ -285,7 +281,7 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
             if gpu_uuid is not None:
                 target_env["CUDA_VISIBLE_DEVICES"] = gpu_uuid
             process = subprocess.Popen(
-                [interpreter, "-u", script], cwd=str(Path(script).parent),
+                [interpreter, "-u", script, *script_args], cwd=str(Path(script).parent),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=target_env,
             )
             item = _event(sink, "attempt_started", attempt=attempt, pid=process.pid)
@@ -342,8 +338,6 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
 
                 terminate_process_group(process, progress=cleanup_progress)
                 lifecycle.append(_event(sink, "lifecycle", state="cleanup_draining_output", message="Draining remaining target output."))
-                if viewer is not None and viewer.poll() is None:
-                    viewer.terminate()
                 for reader in readers:
                     reader.join(timeout=1)
                 _drain_output(messages, output, sink, latest, attempt)
@@ -451,8 +445,6 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
                     _wait_for_restart(delay)
                 except KeyboardInterrupt:
                     lifecycle.append(_event(sink, "lifecycle", state="cleanup_cancelled_backoff", message="Cancelled while waiting for the next crash retry."))
-                    if viewer is not None and viewer.poll() is None:
-                        viewer.terminate()
                     summary = {
                         "outcome": "cancelled", "exit_code": 130, "attempts": attempt,
                         "crash_restarts": policy.crash_count, "scheduled_restarts": policy.scheduled_count,
@@ -469,8 +461,6 @@ def supervise_script(script: str, interpreter: str, config: Dict[str, Any], sink
                     )
                     summary["run_directory"] = str(run_directory)
                     return summary
-    if viewer is not None and viewer.poll() is None:
-        viewer.terminate()
     summary = {"outcome": outcome, "exit_code": final_code, "attempts": attempt, "crash_restarts": policy.crash_count, "scheduled_restarts": policy.scheduled_count, "memory_restarts": policy.memory_count, "elapsed_seconds": round(time.monotonic() - started, 3), "possible_code_error": possible_code_error}
     if config.get("reports_enabled", True):
         write_reports(run_directory, list(samples), list(lifecycle), summary)
@@ -515,7 +505,7 @@ def _drain_output(messages: queue.Queue, output: Any, sink: EventSink, latest: c
         _record_output(output, sink, latest, attempt, stream_name, text)
 
 
-def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, titles=None, gpu_uuid=None) -> int:
+def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink: EventSink, notifier=None, titles=None, gpu_uuid=None, script_args=None) -> int:
     """Run scripts sequentially, stopping at the first terminal failure.
 
     Args:
@@ -526,14 +516,16 @@ def run_queue(scripts: List[str], interpreter: str, config: Dict[str, Any], sink
         notifier: Optional callback that delivers runtime notifications.
         titles: Optional user-selected title for each target.
         gpu_uuid: Optional NVIDIA GPU UUID for all target attempts.
+        script_args: Optional arguments for each script, aligned with scripts.
 
     Returns:
         Zero on success, 130 on cancellation, or one on terminal failure.
     """
     titles = titles or [Path(script).name for script in scripts]
-    for index, (script, title) in enumerate(zip(scripts, titles)):
+    script_args = script_args or [[] for _ in scripts]
+    for index, (script, title, arguments) in enumerate(zip(scripts, titles, script_args)):
         _event(sink, "lifecycle", state="queue_start", queue_index=index + 1, queue_total=len(scripts), title=title, script=script)
-        result = supervise_script(script, interpreter, config, sink, notifier, title, index + 1, len(scripts), gpu_uuid)
+        result = supervise_script(script, interpreter, config, sink, notifier, title, index + 1, len(scripts), gpu_uuid, arguments)
         if result["outcome"] == "cancelled":
             return 130
         if result["outcome"] != "success":
