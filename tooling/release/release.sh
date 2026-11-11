@@ -202,6 +202,21 @@ head_sha=$($git_bin rev-parse HEAD 2>/dev/null) || fail 'Could not resolve HEAD.
 origin_sha=$($git_bin rev-parse origin/main 2>/dev/null) || fail 'Could not resolve origin/main.'
 [ "$head_sha" = "$origin_sha" ] || fail 'Local main must exactly match origin/main before release.'
 
+tb_info 'Committing pending changes inside submodules.'
+dirty_paths=$($git_bin config -f "$repository_root/.gitmodules" --get-regexp '^submodule\..*\.path$' | while IFS=' ' read -r _ dirty_path; do
+    [ -n "$dirty_path" ] && printf '%s\n' "$dirty_path"
+done) || fail 'Could not read submodule paths.'
+while IFS= read -r dirty_path; do
+    [ -n "$dirty_path" ] || continue
+    if [ -n "$($git_bin -C "$repository_root/$dirty_path" status --porcelain)" ]; then
+        tb_info "Committing changes in $dirty_path."
+        $git_bin -C "$repository_root/$dirty_path" add -A || fail "Could not stage changes in $dirty_path."
+        $git_bin -C "$repository_root/$dirty_path" commit -m "$message" >/dev/null || fail "Could not commit changes in $dirty_path."
+    fi
+done <<EOF
+$dirty_paths
+EOF
+
 tb_info 'Staging changes, committing, and pushing main.'
 $git_bin add -A -- :/ || fail 'Could not stage changes.'
 no_changes=false
