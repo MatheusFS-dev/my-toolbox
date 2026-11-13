@@ -54,7 +54,7 @@ jobs:
         run: python -m unittest discover -s assets/payload/packages/others/tests -v
       - if: runner.os == 'Linux'
         env:
-          PYTHONPATH: assets/payload/packages/monitor_runtime
+          PYTHONPATH: assets/payload/packages/monitor_runtime:assets/payload/packages/monitor_runtime/portable
         run: python -m unittest discover -s assets/payload/packages/monitor_runtime/tests -v
       - name: Test NVIDIA stress runtime without CUDA dependencies
         env:

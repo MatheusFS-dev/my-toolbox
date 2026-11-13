@@ -1,0 +1,12 @@
+Help me integrate the portable_monitor package with this Python script:
+
+Script path: <SCRIPT_PATH>
+Script arguments: <SCRIPT_ARGUMENTS>
+Scheduler and job requirements: <SCHEDULER_REQUIREMENTS>
+
+Create or adapt a submission wrapper that calls portable_monitor.run once with
+the specified script and arguments. Preserve the target's working directory,
+environment, output, exit status, and the scheduler requirements. Do not add
+restarts or resource monitoring. Explain how to copy the package and fill in
+the blank monitor-gmail.example.json configuration locally. Do not ask me to
+share credentials or include actual credentials in any files you produce.

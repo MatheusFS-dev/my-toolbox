@@ -119,6 +119,10 @@ touch "$reader_directory/Cargo.toml" "$reader_directory/Cargo.lock" "$reader_dir
 touch "$reader_directory/linux-amd64/libexec/unrelated-reader-asset"
 ln -s "$reader_directory" "$temporary_root/reader link"
 (
+    cd "$temporary_root/stale"
+    zip -q "$temporary_root/dist/monitor-portable.zip" stale-entry.txt
+)
+(
     cd "$temporary_root"
     TB_TEST_READER_FAIL=1 CDPATH="$temporary_root" PATH="$temporary_root/bin:$PATH" sh "$repository_root/tooling/release/build-release.sh" \
         0.1.4 dist './reader link'
@@ -313,3 +317,56 @@ if printf '%s\n' "$portable_entries" | grep -E '(^|/)\.git(/|$)|(^|/)__pycache__
     printf 'Portable agent configuration archive contains checkout metadata or Python bytecode.\n' >&2
     exit 1
 fi
+
+monitor_archive="$temporary_root/dist/monitor-portable.zip"
+python3 - "$monitor_archive" "$temporary_root" <<'PY'
+import json
+from pathlib import Path
+import sys
+import zipfile
+
+archive = Path(sys.argv[1])
+destination = Path(sys.argv[2]) / 'monitor-extracted'
+expected = {
+    'monitor-portable/README.md',
+    'monitor-portable/AI_PROMPT.txt',
+    'monitor-portable/example_submit.py',
+    'monitor-portable/monitor-gmail.example.json',
+    'monitor-portable/portable_monitor/__init__.py',
+    'monitor-portable/portable_monitor/runner.py',
+    'monitor-portable/portable_monitor/emailer.py',
+    'monitor-portable/portable_monitor/toolbox_output.py',
+}
+with zipfile.ZipFile(archive) as package:
+    assert {name for name in package.namelist() if not name.endswith('/')} == expected
+    config = json.loads(package.read('monitor-portable/monitor-gmail.example.json'))
+    assert config == {'sender': '', 'app_password': '', 'recipients': []}
+    package.extractall(destination)
+PY
+(
+    cd "$temporary_root/monitor-extracted/monitor-portable"
+    env -u PYTHONPATH python3 -c 'from portable_monitor import run; assert callable(run)'
+)
+
+(
+    cd "$temporary_root/monitor-extracted/monitor-portable"
+    env -u PYTHONPATH python3 - <<'PYTEST'
+import json
+from pathlib import Path
+import runpy
+from unittest.mock import patch
+
+Path('target.py').write_text("from pathlib import Path\nPath('ran').write_text('once')\n")
+Path('monitor-gmail.json').write_text(json.dumps({'sender': 'sender@example.com', 'app_password': 'secret', 'recipients': ['to@example.com']}))
+with patch('smtplib.SMTP_SSL') as smtp:
+    smtp.return_value.__enter__.return_value.send_message.return_value = {}
+    try:
+        runpy.run_path('example_submit.py', run_name='__main__')
+    except SystemExit as result:
+        assert result.code == 0
+    else:
+        raise AssertionError('Example did not return an exit status')
+    smtp.return_value.__enter__.return_value.send_message.assert_called_once()
+assert Path('ran').read_text() == 'once'
+PYTEST
+)
