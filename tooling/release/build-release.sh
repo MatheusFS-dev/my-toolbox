@@ -240,7 +240,7 @@ printf '%s\n' "$version" > "$output_directory/version.txt"
 monitor_source="$repository_root/assets/payload/packages/monitor_runtime/portable"
 monitor_root="$temporary_root/monitor-portable"
 mkdir -p "$monitor_root/portable_monitor"
-for name in README.md AI_PROMPT.txt example_submit.py monitor-gmail.example.json; do
+for name in README.md AI_PROMPT.txt example_submit.py monitor-gmail.json; do
     cp "$monitor_source/$name" "$monitor_root/$name"
 done
 for name in __init__.py runner.py emailer.py toolbox_output.py; do

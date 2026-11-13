@@ -331,7 +331,7 @@ expected = {
     'monitor-portable/README.md',
     'monitor-portable/AI_PROMPT.txt',
     'monitor-portable/example_submit.py',
-    'monitor-portable/monitor-gmail.example.json',
+    'monitor-portable/monitor-gmail.json',
     'monitor-portable/portable_monitor/__init__.py',
     'monitor-portable/portable_monitor/runner.py',
     'monitor-portable/portable_monitor/emailer.py',
@@ -339,7 +339,7 @@ expected = {
 }
 with zipfile.ZipFile(archive) as package:
     assert {name for name in package.namelist() if not name.endswith('/')} == expected
-    config = json.loads(package.read('monitor-portable/monitor-gmail.example.json'))
+    config = json.loads(package.read('monitor-portable/monitor-gmail.json'))
     assert config == {'sender': '', 'app_password': '', 'recipients': []}
     package.extractall(destination)
 PY
