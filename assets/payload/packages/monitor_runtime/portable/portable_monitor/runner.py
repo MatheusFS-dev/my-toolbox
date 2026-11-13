@@ -3,12 +3,13 @@
 import subprocess
 import sys
 import time
+from typing import Optional
 
 from .emailer import send_notification
 from .toolbox_output import TerminalOutput
 
 
-def run(script: str, args: list[str] | None = None, config_path: str = "monitor-gmail.json") -> int:
+def run(script: str, args: Optional[list[str]] = None, config_path: str = "monitor-gmail.json") -> int:
     """Run a Python script and attempt to email its outcome.
 
     Args:

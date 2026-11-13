@@ -1,7 +1,7 @@
 # Portable Monitor
 
 Run a Python script once and receive a Gmail notification when it finishes or
-fails. The package uses only the Python 3.10 or later standard library and does
+fails. The package uses only the Python 3.9 or later standard library and does
 not require installation. The target keeps its working directory, environment,
 stdout, and stderr. Its exit status remains authoritative if email fails.
 
