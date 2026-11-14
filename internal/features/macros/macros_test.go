@@ -216,6 +216,22 @@ func TestLoadScreenshotPathPasteMacro(t *testing.T) {
 	t.Fatal("bundled screenshot path paste macro missing")
 }
 
+func TestLoadLightshotKeysMacro(t *testing.T) {
+	macros, err := LoadMacros(filepath.Join("..", "..", "..", "assets", "payload", "packages", "macros"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, macro := range macros {
+		if macro.RelativePath == "autohotkey/Lightshot-keys.ahk" {
+			if macro.Title != "Lightshot-keys" || len(macro.Arguments) != 0 {
+				t.Fatalf("unexpected Lightshot macro: %#v", macro)
+			}
+			return
+		}
+	}
+	t.Fatal("bundled Lightshot keys macro missing")
+}
+
 func TestYdotoolTimerScript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Linux shell macro")
