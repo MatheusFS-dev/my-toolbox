@@ -80,6 +80,11 @@ case "$1 ${2:-}" in
     'run view')
         if [ "$scenario" = failed-ci ] && [ "$3" = 1 ]; then
             printf 'completed\tfailure\tunit\n'
+        elif [ "$scenario" = skipped-reader ] && [ "$3" = 1 ]; then
+            case "$*" in
+                *'.conclusion != "skipped"'*) printf 'completed\tsuccess\t\n' ;;
+                *) printf 'completed\tsuccess\tmarkdown-reader\n' ;;
+            esac
         elif [ "$scenario" = in-progress ] && [ "$3" = 1 ]; then
             printf 'in_progress\t\t\n'
         else
@@ -204,6 +209,7 @@ expect_status 1 stale --message 'stale branch'
 expect_status 1 unauthenticated --message 'no auth'
 expect_status 1 unauthenticated --watch 0123456789012345678901234567890123456789
 expect_status 1 failed-ci --message 'bad CI'
+expect_status 0 skipped-reader --watch 0123456789012345678901234567890123456789
 expect_status 2 missing-dispatch --message 'missing chained workflow'
 expect_status 2 timeout --message 'timed out'
 expect_status 2 null-run --message 'wait for started CI'
@@ -219,14 +225,7 @@ if grep -E 'git (add|commit|push)' "$command_log" >/dev/null; then
 fi
 
 expect_status 0 success --json --watch 0123456789012345678901234567890123456789
-python3 - "$test_root/stdout" <<'PY'
-import json
-import sys
-
-report = json.load(open(sys.argv[1], encoding="utf-8"))
-assert report["result"] == "released"
-assert report["sha"] == "0123456789012345678901234567890123456789"
-PY
+grep -Fx '{"result":"released","sha":"0123456789012345678901234567890123456789"}' "$test_root/stdout" >/dev/null
 [ ! -s "$test_root/stderr" ] || grep -F 'release INFO]' "$test_root/stderr" >/dev/null
 
 printf 'release controller tests passed\n'

@@ -89,7 +89,7 @@ run_for() {
 inspect_run() {
     run_id=$1
     run_state=$($gh_bin run view "$run_id" --repo "$repository" --json status,conclusion,jobs \
-        --jq '[.status, .conclusion, ([.jobs[] | select(.status == "completed" and .conclusion != "success") | .name] | join(","))] | @tsv' 2>/dev/null) || return 2
+        --jq '[.status, .conclusion, ([.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | .name] | join(","))] | @tsv' 2>/dev/null) || return 2
     IFS='	' read -r state_status state_conclusion failed_jobs <<EOF
 $run_state
 EOF
