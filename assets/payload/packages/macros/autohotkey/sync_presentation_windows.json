@@ -1,0 +1,5 @@
+{
+  "title": "Sync Presentation Windows",
+  "description": "Share next and previous slide keys between two browser windows. Choose the windows in a setup GUI after launch. Does not start with Windows.",
+  "arguments": []
+}
