@@ -22,6 +22,33 @@ type Macro struct {
 	SourcePath   string
 	Content      string
 	Arguments    []MacroArgument
+	// Variants maps a GOOS to its script when one macro ships for several operating systems.
+	Variants map[string]string
+}
+
+// ScriptFor returns the script to run on goos, falling back to the primary script.
+func (macro Macro) ScriptFor(goos string) string {
+	if path, ok := macro.Variants[goos]; ok {
+		return path
+	}
+	return macro.SourcePath
+}
+
+// DownloadPaths lists every script a download of this macro delivers.
+func (macro Macro) DownloadPaths() []string {
+	if len(macro.Variants) == 0 {
+		return []string{macro.SourcePath}
+	}
+	systems := make([]string, 0, len(macro.Variants))
+	for goos := range macro.Variants {
+		systems = append(systems, goos)
+	}
+	sort.Strings(systems)
+	paths := make([]string, 0, len(systems))
+	for _, goos := range systems {
+		paths = append(paths, macro.Variants[goos])
+	}
+	return paths
 }
 
 // MacroArgument describes one ordered value supplied to a macro script.
@@ -62,12 +89,24 @@ var MacroDrivers = map[string]MacroDriver{
 	"autohotkey": {".ahk", "windows", "Windows"},
 	"ydotool":    {".sh", "linux", "Linux"},
 	"cronjob":    {".sh", "linux", "Linux"},
-	"vscode":     {".sh", "linux", "Linux"},
+	"vscode":     {".sh", "linux", "Linux and Windows"},
+}
+
+// macroVariantExtensions lists drivers whose macros ship one script per operating system.
+var macroVariantExtensions = map[string]map[string]string{
+	"vscode": {".sh": "linux", ".ps1": "windows"},
 }
 
 func MacroSupportsOS(macro Macro, goos string) bool {
 	driver, ok := MacroDrivers[macro.Subpackage]
-	return ok && driver.GOOS == goos
+	if !ok {
+		return false
+	}
+	if len(macro.Variants) > 0 {
+		_, supported := macro.Variants[goos]
+		return supported
+	}
+	return driver.GOOS == goos
 }
 
 func LoadMacros(root string, warnings io.Writer) ([]Macro, error) {
@@ -90,12 +129,22 @@ func LoadMacros(root string, warnings io.Writer) ([]Macro, error) {
 		if _, statErr := os.Stat(driverRoot); statErr != nil {
 			continue
 		}
+		type variantScript struct{ goos, path string }
+		siblings := map[string][]variantScript{}
 		walkErr := filepath.WalkDir(driverRoot, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				fmt.Fprintf(warnings, "warning: skip macro %s: %v\n", search.WarningPath(root, path), walkErr)
 				return nil
 			}
-			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), driver.Extension) {
+			if entry.IsDir() {
+				return nil
+			}
+			extension := strings.ToLower(filepath.Ext(entry.Name()))
+			if goos, isVariant := macroVariantExtensions[subpackage][extension]; isVariant && extension != driver.Extension {
+				siblings[strings.TrimSuffix(path, filepath.Ext(path))] = append(siblings[strings.TrimSuffix(path, filepath.Ext(path))], variantScript{goos, path})
+				return nil
+			}
+			if !strings.EqualFold(extension, driver.Extension) {
 				return nil
 			}
 			macro, macroErr := LoadMacro(root, subpackage, path)
@@ -103,11 +152,23 @@ func LoadMacros(root string, warnings io.Writer) ([]Macro, error) {
 				fmt.Fprintf(warnings, "warning: skip macro %s: %v\n", search.WarningPath(root, path), macroErr)
 				return nil
 			}
+			if _, multi := macroVariantExtensions[subpackage]; multi {
+				macro.Variants = map[string]string{driver.GOOS: path}
+			}
 			macros = append(macros, macro)
 			return nil
 		})
 		if walkErr != nil {
 			return nil, fmt.Errorf("discover macro library %s: %w", root, walkErr)
+		}
+		for i := range macros {
+			if macros[i].Subpackage != subpackage || macros[i].Variants == nil {
+				continue
+			}
+			stem := strings.TrimSuffix(macros[i].SourcePath, filepath.Ext(macros[i].SourcePath))
+			for _, sibling := range siblings[stem] {
+				macros[i].Variants[sibling.goos] = sibling.path
+			}
 		}
 	}
 	if len(macros) == 0 {

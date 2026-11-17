@@ -112,6 +112,11 @@ def audit_runtime_sources():
     helper = (ROOT / "assets/payload/packages/scripts/lib/toolbox_output.sh").read_text(encoding="utf-8")
     if helper not in vscode_installer.read_text(encoding="utf-8"):
         violations.append("packages/macros/vscode/split_terminal.sh: embedded shared output helper has drifted")
+    windows_installer = ROOT / "assets/payload/packages/macros/vscode/split_terminal.ps1"
+    violations.extend(audit_entrypoint(Path("packages/macros/vscode/split_terminal.ps1")))
+    windows_helper = (ROOT / "assets/payload/packages/scripts/terminal/windows/modules/output.ps1").read_text(encoding="utf-8")
+    if windows_helper not in windows_installer.read_text(encoding="utf-8"):
+        violations.append("packages/macros/vscode/split_terminal.ps1: embedded shared output helper has drifted")
     return violations
 
 

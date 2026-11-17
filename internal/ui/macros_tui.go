@@ -2,6 +2,7 @@ package ui
 
 import (
 	"runtime"
+	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -40,6 +41,29 @@ type macroModel struct {
 	modal, completed, cancelled, runEnabled bool
 	selection                               MacroSelection
 	goos                                    string
+	// choosingOS is true while a multi-OS macro waits for its target system.
+	choosingOS bool
+	osChoice   int
+	osOptions  []string
+	chosen     *Macro
+}
+
+func macroOSLabel(goos string) string {
+	switch goos {
+	case "linux":
+		return "Linux"
+	case "windows":
+		return "Windows"
+	}
+	return goos
+}
+
+// current is the macro the action menu applies to, narrowed to one system for multi-OS macros.
+func (model macroModel) current() Macro {
+	if model.chosen != nil {
+		return *model.chosen
+	}
+	return model.results[model.cursor].Macro
 }
 
 func newMacroModel(macros []Macro, runEnabled bool, width, height int) macroModel {
@@ -53,7 +77,7 @@ func newMacroModel(macros []Macro, runEnabled bool, width, height int) macroMode
 	return model
 }
 func (model macroModel) canRun() bool {
-	return model.runEnabled && model.cursor < len(model.results) && macroSupportsOS(model.results[model.cursor].Macro, model.goos)
+	return model.runEnabled && model.cursor < len(model.results) && macroSupportsOS(model.current(), model.goos)
 }
 
 func (model macroModel) Init() tea.Cmd { return model.input.Focus() }
@@ -68,10 +92,36 @@ func (model macroModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.cancelled = true
 			return model, tea.Quit
 		}
+		if model.choosingOS {
+			switch key.Code {
+			case tea.KeyEscape:
+				model.choosingOS = false
+				model.resize(model.width, model.height)
+				model.rebuild()
+			case tea.KeyUp:
+				model.osChoice = max(0, model.osChoice-1)
+			case tea.KeyDown:
+				model.osChoice = min(len(model.osOptions)-1, model.osChoice+1)
+			case tea.KeyEnter:
+				macro := model.results[model.cursor].Macro
+				goos := model.osOptions[model.osChoice]
+				macro.SourcePath = macro.Variants[goos]
+				macro.Variants = map[string]string{goos: macro.SourcePath}
+				model.chosen = &macro
+				model.choosingOS = false
+				model.modal = true
+				model.action = 0
+				if !model.canRun() {
+					model.action = 1
+				}
+			}
+			return model, nil
+		}
 		if model.modal {
 			switch key.Code {
 			case tea.KeyEscape:
 				model.modal = false
+				model.chosen = nil
 				model.resize(model.width, model.height)
 				model.rebuild()
 				return model, nil
@@ -85,7 +135,7 @@ func (model macroModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				if !model.canRun() || model.action == 1 {
 					action = MacroActionDownload
 				}
-				model.selection = MacroSelection{Macro: model.results[model.cursor].Macro, Action: action}
+				model.selection = MacroSelection{Macro: model.current(), Action: action}
 				model.completed = true
 				return model, tea.Quit
 			}
@@ -109,6 +159,24 @@ func (model macroModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		case tea.KeyEnter:
 			if len(model.results) > 0 {
+				model.chosen = nil
+				if variants := model.results[model.cursor].Macro.Variants; len(variants) > 1 {
+					model.osOptions = model.osOptions[:0]
+					for goos := range variants {
+						model.osOptions = append(model.osOptions, goos)
+					}
+					sort.Strings(model.osOptions)
+					model.osChoice = 0
+					for i, goos := range model.osOptions {
+						if goos == model.goos {
+							model.osChoice = i
+						}
+					}
+					model.choosingOS = true
+					model.resize(model.width, model.height)
+					model.rebuild()
+					return model, nil
+				}
 				model.modal = true
 				model.action = 0
 				if !model.canRun() {
@@ -132,6 +200,16 @@ func (model macroModel) View() tea.View {
 	title := presentationStyle("MACROS", ansiBoldWhite, true)
 	body := model.viewport.View()
 	footer := presentationStyle("↑/↓ move • enter actions • esc exit", ansiGray, true)
+	if model.choosingOS {
+		body += "\n\nChoose the operating system:"
+		for i, goos := range model.osOptions {
+			pointer := "  "
+			if i == model.osChoice {
+				pointer = "› "
+			}
+			body += "\n" + pointer + macroOSLabel(goos)
+		}
+	}
 	if model.modal {
 		run := "Run"
 		pointerRun, pointerDownload := "  ", "  "
@@ -153,7 +231,7 @@ func (model *macroModel) resize(width, height int) {
 	model.input.SetWidth(max(1, model.width-2))
 	model.viewport.SetWidth(model.width)
 	reserved := 5
-	if model.modal {
+	if model.modal || model.choosingOS {
 		reserved = 9
 	}
 	model.viewport.SetHeight(max(1, model.height-reserved))

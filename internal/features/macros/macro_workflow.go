@@ -82,7 +82,17 @@ func (workflow DefaultMacroWorkflow) run(macro Macro) error {
 		return workflow.runYdotool(macro)
 	}
 	if macro.Subpackage == "vscode" {
-		command := exec.Command("sh", macro.SourcePath)
+		script := macro.ScriptFor(goos)
+		var command *exec.Cmd
+		if goos == "windows" {
+			powershell, exists := execution.SupportedPowerShellPath()
+			if !exists {
+				return fmt.Errorf("%s requires Windows PowerShell 5.1 or PowerShell 7", macro.Title)
+			}
+			command = exec.Command(powershell, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script)
+		} else {
+			command = exec.Command("sh", script)
+		}
 		command.Stdin, command.Stdout, command.Stderr = os.Stdin, output, output
 		return command.Run()
 	}
@@ -444,7 +454,17 @@ func (workflow DefaultMacroWorkflow) download(macro Macro) error {
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("download directory does not exist: %s", directory)
 	}
-	destination := filepath.Join(directory, filepath.Base(macro.SourcePath))
+	// A macro that ships for several operating systems downloads every script, so any machine can use it.
+	for _, scriptPath := range macro.DownloadPaths() {
+		if err := workflow.downloadScript(macro, scriptPath, directory, output); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (workflow DefaultMacroWorkflow) downloadScript(macro Macro, scriptPath, directory string, output io.Writer) error {
+	destination := filepath.Join(directory, filepath.Base(scriptPath))
 	destinationExists := false
 	if _, err := os.Lstat(destination); err == nil {
 		destinationExists = true
@@ -468,7 +488,7 @@ func (workflow DefaultMacroWorkflow) download(macro Macro) error {
 			os.Remove(temporaryPath)
 		}
 	}()
-	source, err := os.Open(macro.SourcePath)
+	source, err := os.Open(scriptPath)
 	if err != nil {
 		temporary.Close()
 		return err

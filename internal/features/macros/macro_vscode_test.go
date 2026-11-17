@@ -22,7 +22,7 @@ func TestVSCodeDiscovery(t *testing.T) {
 		if macro.Subpackage != "vscode" {
 			continue
 		}
-		if macro.Title != "VS Code split terminal" || !MacroSupportsOS(macro, "linux") || MacroSupportsOS(macro, "windows") {
+		if macro.Title != "VS Code split terminal" || !MacroSupportsOS(macro, "linux") || !MacroSupportsOS(macro, "windows") || MacroSupportsOS(macro, "darwin") {
 			t.Fatalf("invalid macro: %+v", macro)
 		}
 		return

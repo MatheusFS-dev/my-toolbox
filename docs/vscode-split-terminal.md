@@ -1,6 +1,6 @@
 # VS Code split terminal
 
-On Linux X11, run `tb macros`, select **VS Code split terminal**, then **Run**.
+On Linux X11 (Windows is covered in its own section below), run `tb macros`, select **VS Code split terminal**, then **Run**.
 The foreground installer creates and installs `my-toolbox.split-terminal` using
 `code --install-extension`. Reload existing VS Code windows after installation.
 Running the installer again updates the same extension. **Download** saves a
@@ -61,4 +61,52 @@ sh -n assets/payload/packages/macros/vscode/split_terminal.sh
 shellcheck assets/payload/packages/macros/vscode/split_terminal.sh
 sh tooling/checks/output_contract_test.sh
 python3 tooling/checks/output_contract_audit.py
+```
+
+## Windows
+
+On Windows, run `tb macros`, select **VS Code split terminal**. The entry first asks whether you want the Linux
+or the Windows version. For the system you are on, choose **Run** or **Download**.
+For the other system only **Download** is offered, which saves that system's
+installer (`split_terminal.sh` or `split_terminal.ps1`). The PowerShell installer runs with
+`powershell -ExecutionPolicy Bypass -File split_terminal.ps1` from any directory.
+It installs the same `my-toolbox.split-terminal` extension id with
+`code --install-extension`, so reload existing VS Code windows afterwards.
+
+Install VS Code with its `code` command on PATH and Windows Terminal (`wt`)
+first. Windows PowerShell 5.1 ships with Windows and is the only other requirement.
+Node.js is not needed.
+
+With VS Code focused in a local workspace, press **Ctrl+Alt+S**, or run
+**Toolbox: Open Split Terminal** from the Command Palette. A fresh Windows
+Terminal window opens at the workspace root and takes the right third of the
+work area of the monitor that holds VS Code. VS Code takes the left two thirds,
+and the terminal gets keyboard focus. Windows hides the taskbar area from the
+work area, and invisible window borders are compensated so both windows sit flush.
+The terminal window title is the project folder name.
+
+Workspace selection, single-flight behavior, and the remote, virtual, and empty
+workspace messages match Linux. The extension runs a small PowerShell helper
+(`split.ps1` inside the extension) to identify the focused VS Code window and to
+move windows. If Windows Terminal does not show a titled window within eight
+seconds, VS Code is left in place and an error notification appears. The
+helper uses per-monitor DPI awareness and re-applies the placement until
+Windows accepts it, so monitors with different scaling or resolution tile correctly.
+
+The binding is limited to Windows with `"when": "isWindows"`. The installer warns
+about conflicting Ctrl+Alt+S user bindings in the default and named profiles
+under `%APPDATA%\Code\User` and never edits them.
+
+To remove the extension:
+
+```powershell
+code --uninstall-extension my-toolbox.split-terminal
+```
+
+Windows checks:
+
+```powershell
+go test ./internal/features/macros
+node --test tooling/checks/vscode_split_terminal_windows_test.cjs
+python tooling/checks/output_contract_audit.py
 ```
