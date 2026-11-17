@@ -81,6 +81,11 @@ func (workflow DefaultMacroWorkflow) run(macro Macro) error {
 	if macro.Subpackage == "ydotool" {
 		return workflow.runYdotool(macro)
 	}
+	if macro.Subpackage == "vscode" {
+		command := exec.Command("sh", macro.SourcePath)
+		command.Stdin, command.Stdout, command.Stderr = os.Stdin, output, output
+		return command.Run()
+	}
 	if macro.Subpackage == "cronjob" {
 		arguments, err := workflow.MacroArguments(macro)
 		if err != nil {

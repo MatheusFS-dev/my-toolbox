@@ -107,6 +107,11 @@ def audit_runtime_sources():
                     violations.append(
                         f"{path.relative_to(ROOT)}: contract call is not backed by the module shared helper"
                     )
+    vscode_installer = ROOT / "assets/payload/packages/macros/vscode/split_terminal.sh"
+    violations.extend(audit_entrypoint(Path("packages/macros/vscode/split_terminal.sh")))
+    helper = (ROOT / "assets/payload/packages/scripts/lib/toolbox_output.sh").read_text(encoding="utf-8")
+    if helper not in vscode_installer.read_text(encoding="utf-8"):
+        violations.append("packages/macros/vscode/split_terminal.sh: embedded shared output helper has drifted")
     return violations
 
 

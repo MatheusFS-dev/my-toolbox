@@ -62,6 +62,7 @@ var MacroDrivers = map[string]MacroDriver{
 	"autohotkey": {".ahk", "windows", "Windows"},
 	"ydotool":    {".sh", "linux", "Linux"},
 	"cronjob":    {".sh", "linux", "Linux"},
+	"vscode":     {".sh", "linux", "Linux"},
 }
 
 func MacroSupportsOS(macro Macro, goos string) bool {

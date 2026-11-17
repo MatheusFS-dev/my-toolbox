@@ -1,0 +1,4 @@
+{
+  "title": "VS Code split terminal",
+  "description": "Install Ctrl+Alt+S to open the default terminal at the workspace root and split the current X11 monitor."
+}
