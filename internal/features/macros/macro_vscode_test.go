@@ -84,7 +84,7 @@ func TestVSCodeDownloadedInstaller(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"xdotool", "wmctrl", "xrandr", "xprop", "x-terminal-emulator"} {
+	for _, name := range []string{"xdotool", "wmctrl", "xrandr", "xprop", "xwininfo", "x-terminal-emulator"} {
 		write(name, "exit 0\n")
 	}
 	for _, tool := range []string{"node", "zip", "uname"} {
