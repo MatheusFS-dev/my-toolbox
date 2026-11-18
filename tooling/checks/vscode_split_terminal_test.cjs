@@ -52,6 +52,9 @@ function runtime(config = {}) {
   let time = 0
   let lists = 0
   let stateReads = 0
+  const boxes = {}
+  const maxed = new Set()
+  const ignored = {}
   const api = { env: {}, workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: "/tmp/project with ' quotes;$()" } }] }, window: { showErrorMessage: message => errors.push(message) } }
   const execFile = async (command, args, options) => {
     calls.push([command, [...args]])
@@ -60,7 +63,10 @@ function runtime(config = {}) {
     let stdout = ''
     if (command === 'xdotool') {
       if (args[0] === 'getactivewindow') stdout = '100'
-      if (args[0] === 'getwindowgeometry') stdout = 'WINDOW=100\nX=-1920\nY=0\nWIDTH=1920\nHEIGHT=1080\nSCREEN=0'
+      if (args[0] === 'getwindowgeometry') {
+        const id = args.at(-1)
+        stdout = `WINDOW=${id}\nX=-1920\nY=0\nWIDTH=1920\nHEIGHT=1080\nSCREEN=0`
+      }
       if (args[0] === 'getwindowname') stdout = config.wrongTitle ? 'other terminal' : 'tb-split-unique'
     }
     if (command === 'xprop') {
@@ -71,13 +77,32 @@ function runtime(config = {}) {
       if (args.includes('_GTK_FRAME_EXTENTS') && config.gtkDecorations) stdout = '_GTK_FRAME_EXTENTS(CARDINAL) = 16, 16, 10, 32'
       if (args.includes('_NET_WM_STATE')) {
         stdout = '_NET_WM_STATE(ATOM) = '
+        if (args.includes('0x000000c8') && maxed.has('0x000000c8')) stdout += '_NET_WM_STATE_MAXIMIZED_VERT, _NET_WM_STATE_MAXIMIZED_HORZ'
         if (config.stuckMaximized || (config.maximized && stateReads++ === 0)) stdout += '_NET_WM_STATE_MAXIMIZED_VERT, _NET_WM_STATE_MAXIMIZED_HORZ'
       }
+    }
+    if (command === 'xwininfo') {
+      const id = args[1]
+      const box = boxes[id] || (id === '100' ? [-1920, 0, 1920, 1080] : [0, 0, 640, 480])
+      // xwininfo reports the client area.
+      stdout = `  Absolute upper-left X:  ${box[0]}\n  Absolute upper-left Y:  ${box[1]}\n  Width: ${box[2]}\n  Height: ${box[3]}`
     }
     if (command === 'xrandr' && args[0] === '--listactivemonitors') stdout = 'Monitors: 2\n 0: +DP1 1920/509x1080/286-1920+0 DP1\n 1: +*DP2 1920/509x1080/286+0+0 DP2'
     if (command === 'wmctrl' && args[0] === '-l') {
       lists++
       if (!config.timeout && lists > (config.delay || 0)) stdout = '0x000000c8 1 host tb-split-unique'
+    }
+    if (command === 'wmctrl' && args.at(-1) === 'add,maximized_vert,maximized_horz' && args[1] === '0x000000c8') {
+      if (!config.maxBox) throw new Error('probe unavailable')
+      maxed.add(args[1])
+      const [x, y, w, h] = config.maxBox
+      boxes[args[1]] = [x + 2, y + 30, w - 4, h - 32]
+    }
+    if (command === 'wmctrl' && args.at(-1) === 'remove,maximized_vert,maximized_horz') maxed.delete(args[1])
+    if (command === 'wmctrl' && args.includes('-e')) {
+      const [, , , w, h] = args.at(-1).split(',').map(Number)
+      const [, x, y] = args.at(-1).split(',').map(Number)
+      if ((ignored[args[1]] = (ignored[args[1]] || 0) + 1) > (config.ignoreFirst || 0)) boxes[args[1]] = (config.gtkDecorations && args[1] === '100') ? [x, y, w, h] : [x + 2, y + 30, w, h]
     }
     if (command === 'wmctrl' && args.includes('-b')) {
       assert.ok(args.at(-1).split(',').length <= 3, 'wmctrl supports at most two state properties per call')
@@ -88,7 +113,7 @@ function runtime(config = {}) {
     launches.push({ command, args, options })
     return { on(event, listener) { if (config.launchError && event === 'error') listener(new Error('launch denied')) }, unref() {} }
   }
-  const command = createCommand(api, { execFile, spawn, env: { XDG_SESSION_TYPE: config.wayland ? 'wayland' : 'x11', DISPLAY: ':1' }, platform: config.platform || 'linux', now: () => time, sleep: async ms => { time += ms }, uuid: () => 'unique' })
+  const command = createCommand(api, { execFile, spawn, env: { XDG_SESSION_TYPE: config.wayland ? 'wayland' : 'x11', DISPLAY: ':1', ...(config.gnome ? { XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' } : {}) }, platform: config.platform || 'linux', now: () => time, sleep: async ms => { time += ms }, uuid: () => 'unique' })
   return { command, calls, errors, launches }
 }
 
@@ -103,10 +128,33 @@ test('launches safely, waits for restoration, tiles usable space and focuses ter
   assert.equal(launch.options.cwd, "/tmp/project with ' quotes;$()")
   assert.equal(launch.options.shell, undefined)
   assert.deepEqual(fixture.calls.filter(([name, args]) => name === 'wmctrl' && args.includes('-e')), [
+    ['wmctrl', ['-ir', '0x000000c8', '-e', '0,-1860,60,400,300']],
     ['wmctrl', ['-ir', '0x000000c8', '-e', '0,-640,32,636,970']],
     ['wmctrl', ['-ir', '100', '-e', '0,-1920,32,1276,970']]
   ])
   assert.deepEqual(fixture.calls.at(-1), ['xdotool', ['windowactivate', '--sync', '0x000000c8']])
+})
+
+test('re-applies the layout when the window manager reverts the first resize', async () => {
+  const fixture = runtime({ ignoreFirst: 2 })
+  await fixture.command()
+  assert.deepEqual(fixture.errors, [])
+  const moves = fixture.calls.filter(([name, args]) => name === 'wmctrl' && args.includes('-e') && args[1] === '100')
+  assert.ok(moves.length >= 3)
+})
+
+test('reports an error when a window never accepts its size', async () => {
+  const fixture = runtime({ ignoreFirst: 99 })
+  await fixture.command()
+  assert.match(fixture.errors[0], /did not accept the window layout/)
+})
+
+test('measures the real work area of the VS Code monitor by maximizing the terminal', async () => {
+  const fixture = runtime({ maxBox: [-1920, 0, 1920, 1034] })
+  await fixture.command()
+  assert.deepEqual(fixture.errors, [])
+  const moves = fixture.calls.filter(([name, args]) => name === 'wmctrl' && args.includes('-e') && args[1] === '100')
+  assert.equal(moves.at(-1)[1].at(-1), '0,-1920,0,1276,1002')
 })
 
 test('startup timeout, wrong title, launch error and missing tools leave Code unchanged', async () => {
@@ -161,6 +209,7 @@ test('accounts for GTK client-side shadows when Code has no server frame', async
   await fixture.command()
   assert.deepEqual(fixture.errors, [])
   assert.deepEqual(fixture.calls.filter(([name, args]) => name === 'wmctrl' && args.includes('-e')), [
+    ['wmctrl', ['-ir', '0x000000c8', '-e', '0,-1860,60,400,300']],
     ['wmctrl', ['-ir', '0x000000c8', '-e', '0,-640,32,636,970']],
     ['wmctrl', ['-ir', '100', '-e', '0,-1936,22,1312,1044']]
   ])

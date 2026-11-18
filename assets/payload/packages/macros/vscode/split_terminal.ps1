@@ -345,6 +345,9 @@ function Set-Frame([IntPtr]$Handle, [int]$FrameX, [int]$FrameY, [int]$FrameWidth
 }
 Set-Frame $Terminal ($X + $Left) $Y ($Width - $Left) $Height
 Set-Frame $Code $X $Y $Left $Height
+# Electron can apply a late resize after the first placement, so confirm VS Code kept its slot.
+Start-Sleep -Milliseconds 400
+Set-Frame $Code $X $Y $Left $Height
 [TbWin]::Focus($Terminal)
 [Console]::Out.WriteLine('OK')
 } catch {
