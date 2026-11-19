@@ -94,7 +94,11 @@ SUDOERS_FILE="/etc/sudoers.d/zz-tb-uid-${TARGET_UID}-nopasswd"
 PREVIOUS_SUDOERS_FILE="/etc/sudoers.d/99-tb-uid-${TARGET_UID}-nopasswd"
 LEGACY_SUDOERS_FILE="/etc/sudoers.d/99-${TARGET_USER}-nopasswd"
 SUDOERS_MAIN="/etc/sudoers"
-MANAGED_INCLUDE="@include ${SUDOERS_FILE} # tb-nopasswd-uid-${TARGET_UID}"
+# sudo-rs rejects any text after an unquoted @include path, so the line is the
+# bare path. The unique file name identifies it. The commented form written by
+# older versions is still recognised so it can be removed or migrated.
+MANAGED_INCLUDE="@include ${SUDOERS_FILE}"
+LEGACY_MANAGED_INCLUDE="@include ${SUDOERS_FILE} # tb-nopasswd-uid-${TARGET_UID}"
 
 # ---------------------------------------------------------------------------
 # State detection: does the user currently have passwordless sudo?
@@ -130,6 +134,7 @@ update_main_include() {
     local operation="$1" tmp
     tmp="$(mktemp /etc/sudoers.tb.XXXXXXXX)" || return 1
     cp "$SUDOERS_MAIN" "$tmp" || { rm -f "$tmp"; return 1; }
+    sed -i "\|^${LEGACY_MANAGED_INCLUDE}$|d" "$tmp" || { rm -f "$tmp"; return 1; }
     if [[ "$operation" == add ]]; then
         if ! grep -Fxq "$MANAGED_INCLUDE" "$tmp"; then
             printf '\n%s\n' "$MANAGED_INCLUDE" >> "$tmp"
@@ -146,9 +151,15 @@ update_main_include() {
     mv -f "$tmp" "$SUDOERS_MAIN"
 }
 
+# True when /etc/sudoers holds our include in the current or legacy format.
+has_main_include() {
+    grep -Fxq "$MANAGED_INCLUDE" "$SUDOERS_MAIN" ||
+        grep -Fxq "$LEGACY_MANAGED_INCLUDE" "$SUDOERS_MAIN"
+}
+
 # Disable: remove only our managed file.
 disable_nopasswd() {
-    if grep -Fxq "$MANAGED_INCLUDE" "$SUDOERS_MAIN"; then
+    if has_main_include; then
         update_main_include remove || return 1
         log_info "Removed the toolbox include from ${SUDOERS_MAIN}."
     fi
@@ -217,7 +228,7 @@ if [[ "$ACTION" == "enable" ]]; then
     else
         tb_info "The managed rule did not take effect; adding a final toolbox include..."
         had_main_include=0
-        if grep -Fxq "$MANAGED_INCLUDE" "$SUDOERS_MAIN"; then
+        if has_main_include; then
             had_main_include=1
         fi
         if ! update_main_include add; then
