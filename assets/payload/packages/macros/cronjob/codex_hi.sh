@@ -73,7 +73,7 @@ case "$mode" in
         [ ! -f "$state_root/running" ] || event 'ERROR: previous run ended without recording a result.'
         printf '%s\n' "$$" > "$state_root/running"
         # Invoked by the EXIT trap.
-        # shellcheck disable=SC2317
+        # shellcheck disable=SC2317,SC2329
         finish() {
             result=$?
             trap - 0
