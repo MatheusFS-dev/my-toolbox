@@ -131,6 +131,8 @@ assert_wsl_shift_enter_selection() {
         select_features
         [[ "${SELECTED[shift_enter]}" == true ]]
 
+        # Invoked by run_feature from the dynamically sourced setup script.
+        # shellcheck disable=SC2329
         run_as_target() {
             # shellcheck disable=SC2317
             printf '%s\n' "$*"
