@@ -120,7 +120,7 @@ func TestVSCodeWindowsInstaller(t *testing.T) {
 		if err := json.Unmarshal(files["extension/package.json"], &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.Name != "split-terminal" || manifest.Publisher != "my-toolbox" || len(manifest.Contributes.Keybindings) != 1 || manifest.Contributes.Keybindings[0].When != "isWindows" {
+		if manifest.Name != "terminal-beside" || manifest.Publisher != "MatheusFS-dev" || len(manifest.Contributes.Keybindings) != 1 || manifest.Contributes.Keybindings[0].When != "isWindows" {
 			t.Fatalf("invalid manifest: %+v", manifest)
 		}
 		for _, name := range []string{"extension/extension.js", "extension/split.ps1", "extension.vsixmanifest", "[Content_Types].xml"} {

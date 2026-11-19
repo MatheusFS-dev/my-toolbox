@@ -10,13 +10,21 @@ function load() {
   vm.runInNewContext(source || '', sandbox)
   return sandbox.module.exports
 }
+test('packages the extension icon', () => {
+  const source = fs.readFileSync(installer, 'utf8')
+  const manifest = JSON.parse(source.split("<<'TB_PACKAGE'\n")[1].split('\nTB_PACKAGE')[0])
+  assert.equal(manifest.icon, 'icon.png')
+  const encoded = source.split("<<'TB_ICON'\n")[1]?.split('\nTB_ICON')[0]
+  assert.ok(encoded)
+  assert.deepEqual(Buffer.from(encoded, 'base64'), fs.readFileSync(path.join(path.dirname(installer), 'icon.png')))
+})
 test('chooses workspace roots and rejects remote folders', async () => {
   const { workspaceRoot } = load()
   assert.equal(typeof workspaceRoot, 'function')
   const messages = []
   const folder = name => ({ name, uri: { scheme: 'file', fsPath: '/projects/' + name } })
   let picked = 0
-  const api = { env: {}, workspace: { workspaceFolders: [folder('one')] }, window: {
+  const api = { env: {}, workspace: { getConfiguration: () => ({ get: () => config.percent || 100 / 3 }), workspaceFolders: [folder('one')] }, window: {
     showWarningMessage: m => messages.push(m), showWorkspaceFolderPick: async () => { picked++; return folder('two') }
   } }
   assert.equal(await workspaceRoot(api), '/projects/one')
@@ -42,6 +50,10 @@ test('splits monitor and workarea intersections including negative origins', () 
     code: { x: -1920, y: 32, width: 1280, height: 1048 }, terminal: { x: -640, y: 32, width: 640, height: 1048 }
   })
   assert.throws(() => splitArea({ x: 0, y: 0, width: 10, height: 10 }, { x: 20, y: 0, width: 10, height: 10 }))
+  assert.deepEqual(JSON.parse(JSON.stringify(splitArea({ x: -1920, y: 0, width: 1920, height: 1080 }, { x: -1920, y: 32, width: 3840, height: 1048 }, 'Left'))), {
+    terminal: { x: -1920, y: 32, width: 640, height: 1048 }, code: { x: -1280, y: 32, width: 1280, height: 1048 }
+  })
+  assert.equal(splitArea({ x: 0, y: 0, width: 1000, height: 800 }, { x: 0, y: 0, width: 1000, height: 800 }, 'Left', 40).terminal.width, 400)
 })
 
 function runtime(config = {}) {
@@ -55,7 +67,8 @@ function runtime(config = {}) {
   const boxes = {}
   const maxed = new Set()
   const ignored = {}
-  const api = { env: {}, workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: "/tmp/project with ' quotes;$()" } }] }, window: { showErrorMessage: message => errors.push(message) } }
+  const picks = []
+  const api = { env: {}, workspace: { getConfiguration: () => ({ get: () => config.percent || 100 / 3 }), workspaceFolders: [{ uri: { scheme: 'file', fsPath: "/tmp/project with ' quotes;$()" } }] }, window: { showErrorMessage: message => errors.push(message), showQuickPick: async choices => { picks.push(choices); return config.side === 'cancel' ? undefined : config.side || 'Right' } } }
   const execFile = async (command, args, options) => {
     calls.push([command, [...args]])
     assert.equal(options.timeout, 3000)
@@ -114,8 +127,16 @@ function runtime(config = {}) {
     return { on(event, listener) { if (config.launchError && event === 'error') listener(new Error('launch denied')) }, unref() {} }
   }
   const command = createCommand(api, { execFile, spawn, env: { XDG_SESSION_TYPE: config.wayland ? 'wayland' : 'x11', DISPLAY: ':1', ...(config.gnome ? { XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' } : {}) }, platform: config.platform || 'linux', now: () => time, sleep: async ms => { time += ms }, uuid: () => 'unique' })
-  return { command, calls, errors, launches }
+  return { command, calls, errors, launches, picks }
 }
+
+test('cancelling side choice launches nothing', async () => {
+  const fixture = runtime({ side: 'cancel' })
+  await fixture.command()
+  assert.equal(fixture.picks.length, 1)
+  assert.deepEqual(fixture.launches, [])
+  assert.deepEqual(fixture.calls, [])
+})
 
 test('launches safely, waits for restoration, tiles usable space and focuses terminal', async () => {
   const fixture = runtime({ maximized: true, delay: 2 })
@@ -133,6 +154,17 @@ test('launches safely, waits for restoration, tiles usable space and focuses ter
     ['wmctrl', ['-ir', '100', '-e', '0,-1920,32,1276,970']]
   ])
   assert.deepEqual(fixture.calls.at(-1), ['xdotool', ['windowactivate', '--sync', '0x000000c8']])
+})
+
+test('places terminal in the left third when selected', async () => {
+  const fixture = runtime({ side: 'Left' })
+  await fixture.command()
+  assert.deepEqual(fixture.errors, [])
+  assert.equal(fixture.picks.length, 1)
+  assert.deepEqual(fixture.calls.filter(([name, args]) => name === 'wmctrl' && args.includes('-e')).slice(-2), [
+    ['wmctrl', ['-ir', '0x000000c8', '-e', '0,-1920,32,636,970']],
+    ['wmctrl', ['-ir', '100', '-e', '0,-1280,32,1276,970']]
+  ])
 })
 
 test('re-applies the layout when the window manager reverts the first resize', async () => {

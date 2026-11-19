@@ -157,7 +157,7 @@ func TestVSCodeDownloadedInstaller(t *testing.T) {
 		if err := json.Unmarshal(files["extension/package.json"], &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if manifest.Name != "split-terminal" || manifest.Publisher != "my-toolbox" || len(files["extension/extension.js"]) == 0 || len(files["extension.vsixmanifest"]) == 0 || len(files["[Content_Types].xml"]) == 0 {
+		if manifest.Name != "terminal-beside" || manifest.Publisher != "MatheusFS-dev" || len(files["extension/extension.js"]) == 0 || len(files["extension/README.md"]) == 0 || len(files["extension.vsixmanifest"]) == 0 || len(files["[Content_Types].xml"]) == 0 {
 			t.Fatalf("invalid package: %v", files)
 		}
 	}

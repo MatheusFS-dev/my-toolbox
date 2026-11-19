@@ -1,4 +1,4 @@
 {
   "title": "VS Code split terminal",
-  "description": "Install Ctrl+Alt+S to open the default terminal at the workspace root and split the current monitor (Linux X11 and Windows Terminal)."
+  "description": "Install Ctrl+Alt+S to choose the left or right side for a terminal at the workspace root (Linux X11 and Windows Terminal)."
 }

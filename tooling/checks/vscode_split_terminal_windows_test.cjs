@@ -21,16 +21,23 @@ function load() {
 
 test('manifest binds Ctrl+Alt+S on Windows only', () => {
   const manifest = JSON.parse(embedded('package.json'))
-  assert.deepEqual(manifest.contributes.keybindings, [{ command: 'myToolbox.openSplitTerminal', key: 'ctrl+alt+s', when: 'isWindows' }])
-  assert.equal(manifest.name, 'split-terminal')
-  assert.equal(manifest.publisher, 'my-toolbox')
+  assert.deepEqual(manifest.contributes.keybindings, [{ command: 'terminalBeside.openTerminal', key: 'ctrl+alt+s', when: 'isWindows' }])
+  assert.equal(manifest.name, 'terminal-beside')
+  assert.equal(manifest.publisher, 'MatheusFS-dev')
+  assert.equal(manifest.author, 'MatheusFS-dev')
+  assert.equal(manifest.displayName, 'Terminal Beside')
+  assert.equal(manifest.icon, 'icon.png')
+  const encoded = source.split("    Save-File (Join-Path $Extension 'icon.base64') @'\n")[1]?.split("\n'@")[0]
+  assert.ok(encoded)
+  assert.deepEqual(Buffer.from(encoded, 'base64'), fs.readFileSync(path.join(path.dirname(installer), 'icon.png')))
+  assert.match(embedded('README.md'), /^# Terminal Beside/m)
 })
 
 test('chooses workspace roots and rejects remote folders', async () => {
   const { workspaceRoot } = load()
   const messages = []
   const folder = name => ({ name, uri: { scheme: 'file', fsPath: 'C:\\projects\\' + name } })
-  const api = { env: {}, workspace: { workspaceFolders: [folder('one')] }, window: {
+  const api = { env: {}, workspace: { getConfiguration: () => ({ get: () => config.percent || 100 / 3 }), workspaceFolders: [folder('one')] }, window: {
     showWarningMessage: m => messages.push(m), showWorkspaceFolderPick: async () => folder('two')
   } }
   assert.equal(await workspaceRoot(api), 'C:\\projects\\one')
@@ -50,7 +57,8 @@ function runtime(config = {}) {
   const errors = []
   const launches = []
   const root = config.root || 'C:\\work\\my project'
-  const api = { env: {}, workspace: { workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] }, window: { showErrorMessage: message => errors.push(message) } }
+  const picks = []
+  const api = { env: {}, workspace: { getConfiguration: () => ({ get: () => config.percent || 100 / 3 }), workspaceFolders: [{ uri: { scheme: 'file', fsPath: root } }] }, window: { showErrorMessage: message => errors.push(message), showQuickPick: async choices => { picks.push(choices); return config.side === 'cancel' ? undefined : config.side || 'Right' } } }
   const execFile = async (command, args) => {
     calls.push([command, args])
     assert.equal(command, 'powershell.exe')
@@ -64,8 +72,25 @@ function runtime(config = {}) {
     return { on(event, listener) { if (config.launchError && event === 'error') listener(new Error('wt missing')) }, unref() {} }
   }
   const command = createCommand(api, { execFile, spawn, env: {}, platform: config.platform || 'win32', helper: 'C:\\ext\\split.ps1' })
-  return { command, calls, errors, launches }
+  return { command, calls, errors, launches, picks }
 }
+
+test('cancelling side choice launches nothing', async () => {
+  const fixture = runtime({ side: 'cancel' })
+  await fixture.command()
+  assert.equal(fixture.picks.length, 1)
+  assert.deepEqual(fixture.launches, [])
+  assert.deepEqual(fixture.calls, [])
+})
+
+test('passes left choice to placement helper', async () => {
+  const fixture = runtime({ side: 'Left', percent: 40 })
+  await fixture.command()
+  assert.equal(JSON.stringify(fixture.calls[1][1].slice(-4)), JSON.stringify(['-Side', 'Left', '-Percent', '40']))
+  const helper = embedded('split.ps1')
+  assert.match(helper, /\$TerminalX = if \(\$Side -eq 'Left'\) \{ \$X \}/)
+  assert.match(helper, /\$CodeX = if \(\$Side -eq 'Left'\) \{ \$X \+ \$TerminalWidth \}/)
+})
 
 test('probes focus, launches Windows Terminal safely and places both windows', async () => {
   const fixture = runtime()
@@ -78,7 +103,7 @@ test('probes focus, launches Windows Terminal safely and places both windows', a
   assert.equal(launch.options.cwd, 'C:\\work\\my project')
   assert.equal(launch.options.shell, undefined)
   const place = fixture.calls[1][1]
-  assert.equal(JSON.stringify(place.slice(place.indexOf('-Mode'))), JSON.stringify(['-Mode', 'Place', '-CodeHandle', '4242', '-Known', '11,22', '-TimeoutMs', '8000']))
+  assert.equal(JSON.stringify(place.slice(place.indexOf('-Mode'))), JSON.stringify(['-Mode', 'Place', '-CodeHandle', '4242', '-Known', '11,22', '-TimeoutMs', '8000', '-Side', 'Right', '-Percent', String(100 / 3)]))
   assert.ok(fixture.calls[0][1].includes('-NonInteractive') && fixture.calls[0][1].includes('C:\\ext\\split.ps1'))
 })
 
