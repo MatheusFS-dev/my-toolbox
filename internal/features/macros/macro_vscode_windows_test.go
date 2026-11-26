@@ -123,7 +123,7 @@ func TestVSCodeWindowsInstaller(t *testing.T) {
 		if manifest.Name != "terminal-beside" || manifest.Publisher != "MatheusFS-dev" || len(manifest.Contributes.Keybindings) != 1 || manifest.Contributes.Keybindings[0].When != "isWindows" {
 			t.Fatalf("invalid manifest: %+v", manifest)
 		}
-		for _, name := range []string{"extension/extension.js", "extension/split.ps1", "extension.vsixmanifest", "[Content_Types].xml"} {
+		for _, name := range []string{"extension/extension.js", "extension/split.ps1", "extension/pair.ps1", "extension.vsixmanifest", "[Content_Types].xml"} {
 			if len(files[name]) == 0 {
 				t.Fatalf("missing %s in %v", name, files)
 			}

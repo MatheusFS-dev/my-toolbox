@@ -27,7 +27,9 @@ The terminal starts at the selected workspace root and receives keyboard focus. 
 
 The `terminalBeside.smart` setting is on by default. It links the terminal and VS Code as a pair. Focusing or Alt-Tabbing to either window raises both, and resizing one window resizes the other. The link ends when either window closes, is maximized or made fullscreen, or is dragged away from the other.
 
-Smart pairing needs the Terminal Beside GNOME Shell extension, which the installer copies to `~/.local/share/gnome-shell/extensions/terminal-beside@matheusfs-dev` and enables. It supports GNOME Shell 46 on X11. The installer registers it, so after an install or update you only restart the shell (press Alt+F2, type `r`, press Enter, or log out and back in). If the extension is missing, Ctrl+Alt+S shows an error and moves no window. Set `terminalBeside.smart` to `false` to place the windows once, without the extension, as in earlier versions.
+On Linux, smart pairing needs the Terminal Beside GNOME Shell extension, which the installer copies to `~/.local/share/gnome-shell/extensions/terminal-beside@matheusfs-dev` and enables. It supports GNOME Shell 46 on X11. The installer registers it, so after an install or update you only restart the shell (press Alt+F2, type `r`, press Enter, or log out and back in). If the extension is missing, Ctrl+Alt+S shows an error and moves no window. Set `terminalBeside.smart` to `false` to place the windows once, without the extension, as in earlier versions.
+
+On Windows, smart pairing needs nothing beyond the installer. While a pair is linked, a small background `powershell.exe` watches both windows and ends by itself when the link ends. After an install or update, reload VS Code. If the helper cannot start, Ctrl+Alt+S shows an error and the windows stay where they were placed. A window that is minimized is left alone until you restore it, and pairing the same VS Code window again replaces the earlier link. Set `terminalBeside.smart` to `false` to place the windows once.
 
 ## Configure width
 

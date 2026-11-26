@@ -110,6 +110,20 @@ seconds, VS Code is left in place and an error notification appears. The
 helper uses per-monitor DPI awareness and re-applies the placement until
 Windows accepts it, so monitors with different scaling or resolution tile correctly.
 
+Smart pairing is controlled by `terminalBeside.smart` (default on) and behaves as
+on Linux. After the windows are placed, the extension starts a second helper
+(`pair.ps1` inside the extension) in the background. Focusing or Alt-Tabbing to
+either window raises both, and resizing one window moves the shared edge so the
+other follows. The link ends when either window closes, is maximized, covers the
+whole monitor, is dragged away from the other (gap above 2 px), or would leave
+the other narrower than 100 px. A minimized window is ignored until it is
+restored, and pairing the same VS Code window again stops the older helper. The
+helper subscribes to Windows events, so it uses no CPU while nothing changes, and
+it exits on its own when the link ends. No extra install step is needed, only a
+reload of VS Code. If the helper does not report ready within ten seconds, the
+extension shows an error and the windows stay placed. Set `terminalBeside.smart`
+to `false` to place the windows once.
+
 The binding is limited to Windows with `"when": "isWindows"`. The installer warns
 about conflicting Ctrl+Alt+S user bindings in the default and named profiles
 under `%APPDATA%\Code\User` and never edits them.

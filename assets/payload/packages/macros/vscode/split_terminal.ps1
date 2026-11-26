@@ -139,7 +139,7 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAA0SklEQVR42u19abBuV1nm86y9v+87w703
   "name": "terminal-beside",
   "displayName": "Terminal Beside",
   "description": "Open Windows Terminal at the workspace root and tile it beside VS Code.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "MatheusFS-dev",
   "engines": { "vscode": "^1.74.0" },
   "main": "./extension.js",
@@ -150,7 +150,7 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAA0SklEQVR42u19abBuV1nm86y9v+87w703
   "contributes": {
     "commands": [{ "command": "terminalBeside.openTerminal", "title": "Terminal Beside: Open Terminal" }],
     "keybindings": [{ "command": "terminalBeside.openTerminal", "key": "ctrl+alt+s", "when": "isWindows" }],
-    "configuration": { "title": "Terminal Beside", "properties": { "terminalBeside.terminalWidthPercent": { "type": "number", "default": 33.333333333333336, "minimum": 1, "maximum": 99, "description": "Width of the terminal as a percentage of the monitor work area." } } }
+    "configuration": { "title": "Terminal Beside", "properties": { "terminalBeside.smart": { "type": "boolean", "default": true, "description": "Link the terminal and VS Code so focusing either raises both and resizing one resizes the other. Turn off to only place the windows once." }, "terminalBeside.terminalWidthPercent": { "type": "number", "default": 33.333333333333336, "minimum": 1, "maximum": 99, "description": "Width of the terminal as a percentage of the monitor work area." } } }
   }
 }
 '@
@@ -180,6 +180,8 @@ function createCommand(vscode, options = {}) {
   const execFile = options.execFile || promisify(childProcess.execFile)
   const spawn = options.spawn || childProcess.spawn
   const helper = options.helper || join(__dirname, 'split.ps1')
+  const pairHelper = options.pairHelper || join(__dirname, 'pair.ps1')
+  const pairTimeout = options.pairTimeoutMs || 10000
   const powershell = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper]
   const run = async args => {
     try {
@@ -189,6 +191,34 @@ function createCommand(vscode, options = {}) {
       throw new Error(error.code === 'ENOENT' ? 'powershell.exe is missing. Re-run the macro installer.' : detail)
     }
   }
+  // The pair helper keeps running after this call and ends itself when the link ends.
+  // It is not spawned detached: on Windows a detached PowerShell with piped stdio exits at once with status 0.
+  // It is ready once it prints READY, so an early exit or a missing READY is a start failure.
+  const startPair = (code, terminal) => new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', pairHelper, '-CodeHandle', code, '-TerminalHandle', terminal], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    let settled = false
+    const finish = failure => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (failure) {
+        try { child.kill() } catch { /* the helper is already gone */ }
+        reject(failure)
+        return
+      }
+      child.stdout.destroy()
+      child.stderr.destroy()
+      child.unref()
+      resolve()
+    }
+    const timer = setTimeout(() => finish(new Error('the helper did not report READY in time')), pairTimeout)
+    child.on('error', error => finish(error))
+    child.on('close', status => finish(new Error(err.trim() || `the helper exited with status ${status}`)))
+    child.stdout.on('data', chunk => { out += chunk; if (/^READY\s*$/m.test(out)) finish() })
+    child.stderr.on('data', chunk => { err += chunk })
+  })
   let busy = false
   return async () => {
     if (busy) return
@@ -198,6 +228,7 @@ function createCommand(vscode, options = {}) {
       if (!side) return
       const percent = vscode.workspace.getConfiguration('terminalBeside').get('terminalWidthPercent', 100 / 3)
       if (!Number.isFinite(percent) || percent < 1 || percent > 99) throw new Error('Terminal width must be between 1 and 99 percent.')
+      const smart = vscode.workspace.getConfiguration('terminalBeside').get('smart', true) !== false
       const root = await workspaceRoot(vscode)
       if (!root) return
       if (platform !== 'win32') throw new Error('Split terminal requires Windows.')
@@ -214,10 +245,20 @@ function createCommand(vscode, options = {}) {
       terminal.on('exit', status => { if (status) launchError = new Error(`Windows Terminal exited with status ${status}`) })
       terminal.unref()
       // The helper waits for the new terminal window and moves nothing until it exists.
+      let placed
       try {
-        await run(['-Mode', 'Place', '-CodeHandle', code[1], '-Known', known, '-TimeoutMs', '8000', '-Side', side, '-Percent', String(percent)])
+        placed = await run(['-Mode', 'Place', '-CodeHandle', code[1], '-Known', known, '-TimeoutMs', '8000', '-Side', side, '-Percent', String(percent)])
       } catch (error) {
         throw launchError || error
+      }
+      if (smart) {
+        const terminalHandle = /^TERMINAL=(\d+)$/m.exec(placed)
+        if (!terminalHandle) throw new Error('Smart pairing could not start: the placement did not report the terminal window.')
+        try {
+          await startPair(code[1], terminalHandle[1])
+        } catch (error) {
+          throw new Error(`Smart pairing could not start: ${error.message}`)
+        }
       }
     } catch (error) {
       vscode.window.showErrorMessage(`Split terminal: ${error.message}`)
@@ -345,6 +386,13 @@ $TerminalWidth = [int][Math]::Max(1, [Math]::Min($Width - 1, [Math]::Ceiling($Wi
 $Left = $Width - $TerminalWidth
 $TerminalX = if ($Side -eq 'Left') { $X } else { $X + $Left }
 $CodeX = if ($Side -eq 'Left') { $X + $TerminalWidth } else { $X }
+# An older pair for this VS Code window must stop before its windows move again.
+$Older = $null
+if ([Threading.EventWaitHandle]::TryOpenExisting("Local\TerminalBeside.Pair.$($Code.ToInt64())", [ref]$Older)) {
+    [void]$Older.Set()
+    $Older.Dispose()
+    Start-Sleep -Milliseconds 200
+}
 [TbWin]::Restore($Terminal)
 [TbWin]::Restore($Code)
 # Monitors with different scaling make Windows rescale a window that crosses over, which undoes a single move.
@@ -367,6 +415,225 @@ Start-Sleep -Milliseconds 400
 Set-Frame $Code $CodeX $Y $Left $Height
 [TbWin]::Focus($Terminal)
 [Console]::Out.WriteLine('OK')
+[Console]::Out.WriteLine('TERMINAL=' + $Terminal.ToInt64())
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+'@
+    Save-File (Join-Path $Extension 'pair.ps1') @'
+param(
+    [string]$CodeHandle = '0',
+    [string]$TerminalHandle = '0'
+)
+$ErrorActionPreference = 'Stop'
+try {
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class TbGeometry {
+    // Rectangles are {x, y, width, height} in visible frame coordinates.
+    // The other window keeps its outer edge and its shared edge follows the changed window.
+    // Returns null when the other window would be narrower than minWidth.
+    public static int[] FollowResize(int[] changed, int[] other, int minWidth) {
+        int x;
+        int width;
+        if (changed[0] <= other[0]) { x = changed[0] + changed[2]; width = other[0] + other[2] - x; }
+        else { x = other[0]; width = changed[0] - other[0]; }
+        if (width < minWidth) return null;
+        return new int[] { x, changed[1], width, changed[3] };
+    }
+    public static bool IsAdjacent(int[] a, int[] b, int tolerance) {
+        int[] left = a[0] <= b[0] ? a : b;
+        int[] right = object.ReferenceEquals(left, a) ? b : a;
+        int gap = Math.Abs(right[0] - (left[0] + left[2]));
+        int overlap = Math.Min(left[1] + left[3], right[1] + right[3]) - Math.Max(left[1], right[1]);
+        return gap <= tolerance && overlap > 0;
+    }
+    public static bool SameFrame(int[] a, int[] b, int tolerance) {
+        for (int i = 0; i < 4; i++) { if (Math.Abs(a[i] - b[i]) > tolerance) return false; }
+        return true;
+    }
+}
+public static class TbPair {
+    const int MinWidth = 100;
+    const int AdjacentTolerance = 2;
+    const int FrameTolerance = 1;
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public POINT pt; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int Size; public RECT Monitor, Work; public int Flags; }
+    delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+    [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr module, WinEventProc proc, uint pid, uint tid, uint flags);
+    [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")] static extern bool PeekMessage(out MSG msg, IntPtr hwnd, uint min, uint max, uint remove);
+    [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG msg);
+    [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG msg);
+    [DllImport("user32.dll")] static extern uint MsgWaitForMultipleObjects(uint count, IntPtr[] handles, bool all, uint milliseconds, uint mask);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out RECT rect, int size);
+
+    // The delegate lives in a static field so the garbage collector cannot free it while the hooks are active.
+    static WinEventProc callback;
+    static IntPtr[] hooks;
+    static IntPtr code;
+    static IntPtr terminal;
+    static int[] lastCode;
+    static int[] lastTerminal;
+    static string reason;
+    static bool applying;
+    static bool iconicCode;
+    static bool iconicTerminal;
+    static EventWaitHandle stop;
+    static Mutex owner;
+
+    static int[] Visible(IntPtr hwnd) {
+        RECT outer, visible;
+        GetWindowRect(hwnd, out outer);
+        if (DwmGetWindowAttribute(hwnd, 9, out visible, Marshal.SizeOf(typeof(RECT))) != 0) visible = outer;
+        return new int[] { visible.Left, visible.Top, visible.Right - visible.Left, visible.Bottom - visible.Top };
+    }
+    // Fit the visible frame to the rectangle, compensating for the invisible resize borders Windows adds.
+    static void Place(IntPtr hwnd, int[] frame) {
+        RECT outer, visible;
+        GetWindowRect(hwnd, out outer);
+        if (DwmGetWindowAttribute(hwnd, 9, out visible, Marshal.SizeOf(typeof(RECT))) != 0) visible = outer;
+        int left = visible.Left - outer.Left, top = visible.Top - outer.Top;
+        int right = outer.Right - visible.Right, bottom = outer.Bottom - visible.Bottom;
+        SetWindowPos(hwnd, IntPtr.Zero, frame[0] - left, frame[1] - top, frame[2] + left + right, frame[3] + top + bottom, 0x0014);
+    }
+    // Lifts a window above its neighbours without activating it. Topmost then not topmost reaches the top of the normal group.
+    static void Raise(IntPtr hwnd) {
+        if (IsIconic(hwnd)) return;
+        if ((GetWindowLong(hwnd, -20) & 0x8) != 0) { SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0013); return; }
+        SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0013);
+        SetWindowPos(hwnd, new IntPtr(-2), 0, 0, 0, 0, 0x0013);
+    }
+    static bool CoversMonitor(IntPtr hwnd, int[] frame) {
+        MONITORINFO info = new MONITORINFO();
+        info.Size = Marshal.SizeOf(typeof(MONITORINFO));
+        if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref info)) return false;
+        int[] monitor = new int[] { info.Monitor.Left, info.Monitor.Top, info.Monitor.Right - info.Monitor.Left, info.Monitor.Bottom - info.Monitor.Top };
+        return TbGeometry.SameFrame(frame, monitor, FrameTolerance);
+    }
+    static void End(string why) { if (reason == null) reason = why; }
+    static void Remember(bool isCode, int[] frame) { if (isCode) lastCode = frame; else lastTerminal = frame; }
+
+    static void OnEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time) {
+        if (reason != null || idObject != 0 || idChild != 0) return;
+        if (hwnd != code && hwnd != terminal) return;
+        bool isCode = hwnd == code;
+        IntPtr other = isCode ? terminal : code;
+        if (ev == 0x8001) { End("closed"); return; }
+        if (ev == 0x0003) { Raise(other); Raise(hwnd); return; }
+        if (ev != 0x800B || applying) return;
+        bool minimized = IsIconic(hwnd);
+        bool restored = !minimized && (isCode ? iconicCode : iconicTerminal);
+        if (isCode) iconicCode = minimized; else iconicTerminal = minimized;
+        // A minimized window reports off-screen coordinates, so it is neither measured nor moved.
+        if (minimized) return;
+        if (IsZoomed(hwnd)) { End("maximized"); return; }
+        int[] now = Visible(hwnd);
+        if (CoversMonitor(hwnd, now)) { End("fullscreen"); return; }
+        int[] before = isCode ? lastCode : lastTerminal;
+        Remember(isCode, now);
+        // Adjacency is judged when the minimized window comes back.
+        if (IsIconic(other)) return;
+        int[] otherFrame = Visible(other);
+        if (restored) {
+            // Either window may have moved or been resized while this one was minimized.
+            if (!TbGeometry.IsAdjacent(now, otherFrame, AdjacentTolerance)) End("dragged-away");
+            return;
+        }
+        if (TbGeometry.SameFrame(now, before, FrameTolerance)) return;
+        if (now[2] == before[2] && now[3] == before[3]) {
+            // A pure move that is not ours leaves the pair apart, so the link ends.
+            if (!TbGeometry.IsAdjacent(now, otherFrame, AdjacentTolerance)) End("dragged-away");
+            return;
+        }
+        int[] target = TbGeometry.FollowResize(now, otherFrame, MinWidth);
+        if (target == null) { End("too-narrow"); return; }
+        if (TbGeometry.SameFrame(target, otherFrame, FrameTolerance)) return;
+        applying = true;
+        try { Place(other, target); } finally { applying = false; }
+        // Our own placement raises events later. They match the frame stored here and are ignored.
+        Remember(!isCode, Visible(other));
+    }
+
+    static IntPtr Hook(uint ev, uint pid) {
+        IntPtr hook = SetWinEventHook(ev, ev, IntPtr.Zero, callback, pid, 0, 0);
+        if (hook == IntPtr.Zero) throw new Exception("SetWinEventHook failed.");
+        return hook;
+    }
+    static uint ProcessOf(IntPtr hwnd) { uint pid; GetWindowThreadProcessId(hwnd, out pid); return pid; }
+
+    // Stops an older helper for the same VS Code window, then installs the hooks on the calling thread.
+    public static void Start(long codeHandle, long terminalHandle) {
+        SetProcessDpiAwarenessContext(new IntPtr(-4));
+        code = new IntPtr(codeHandle);
+        terminal = new IntPtr(terminalHandle);
+        if (!IsWindow(code) || !IsWindow(terminal)) throw new Exception("A window of the pair no longer exists.");
+        string stopName = "Local\\TerminalBeside.Pair." + codeHandle;
+        string lockName = "Local\\TerminalBeside.PairLock." + codeHandle;
+        EventWaitHandle older;
+        if (EventWaitHandle.TryOpenExisting(stopName, out older)) { older.Set(); older.Dispose(); }
+        owner = new Mutex(false, lockName);
+        try {
+            if (!owner.WaitOne(3000)) throw new Exception("The previous pairing did not stop.");
+        } catch (AbandonedMutexException) { }
+        stop = new EventWaitHandle(false, EventResetMode.ManualReset, stopName);
+        lastCode = Visible(code);
+        lastTerminal = Visible(terminal);
+        callback = OnEvent;
+        uint codePid = ProcessOf(code);
+        uint terminalPid = ProcessOf(terminal);
+        // Location and destroy events are filtered to the two owning processes. Foreground events are global.
+        System.Collections.Generic.List<IntPtr> list = new System.Collections.Generic.List<IntPtr>();
+        list.Add(Hook(0x0003, 0));
+        list.Add(Hook(0x800B, codePid));
+        list.Add(Hook(0x8001, codePid));
+        if (terminalPid != codePid) { list.Add(Hook(0x800B, terminalPid)); list.Add(Hook(0x8001, terminalPid)); }
+        hooks = list.ToArray();
+    }
+
+    // Pumps messages until the link ends and returns why.
+    public static string Loop() {
+        IntPtr[] waits = new IntPtr[] { stop.SafeWaitHandle.DangerousGetHandle() };
+        try {
+            while (reason == null) {
+                if (!IsWindow(code) || !IsWindow(terminal)) { End("closed"); break; }
+                uint woke = MsgWaitForMultipleObjects(1, waits, false, 200, 0x04FF);
+                if (woke == 0) { End("replaced"); break; }
+                MSG msg;
+                while (PeekMessage(out msg, IntPtr.Zero, 0, 0, 1)) { TranslateMessage(ref msg); DispatchMessage(ref msg); }
+            }
+        } finally {
+            foreach (IntPtr hook in hooks) UnhookWinEvent(hook);
+            stop.Dispose();
+            owner.ReleaseMutex();
+            owner.Dispose();
+        }
+        return reason;
+    }
+}
+"@
+$Code = [Int64]0
+$Terminal = [Int64]0
+if (-not [Int64]::TryParse($CodeHandle, [ref]$Code) -or $Code -eq 0) { throw 'A numeric -CodeHandle is required.' }
+if (-not [Int64]::TryParse($TerminalHandle, [ref]$Terminal) -or $Terminal -eq 0) { throw 'A numeric -TerminalHandle is required.' }
+[TbPair]::Start($Code, $Terminal)
+[Console]::Out.WriteLine('READY')
+[Console]::Out.WriteLine('ENDED ' + [TbPair]::Loop())
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
@@ -398,6 +665,12 @@ Open a local workspace in VS Code, then press **Ctrl+Alt+S** or run **Terminal B
 
 The terminal starts at the selected workspace root and receives keyboard focus. In a workspace with several folders, choose the folder before the terminal opens.
 
+## Smart pairing
+
+The `terminalBeside.smart` setting is on by default. It links the terminal and VS Code as a pair. Focusing or Alt-Tabbing to either window raises both, and resizing one window resizes the other. The link ends when either window closes, is maximized or made fullscreen, or is dragged away from the other.
+
+On Windows, smart pairing needs nothing beyond the installer. While a pair is linked, a small background `powershell.exe` watches both windows and ends by itself when the link ends. After an install or update, reload VS Code. If the helper cannot start, Ctrl+Alt+S shows an error and the windows stay where they were placed. Set `terminalBeside.smart` to `false` to place the windows once.
+
 ## Configure width
 
 In VS Code Settings, search for **Terminal Beside: Terminal Width Percent**. Enter a value from 1 to 99. The default is one third of the monitor work area. The setting also works in `settings.json`:
@@ -416,7 +689,7 @@ Run `code --uninstall-extension MatheusFS-dev.terminal-beside`.
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
   <Metadata>
-    <Identity Language="en-US" Id="terminal-beside" Version="1.0.0" Publisher="MatheusFS-dev" />
+    <Identity Language="en-US" Id="terminal-beside" Version="1.1.0" Publisher="MatheusFS-dev" />
     <DisplayName>Terminal Beside</DisplayName>
     <Description xml:space="preserve">Open a workspace terminal and tile it beside VS Code on Windows.</Description>
     <Tags>terminal,windows</Tags><Categories>Other</Categories><GalleryFlags>Public</GalleryFlags>
@@ -437,7 +710,7 @@ Run `code --uninstall-extension MatheusFS-dev.terminal-beside`.
     $Package = Join-Path $Work 'terminal-beside.vsix'
     $Archive = [IO.Compression.ZipFile]::Open($Package, [IO.Compression.ZipArchiveMode]::Create)
     try {
-        foreach ($Entry in @('extension/package.json', 'extension/extension.js', 'extension/README.md', 'extension/icon.png', 'extension/split.ps1', 'extension.vsixmanifest', '[Content_Types].xml')) {
+        foreach ($Entry in @('extension/package.json', 'extension/extension.js', 'extension/README.md', 'extension/icon.png', 'extension/split.ps1', 'extension/pair.ps1', 'extension.vsixmanifest', '[Content_Types].xml')) {
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($Archive, (Join-Path $Work ($Entry -replace '/', '\')), $Entry)
         }
     } finally { $Archive.Dispose() }
