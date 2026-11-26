@@ -8,11 +8,11 @@ self-contained shell installer that can be run with `sh split_terminal.sh` from
 any directory, without the toolbox source tree.
 
 Install VS Code, a default terminal registered as `x-terminal-emulator`, Node.js,
-`zip`, `xdotool`, `wmctrl`, `xrandr`, and `xprop` first. On Debian/Ubuntu, the helper
+`zip`, `xdotool`, `wmctrl`, `xrandr`, `xprop`, and `gdbus` first. On Debian/Ubuntu, the helper
 packages can be installed with:
 
 ```sh
-sudo apt install nodejs zip xdotool wmctrl x11-xserver-utils x11-utils
+sudo apt install nodejs zip xdotool wmctrl x11-xserver-utils x11-utils libglib2.0-bin
 ```
 
 With VS Code focused in a local workspace, press **Ctrl+Alt+S**, or run
@@ -24,6 +24,13 @@ focus. Dismissing the prompt opens nothing and leaves both windows in place.
 Set `terminalBeside.terminalWidthPercent` in VS Code Settings to choose
 the terminal width as a percentage of the monitor work area (1–99). The default
 is one third. For example, set it to `40` for a 40% terminal and 60% VS Code.
+Smart pairing is controlled by `terminalBeside.smart` (default on). It links the
+terminal and VS Code so focusing either raises both and resizing one resizes the other.
+The installer installs the `terminal-beside@matheusfs-dev` GNOME Shell extension (GNOME 46,
+X11) to `~/.local/share/gnome-shell/extensions/` and enables it. After the first install,
+restart the shell (Alt+F2, `r`, Enter, or log out and back in). The installer registers
+the extension, so no `gnome-extensions enable` is needed. Without the extension, Ctrl+Alt+S shows an error and moves nothing.
+Set `terminalBeside.smart` to `false` to place the windows once, as before.
 The workspace folder determines the directory, regardless of the active file or
 integrated terminal directory. Multiple-folder workspaces always show a picker.
 Canceling the picker does nothing. Repeated completed invocations create fresh

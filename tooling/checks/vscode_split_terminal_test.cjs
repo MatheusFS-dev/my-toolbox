@@ -68,7 +68,7 @@ function runtime(config = {}) {
   const maxed = new Set()
   const ignored = {}
   const picks = []
-  const api = { env: {}, workspace: { getConfiguration: () => ({ get: () => config.percent || 100 / 3 }), workspaceFolders: [{ uri: { scheme: 'file', fsPath: "/tmp/project with ' quotes;$()" } }] }, window: { showErrorMessage: message => errors.push(message), showQuickPick: async choices => { picks.push(choices); return config.side === 'cancel' ? undefined : config.side || 'Right' } } }
+  const api = { env: {}, workspace: { getConfiguration: () => ({ get: key => key === 'smart' ? (config.smart ?? false) : (config.percent || 100 / 3) }), workspaceFolders: [{ uri: { scheme: 'file', fsPath: "/tmp/project with ' quotes;$()" } }] }, window: { showErrorMessage: message => errors.push(message), showQuickPick: async choices => { picks.push(choices); return config.side === 'cancel' ? undefined : config.side || 'Right' } } }
   const execFile = async (command, args, options) => {
     calls.push([command, [...args]])
     assert.equal(options.timeout, 3000)
@@ -119,6 +119,10 @@ function runtime(config = {}) {
     }
     if (command === 'wmctrl' && args.includes('-b')) {
       assert.ok(args.at(-1).split(',').length <= 3, 'wmctrl supports at most two state properties per call')
+    }
+    if (command === 'gdbus') {
+      if (args.includes('org.freedesktop.DBus.NameHasOwner')) stdout = config.noBus ? '(false,)' : '(true,)'
+      if (args.some(a => a.endsWith('.Pair')) && config.pairError) throw new Error(config.pairError)
     }
     return { stdout }
   }
@@ -256,4 +260,121 @@ test('renames the identified terminal to the project directory name', async () =
   const identity = fixture.calls.findIndex(([name, args]) => name === 'xdotool' && args[0] === 'getwindowname')
   assert.ok(rename > identity && identity >= 0, 'rename must follow unique-window identification')
   assert.deepEqual(fixture.calls[rename], ['wmctrl', ['-ir', '0x000000c8', '-T', "project with ' quotes;$()"]])
+})
+
+async function loadGeometry() {
+  const source = fs.readFileSync(installer, 'utf8').split("<<'TB_GNOME_GEOMETRY'\n")[1]?.split('\nTB_GNOME_GEOMETRY')[0]
+  assert.ok(source, 'TB_GNOME_GEOMETRY heredoc is missing')
+  return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
+}
+const rect = (x, y, width, height) => ({ x, y, width, height })
+
+test('splitPair gives the terminal its percentage on the chosen side of a work area', async () => {
+  const { splitPair } = await loadGeometry()
+  assert.deepEqual(splitPair(rect(0, 0, 1920, 1080), 'Right', 100 / 3), { code: rect(0, 0, 1280, 1080), terminal: rect(1280, 0, 640, 1080) })
+  assert.deepEqual(splitPair(rect(1920, 27, 1920, 1053), 'Left', 40), { code: rect(2688, 27, 1152, 1053), terminal: rect(1920, 27, 768, 1053) })
+})
+
+test('followResize keeps the shared edge and the other outer edge', async () => {
+  const { followResize } = await loadGeometry()
+  const base = { code: rect(0, 0, 1280, 1080), terminal: rect(1280, 0, 640, 1080) }
+  assert.deepEqual(followResize({ ...base, terminal: rect(1000, 0, 920, 1080) }, 'terminal', 100).code, rect(0, 0, 1000, 1080))
+  assert.deepEqual(followResize({ ...base, code: rect(0, 0, 1500, 1080) }, 'code', 100).terminal, rect(1500, 0, 420, 1080))
+  assert.deepEqual(followResize({ ...base, code: rect(100, 0, 1180, 1080) }, 'code', 100).terminal, rect(1280, 0, 640, 1080))
+  assert.deepEqual(followResize({ ...base, code: rect(0, 0, 1280, 900) }, 'code', 100).terminal, rect(1280, 0, 640, 900))
+})
+
+test('followResize refuses to make the other window narrower than the minimum', async () => {
+  const { followResize } = await loadGeometry()
+  assert.equal(followResize({ code: rect(0, 0, 1850, 1080), terminal: rect(1280, 0, 640, 1080) }, 'code', 100), null)
+})
+
+test('isAdjacent accepts touching windows within tolerance and rejects gaps or no vertical overlap', async () => {
+  const { isAdjacent } = await loadGeometry()
+  assert.equal(isAdjacent({ code: rect(0, 0, 1280, 1080), terminal: rect(1280, 0, 640, 1080) }, 2), true)
+  assert.equal(isAdjacent({ code: rect(0, 0, 1280, 1080), terminal: rect(1330, 0, 590, 1080) }, 2), false)
+  assert.equal(isAdjacent({ code: rect(0, 0, 1280, 1080), terminal: rect(1282, 0, 638, 1080) }, 2), true)
+  assert.equal(isAdjacent({ code: rect(0, 0, 1280, 500), terminal: rect(1280, 600, 640, 480) }, 2), false)
+})
+
+test('packages a GNOME extension pinned to shell 46 and installs it', () => {
+  const source = fs.readFileSync(installer, 'utf8')
+  const metadata = JSON.parse(source.split("<<'TB_GNOME_METADATA'\n")[1]?.split('\nTB_GNOME_METADATA')[0])
+  assert.equal(metadata.uuid, 'terminal-beside@matheusfs-dev')
+  assert.deepEqual(metadata['shell-version'], ['46'])
+  assert.ok(source.includes('.local/share/gnome-shell/extensions/terminal-beside@matheusfs-dev'))
+  assert.ok(source.includes('gnome-extensions enable terminal-beside@matheusfs-dev'))
+  assert.ok(source.split("<<'TB_GNOME_EXTENSION'\n")[1]?.includes("import { splitPair, followResize, isAdjacent } from './pairGeometry.js'"))
+})
+
+const PAIR_ARGS = ['call', '--session', '--dest', 'dev.matheusfs.TerminalBeside', '--object-path', '/dev/matheusfs/TerminalBeside', '--method', 'dev.matheusfs.TerminalBeside.Pair']
+const usedWmctrlPlacement = calls => calls.some(([c, a]) => c === 'wmctrl' && a.includes('-e'))
+
+test('hexId normalises decimal and padded hex window ids', () => {
+  const { hexId } = load()
+  assert.equal(hexId('100'), '0x64')
+  assert.equal(hexId('0x000000c8'), '0xc8')
+})
+
+test('contributes a boolean smart setting that defaults to true', () => {
+  const source = fs.readFileSync(installer, 'utf8')
+  const manifest = JSON.parse(source.split("<<'TB_PACKAGE'\n")[1].split('\nTB_PACKAGE')[0])
+  const smart = manifest.contributes.configuration.properties['terminalBeside.smart']
+  assert.equal(smart.type, 'boolean')
+  assert.equal(smart.default, true)
+})
+
+test('smart on pairs through gdbus and skips wmctrl placement', async () => {
+  const fixture = runtime({ smart: true })
+  await fixture.command()
+  assert.deepEqual(fixture.errors, [])
+  assert.ok(fixture.calls.some(([c, a]) => c === 'gdbus' && JSON.stringify(a) === JSON.stringify([...PAIR_ARGS, '0x64', '0xc8', 'Right', '33.333333333333336'])))
+  assert.equal(usedWmctrlPlacement(fixture.calls), false)
+  assert.equal(fixture.calls.some(([c]) => c === 'xrandr' || c === 'xwininfo'), false)
+  assert.deepEqual(fixture.calls.at(-1), ['xdotool', ['windowactivate', '--sync', '0x000000c8']])
+})
+
+test('smart on without the GNOME extension shows an error and launches nothing', async () => {
+  const fixture = runtime({ smart: true, noBus: true })
+  await fixture.command()
+  assert.equal(fixture.launches.length, 0)
+  assert.equal(fixture.errors.length, 1)
+  assert.match(fixture.errors[0], /GNOME extension/)
+  assert.match(fixture.errors[0], /terminalBeside\.smart/)
+  assert.equal(usedWmctrlPlacement(fixture.calls), false)
+})
+
+test('smart on shows the D-Bus failure message and moves nothing', async () => {
+  const fixture = runtime({ smart: true, pairError: 'Could not find both windows' })
+  await fixture.command()
+  assert.equal(fixture.errors.length, 1)
+  assert.match(fixture.errors[0], /Could not find both windows/)
+  assert.equal(usedWmctrlPlacement(fixture.calls), false)
+})
+
+test('smart off keeps the wmctrl placement and never calls gdbus', async () => {
+  const fixture = runtime({ smart: false })
+  await fixture.command()
+  assert.equal(usedWmctrlPlacement(fixture.calls), true)
+  assert.equal(fixture.calls.some(([c]) => c === 'gdbus'), false)
+})
+
+test('VS Code extension and GNOME extension use the same bus name', () => {
+  const source = fs.readFileSync(installer, 'utf8')
+  const gnome = source.split("<<'TB_GNOME_EXTENSION'\n")[1].split('\nTB_GNOME_EXTENSION')[0]
+  const code = source.split("<<'TB_EXTENSION'\n")[1].split('\nTB_EXTENSION')[0]
+  const pick = text => text.match(/'(dev\.matheusfs\.TerminalBeside)'/)?.[1]
+  assert.equal(pick(gnome), 'dev.matheusfs.TerminalBeside')
+  assert.equal(pick(code), 'dev.matheusfs.TerminalBeside')
+})
+
+test('installer registers the GNOME extension for the next shell start and prints the finishing steps', () => {
+  const source = fs.readFileSync(installer, 'utf8')
+  assert.ok(source.includes('gsettings set org.gnome.shell enabled-extensions'))
+  assert.ok(source.includes('disable-user-extensions'))
+  assert.ok(source.includes('gdbus'))
+  const finish = source.slice(source.lastIndexOf('tb_success'))
+  assert.match(finish, /Alt\+F2/)
+  assert.match(finish, /Reload Window/)
+  assert.match(finish, /Ctrl\+Alt\+S/)
 })
