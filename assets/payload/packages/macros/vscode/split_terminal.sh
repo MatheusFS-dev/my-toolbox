@@ -191,6 +191,7 @@ cat > "$work/gnome-extension/metadata.json" <<'TB_GNOME_METADATA'
   "name": "Terminal Beside",
   "description": "Tiles a VS Code window and its terminal as a linked pair that raises and resizes together. Driven by the Terminal Beside VS Code extension over D-Bus.",
   "shell-version": ["46"],
+  "session-modes": ["user", "unlock-dialog"],
   "version": 1
 }
 TB_GNOME_METADATA

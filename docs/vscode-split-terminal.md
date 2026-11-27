@@ -31,6 +31,8 @@ X11) to `~/.local/share/gnome-shell/extensions/` and enables it. After the first
 restart the shell (Alt+F2, `r`, Enter, or log out and back in). The installer registers
 the extension, so no `gnome-extensions enable` is needed. Without the extension, Ctrl+Alt+S shows an error and moves nothing.
 Set `terminalBeside.smart` to `false` to place the windows once, as before.
+The GNOME extension declares the `unlock-dialog` session mode, so pairs survive a screen lock.
+Restarting the shell or disabling the extension ends every pair, so press Ctrl+Alt+S again afterwards.
 The workspace folder determines the directory, regardless of the active file or
 integrated terminal directory. Multiple-folder workspaces always show a picker.
 Canceling the picker does nothing. Repeated completed invocations create fresh

@@ -307,6 +307,13 @@ test('packages a GNOME extension pinned to shell 46 and installs it', () => {
   assert.ok(source.split("<<'TB_GNOME_EXTENSION'\n")[1]?.includes("import { splitPair, followResize, isAdjacent } from './pairGeometry.js'"))
 })
 
+test('GNOME extension stays enabled while the screen is locked so pairs survive a lock', () => {
+  const source = fs.readFileSync(installer, 'utf8')
+  const metadata = JSON.parse(source.split("<<'TB_GNOME_METADATA'\n")[1]?.split('\nTB_GNOME_METADATA')[0])
+  // GNOME disables extensions on the lock screen unless they declare unlock-dialog. disable() unlinks every pair.
+  assert.deepEqual(metadata['session-modes'], ['user', 'unlock-dialog'])
+})
+
 const PAIR_ARGS = ['call', '--session', '--dest', 'dev.matheusfs.TerminalBeside', '--object-path', '/dev/matheusfs/TerminalBeside', '--method', 'dev.matheusfs.TerminalBeside.Pair']
 const usedWmctrlPlacement = calls => calls.some(([c, a]) => c === 'wmctrl' && a.includes('-e'))
 
